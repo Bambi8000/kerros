@@ -122,6 +122,19 @@ select {
   background: var(--k-panel-raised);
 }
 
+.toolbar {
+  display: flex;
+  gap: 2px;
+  padding-left: 16px;
+  border-left: 1px solid var(--k-line);
+}
+
+.view-btn:disabled {
+  color: var(--k-text-faint);
+  background: transparent;
+  cursor: default;
+}
+
 .topbar-status {
   margin-left: auto;
   display: flex;
@@ -529,6 +542,13 @@ select {
 .hud-note,
 .hud-stats {
   color: var(--k-text-faint);
+}
+
+.hud-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hud-stats {

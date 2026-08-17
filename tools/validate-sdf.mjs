@@ -24,6 +24,7 @@ import {
   rotationMatrix,
   modelBounds,
   evaluateGrid,
+  nearestFeatureIndex,
 } from '../src/core/sdf.ts';
 
 let failures = 0;
@@ -135,6 +136,77 @@ console.log('sdf: transforms');
     m[1] * (m[3] * m[8] - m[5] * m[6]) +
     m[2] * (m[3] * m[7] - m[4] * m[6]);
   check('rotation determinant is 1', near(det, 1, 1e-12));
+}
+
+console.log('sdf: rotation convention');
+{
+  // Our matrix must be R = Rz * Ry * Rx, which is three.js Euler order 'ZYX'.
+  // The gizmo reads angles back with that order; if this composition ever
+  // changes, a rotated shape jumps the moment its value round-trips through
+  // the inspector. Build the product independently and compare.
+  const d = Math.PI / 180;
+  const mul = (A, B) => {
+    const out = new Array(9).fill(0);
+    for (let r = 0; r < 3; r++)
+      for (let c = 0; c < 3; c++)
+        for (let i = 0; i < 3; i++) out[r * 3 + c] += A[r * 3 + i] * B[i * 3 + c];
+    return out;
+  };
+  const rx = (a) => [1, 0, 0, 0, Math.cos(a * d), -Math.sin(a * d), 0, Math.sin(a * d), Math.cos(a * d)];
+  const ry = (a) => [Math.cos(a * d), 0, Math.sin(a * d), 0, 1, 0, -Math.sin(a * d), 0, Math.cos(a * d)];
+  const rz = (a) => [Math.cos(a * d), -Math.sin(a * d), 0, Math.sin(a * d), Math.cos(a * d), 0, 0, 0, 1];
+
+  for (const [ax, ay, az] of [[30, 0, 0], [0, 45, 0], [0, 0, 60], [17, -33, 79], [-120, 95, -44]]) {
+    const expected = mul(rz(az), mul(ry(ay), rx(ax)));
+    const actual = rotationMatrix(ax, ay, az);
+    check(
+      `rotation ${ax},${ay},${az} equals Rz*Ry*Rx (three.js order ZYX)`,
+      expected.every((v, i) => near(actual[i], v, 1e-12)),
+    );
+  }
+}
+
+console.log('sdf: picking');
+{
+  const sphere = findModule('sphere');
+  const torus = findModule('torus');
+  const tree = [
+    { kind: 'sphere', enabled: true, params: { ...defaultParams(sphere), op: 'union', r: 40, px: -30 } },
+    { kind: 'sphere', enabled: true, params: { ...defaultParams(sphere), op: 'smoothUnion', k: 20, r: 30, px: 50 } },
+    { kind: 'torus', enabled: true, params: { ...defaultParams(torus), op: 'subtract', R: 25, r: 8, pz: 45 } },
+  ];
+
+  check('a point on the left sphere picks it', nearestFeatureIndex(tree, -70, 0, 0) === 0);
+  check('a point on the right sphere picks it', nearestFeatureIndex(tree, 80, 0, 0) === 1);
+  check(
+    'a point on the carved torus picks the subtractor',
+    nearestFeatureIndex(tree, 25, 0, 37) === 2,
+    `got ${nearestFeatureIndex(tree, 25, 0, 37)}`,
+  );
+  check(
+    'disabled features are never picked',
+    nearestFeatureIndex(
+      [tree[0], tree[1], { ...tree[2], enabled: false }],
+      25,
+      0,
+      37,
+    ) !== 2,
+  );
+  check('an empty tree picks nothing', nearestFeatureIndex([], 0, 0, 0) === -1);
+
+  const rotated = [
+    {
+      kind: 'capsule',
+      enabled: true,
+      params: { ...defaultParams(findModule('capsule')), op: 'union', h: 100, r: 10, ry: 90 },
+    },
+  ];
+  // Rotated 90 degrees about Y, the capsule's axis lies along world X.
+  check('picking respects rotation', nearestFeatureIndex(rotated, 60, 0, 0) === 0);
+  check(
+    'rotated capsule surface is where the transform says',
+    Math.abs(evaluateGrid(rotated, 24).step) > 0,
+  );
 }
 
 console.log('sdf: tree evaluation');

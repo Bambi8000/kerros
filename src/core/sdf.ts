@@ -431,6 +431,8 @@ export interface EvalFeature {
 }
 
 export interface Prepared {
+  /** Index into the feature array this was prepared from. */
+  index: number;
   mod: ShapeModule;
   params: Params;
   op: Op;
@@ -443,9 +445,14 @@ export interface Prepared {
   identity: boolean;
 }
 
-function prepare(features: EvalFeature[]): Prepared[] {
+/**
+ * Resolve features into an evaluation-ready form: module looked up, rotation
+ * inverted once, disabled and unknown rows dropped.
+ */
+export function prepareFeatures(features: EvalFeature[]): Prepared[] {
   const out: Prepared[] = [];
-  for (const f of features) {
+  for (let index = 0; index < features.length; index++) {
+    const f = features[index];
     if (!f.enabled) continue;
     const mod = findModule(f.kind);
     if (!mod) continue;
@@ -456,6 +463,7 @@ function prepare(features: EvalFeature[]): Prepared[] {
     const m = rotationMatrix(rx, ry, rz);
 
     out.push({
+      index,
       mod,
       params: f.params,
       op: text(f.params, 'op', 'smoothUnion') as Op,
@@ -469,6 +477,20 @@ function prepare(features: EvalFeature[]): Prepared[] {
     });
   }
   return out;
+}
+
+/** Transform a world point into one prepared feature's local space. */
+export function toLocal(f: Prepared, x: number, y: number, z: number): [number, number, number] {
+  const wx = x - f.tx;
+  const wy = y - f.ty;
+  const wz = z - f.tz;
+  if (f.identity) return [wx, wy, wz];
+  const m = f.inv;
+  return [
+    m[0] * wx + m[1] * wy + m[2] * wz,
+    m[3] * wx + m[4] * wy + m[5] * wz,
+    m[6] * wx + m[7] * wy + m[8] * wz,
+  ];
 }
 
 /** Distance of the whole tree at one world point. */
@@ -497,7 +519,7 @@ export function evaluatePoint(prepared: Prepared[], x: number, y: number, z: num
 export function modelBounds(
   features: EvalFeature[],
 ): { min: [number, number, number]; max: [number, number, number] } | null {
-  const prepared = prepare(features);
+  const prepared = prepareFeatures(features);
   let found = false;
   let minX = Infinity;
   let minY = Infinity;
@@ -540,7 +562,7 @@ export function modelBounds(
  * whatever that spacing gives them, so voxels stay cubic.
  */
 export function evaluateGrid(features: EvalFeature[], res: number): SdfGrid {
-  const prepared = prepare(features);
+  const prepared = prepareFeatures(features);
   const bounds = modelBounds(features);
 
   if (!bounds || prepared.length === 0) {
@@ -591,4 +613,38 @@ export function evaluateGrid(features: EvalFeature[], res: number): SdfGrid {
   }
 
   return { data, dims: [nx, ny, nz], min: [minX, minY, minZ], step };
+}
+
+/**
+ * Which feature owns the surface at a world point.
+ *
+ * Clicking the preview mesh cannot say which feature was hit: the tree
+ * evaluates to one merged surface, so two blended spheres are a single mesh.
+ * Instead, evaluate each feature's own field at the hit point and take the
+ * one whose surface is closest. That picks the subtracted shape when the
+ * click lands inside a carved cavity, which is what someone pointing at a
+ * hole means.
+ *
+ * Returns an index into `features`, or -1 when nothing is eligible.
+ */
+export function nearestFeatureIndex(
+  features: EvalFeature[],
+  x: number,
+  y: number,
+  z: number,
+): number {
+  const prepared = prepareFeatures(features);
+  let best = -1;
+  let bestDistance = Infinity;
+
+  for (const f of prepared) {
+    const [lx, ly, lz] = toLocal(f, x, y, z);
+    const d = Math.abs(f.mod.sdf(lx, ly, lz, f.params));
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = f.index;
+    }
+  }
+
+  return best;
 }

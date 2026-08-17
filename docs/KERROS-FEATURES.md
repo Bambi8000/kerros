@@ -58,6 +58,37 @@ Accuracy notes, because they matter downstream:
   tighter than the blend radius suggests. Fine for shaping, documented so it
   is not debugged twice.
 
+### Direct manipulation — M1.5
+
+Shapes are selected by clicking them in the viewport and moved with a gizmo,
+alongside the numeric fields in the inspector. Both write the same six
+parameters; there is no second source of truth for placement.
+
+**Picking.** The tree evaluates to one merged surface, so a raycast hit
+cannot say which feature it belongs to — two blended spheres are a single
+mesh. `nearestFeatureIndex()` takes the hit point and returns the feature
+whose own field is closest to zero there, i.e. the one that owns that patch of
+surface. Clicking into a carved cavity therefore selects the shape doing the
+carving, which is what pointing at a hole means. Disabled and unknown-module
+features are never picked.
+
+**Rotation convention.** Our fields use R = Rz·Ry·Rx, which is three.js Euler
+order **'ZYX'**, not the three.js default of 'XYZ'. Every conversion between
+the gizmo and the parameters passes that order explicitly.
+`tools/validate-sdf.mjs` rebuilds the product from separate axis matrices and
+compares, so the convention cannot drift: if it did, a shape rotated by the
+gizmo would jump the moment its value round-tripped through the inspector.
+
+**The proxy.** The gizmo drives an empty `Object3D`, and every drag copies its
+transform into the feature parameters rounded to 0.1. The reverse sync — from
+parameters back to the proxy — is skipped while a drag is in progress, so the
+gizmo is never fighting the value it just wrote.
+
+Keys: `G` move, `R` rotate, `Esc` deselect. Snapping is 5 mm and 15°. The
+selected feature is outlined with a wireframe box from its module `bounds()`,
+which is the only way to see which shape is selected once several have blended
+into one surface.
+
 ### Grid evaluation
 
 `evaluateGrid(features, res)` samples the tree onto a uniform voxel grid.
@@ -147,7 +178,8 @@ Run all of them with `npm run check`.
 - `tools/validate-sdf.mjs` — primitives against analytic distances,
   operation identities (smooth ops with `k = 0` must equal their hard
   counterparts), the EMPTY sentinel, module registry integrity, rotation
-  matrix orthonormality, bit-identical re-evaluation, and blend padding.
+  matrix orthonormality, the Rz·Ry·Rx composition that the gizmo depends on,
+  feature picking, bit-identical re-evaluation, and blend padding.
 - `tools/validate-surfacenets.mjs` — vertex accuracy against analytic
   sphere and torus, watertightness (every edge used exactly twice), outward
   winding via signed volume, volume within a few percent of analytic,

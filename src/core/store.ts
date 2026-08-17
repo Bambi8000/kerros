@@ -14,6 +14,23 @@ export type ViewName = 'persp' | 'top' | 'front' | 'side';
 /** Sample count along the longest axis for the preview mesh. */
 export const PREVIEW_RESOLUTIONS = [32, 48, 64, 96, 128];
 
+/** Direct-manipulation gizmo mode. */
+export type GizmoMode = 'translate' | 'rotate';
+
+/** Snap increments used when snapping is on. */
+export const SNAP_TRANSLATE_MM = 5;
+export const SNAP_ROTATE_DEG = 15;
+
+/** The six transform keys a gizmo drag writes back to. */
+export interface TransformPatch {
+  px?: number;
+  py?: number;
+  pz?: number;
+  rx?: number;
+  ry?: number;
+  rz?: number;
+}
+
 interface KerrosState {
   /** Ordered feature tree. Order is evaluation order. */
   features: Feature[];
@@ -27,6 +44,8 @@ interface KerrosState {
 
   view: ViewName;
   previewRes: number;
+  gizmoMode: GizmoMode;
+  snapEnabled: boolean;
   /** Global PRNG seed. Every generator derives from this. */
   seed: number;
 
@@ -37,12 +56,16 @@ interface KerrosState {
   selectFeature: (id: string | null) => void;
   renameFeature: (id: string, name: string) => void;
   setParam: (id: string, key: string, value: number | string | boolean) => void;
+  /** Write a whole transform at once — a gizmo drag is one edit, not six. */
+  setTransform: (id: string, patch: TransformPatch) => void;
 
   setMachine: (patch: Partial<MachineProfile>) => void;
   setMaterial: (patch: Partial<MaterialProfile>) => void;
   setStack: (patch: Partial<StackSettings>) => void;
   setView: (view: ViewName) => void;
   setPreviewRes: (res: number) => void;
+  setGizmoMode: (mode: GizmoMode) => void;
+  setSnapEnabled: (enabled: boolean) => void;
   setSeed: (seed: number) => void;
 }
 
@@ -59,6 +82,8 @@ export const useKerros = create<KerrosState>((set) => ({
 
   view: 'persp',
   previewRes: 64,
+  gizmoMode: 'translate',
+  snapEnabled: false,
   seed: 1,
 
   addShape: (moduleKey) =>
@@ -125,10 +150,19 @@ export const useKerros = create<KerrosState>((set) => ({
       ),
     })),
 
+  setTransform: (id, patch) =>
+    set((s) => ({
+      features: s.features.map((f) =>
+        f.id === id ? { ...f, params: { ...f.params, ...patch } } : f,
+      ),
+    })),
+
   setMachine: (patch) => set((s) => ({ machine: { ...s.machine, ...patch } })),
   setMaterial: (patch) => set((s) => ({ material: { ...s.material, ...patch } })),
   setStack: (patch) => set((s) => ({ stack: { ...s.stack, ...patch } })),
   setView: (view) => set({ view }),
   setPreviewRes: (previewRes) => set({ previewRes }),
+  setGizmoMode: (gizmoMode) => set({ gizmoMode }),
+  setSnapEnabled: (snapEnabled) => set({ snapEnabled }),
   setSeed: (seed) => set({ seed }),
 }));

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useKerros } from '../core/store';
-import type { ViewName } from '../core/store';
+import { SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM, useKerros } from '../core/store';
+import type { GizmoMode, ViewName } from '../core/store';
 import { KERROS_VERSION } from '../version';
 import { ErrorBoundary } from './ErrorBoundary';
 import { FeatureTree } from './FeatureTree';
@@ -15,6 +15,11 @@ const VIEWS: { key: ViewName; label: string }[] = [
   { key: 'side', label: 'Side' },
 ];
 
+const MODES: { key: GizmoMode; label: string; hint: string }[] = [
+  { key: 'translate', label: 'Move', hint: 'Move the selected shape (G)' },
+  { key: 'rotate', label: 'Rotate', hint: 'Rotate the selected shape (R)' },
+];
+
 type Tab = 'inspector' | 'profiles';
 
 export function Layout() {
@@ -23,6 +28,10 @@ export function Layout() {
   const machine = useKerros((s) => s.machine);
   const material = useKerros((s) => s.material);
   const selectedId = useKerros((s) => s.selectedId);
+  const gizmoMode = useKerros((s) => s.gizmoMode);
+  const setGizmoMode = useKerros((s) => s.setGizmoMode);
+  const snapEnabled = useKerros((s) => s.snapEnabled);
+  const setSnapEnabled = useKerros((s) => s.setSnapEnabled);
 
   const [tab, setTab] = useState<Tab>('inspector');
 
@@ -51,6 +60,30 @@ export function Layout() {
             </button>
           ))}
         </nav>
+
+        <div className="toolbar" aria-label="Transform tool">
+          {MODES.map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              title={m.hint}
+              disabled={!selectedId}
+              className={`view-btn${gizmoMode === m.key ? ' is-active' : ''}`}
+              onClick={() => setGizmoMode(m.key)}
+            >
+              {m.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            title={`Snap to ${SNAP_TRANSLATE_MM} mm and ${SNAP_ROTATE_DEG}°`}
+            disabled={!selectedId}
+            className={`view-btn${snapEnabled ? ' is-active' : ''}`}
+            onClick={() => setSnapEnabled(!snapEnabled)}
+          >
+            Snap
+          </button>
+        </div>
 
         <div className="topbar-status">
           <span>{machine.name}</span>
