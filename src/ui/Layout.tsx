@@ -16,7 +16,7 @@ const VIEWS: { key: ViewName; label: string }[] = [
 ];
 
 const MODES: { key: GizmoMode; label: string; hint: string }[] = [
-  { key: 'translate', label: 'Move', hint: 'Move the selected shape (G)' },
+  { key: 'translate', label: 'Move', hint: 'Move the selected shape (M)' },
   { key: 'rotate', label: 'Rotate', hint: 'Rotate the selected shape (R)' },
 ];
 

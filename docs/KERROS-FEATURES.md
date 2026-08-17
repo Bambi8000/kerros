@@ -84,7 +84,7 @@ transform into the feature parameters rounded to 0.1. The reverse sync — from
 parameters back to the proxy — is skipped while a drag is in progress, so the
 gizmo is never fighting the value it just wrote.
 
-Keys: `G` move, `R` rotate, `Esc` deselect. Snapping is 5 mm and 15°. The
+Keys: `M` move (`G` also works), `R` rotate, `Esc` deselect. Snapping is 5 mm and 15°. The
 selected feature is outlined with a wireframe box from its module `bounds()`,
 which is the only way to see which shape is selected once several have blended
 into one surface.

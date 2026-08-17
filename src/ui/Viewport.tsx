@@ -337,8 +337,9 @@ export function Viewport() {
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
 
       const state = useKerros.getState();
-      if (event.key === 'g' || event.key === 'G') state.setGizmoMode('translate');
-      else if (event.key === 'r' || event.key === 'R') state.setGizmoMode('rotate');
+      const key = event.key.toLowerCase();
+      if (key === 'm' || key === 'g') state.setGizmoMode('translate');
+      else if (key === 'r') state.setGizmoMode('rotate');
       else if (event.key === 'Escape') state.selectFeature(null);
     };
 
@@ -543,7 +544,7 @@ export function Viewport() {
       <div className="viewport-hud">
         <span className="hud-view">{view}</span>
         <span className="hud-note">
-          Click a shape to select · G move · R rotate · Esc deselect
+          Click a shape to select · M move · R rotate · Esc deselect
         </span>
         {stats && stats.triangles > 0 ? (
           <span className="hud-stats">
