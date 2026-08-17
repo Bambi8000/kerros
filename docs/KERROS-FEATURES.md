@@ -6,79 +6,159 @@ never deferred. `KERROS-HANDOFF.md` is the map; this file is the parts list.
 
 Status legend: **shipped** · **in progress** · **planned**
 
-## Entry format
+---
 
-Each entry states: module key, stage, what it does, parameters with units and
-defaults, determinism notes (what it does with the seed), and the validator
-that covers it.
+## How a shape feature works
+
+The tree is an accumulator. Evaluation starts with an empty field
+(`EMPTY = 1e5`, everywhere outside), then each enabled feature combines its
+own distance field into the running result using its operation. The first
+feature therefore starts the solid whatever its operation says, because
+unioning with nothing returns the shape and subtracting from nothing returns
+nothing.
+
+Every shape feature carries, on top of its own parameters:
+
+| Param | Meaning | Default |
+| --- | --- | --- |
+| `op` | union · smoothUnion · subtract · smoothSubtract · intersect · smoothIntersect | `smoothUnion` (`union` for the first feature) |
+| `k` | blend radius in mm, used by the smooth ops only | 10 |
+| `px py pz` | position in mm | 0 |
+| `rx ry rz` | rotation in degrees, applied X then Y then Z | 0 |
+
+**There is no scale parameter, deliberately.** Non-uniform scaling destroys
+the distance property of the field, which would corrupt smooth blends and,
+later, kerf offsetting. Primitives are dimensioned in mm instead.
+
+Adding a module means adding an entry to `SHAPE_MODULES` in
+`src/core/sdf.ts` with `{ key, name, params, sdf, bounds }`. `sdf` is
+evaluated in the module's own local space — the transform is applied by the
+core before the call, so a module never handles placement itself. `bounds`
+returns a local AABB and is what sizes the voxel grid.
+
+## SHAPE — **shipped** (M1)
+
+| Key | Name | Parameters (mm unless noted) |
+| --- | --- | --- |
+| `sphere` | Sphere | `r` |
+| `roundBox` | Rounded box | `sx` `sy` `sz` `r` (corner radius, clamped to the smallest half-extent) |
+| `capsule` | Capsule | `h` (straight length, along local Z) `r` |
+| `torus` | Torus | `R` (major) `r` (tube), lies in the local XY plane |
+| `ellipsoid` | Ellipsoid | `rx` `ry` `rz` |
+| `superellipsoid` | Superellipsoid | `rx` `ry` `rz` `e` (exponent; 2 is an ellipsoid, higher squares it off) |
+
+Accuracy notes, because they matter downstream:
+
+- `sphere`, `roundBox`, `capsule`, `torus` are exact Euclidean distance
+  fields. Blend radii mean exactly what they say.
+- `ellipsoid` uses the standard bounded approximation: accurate near the
+  surface, conservative further out.
+- `superellipsoid` is a p-norm, **not** a Euclidean distance. The field is
+  compressed away from the surface, so blends against it come out slightly
+  tighter than the blend radius suggests. Fine for shaping, documented so it
+  is not debugged twice.
+
+### Grid evaluation
+
+`evaluateGrid(features, res)` samples the tree onto a uniform voxel grid.
+`res` is the sample count along the longest axis; voxels stay cubic, so the
+other axes get however many samples that spacing gives them.
+
+Bounds come from the union of the **additive** features' AABBs, rotated into
+world space, then padded. Padding is `3 · step + 0.35 · maxBlend`: the
+polynomial smooth min bulges outward by at most about `k/4`, so padding by a
+full blend radius would inflate the grid roughly fourfold in volume for
+nothing. `tools/validate-sdf.mjs` asserts across blend radii 10–120 mm that no
+sample on the grid boundary ends up inside the solid.
+
+## CARVE — planned (M5)
+
+Shell and subtract volumes. Subtract already works as an operation on any
+shape feature; CARVE adds the shell (`abs(d) - t/2`) as its own feature.
+
+## RIG — planned (M3, M4, M8)
+
+Rods with Z-span and clearance holes, spacer rings, E27 mount, cable cavity,
+Wago chamber.
+
+## SLICE — planned (M2)
+
+Mid-plane sampling, marching squares, RDP simplify, Chaikin smooth. Kerf
+offsetting in M3.
+
+## PATTERN — planned (M7)
+
+## LAYOUT — planned (M4)
+
+## EXPORT — planned (M3)
+
+DXF R12 writer, POLYLINE/VERTEX only — LWPOLYLINE is R13+ and the target
+laser will not take it. Layers CUT and ENGRAVE.
 
 ---
 
-## SHAPE
+## Infrastructure
 
-_None yet. M1 adds the SDF primitives: sphere, capsule, rounded box, torus,
-ellipsoid, superellipsoid, plus union / smooth union / subtract / smooth
-subtract / intersect._
-
-## CARVE
-
-_None yet. M5 adds shell and subtract volumes._
-
-## RIG
-
-_None yet. M3 adds rods with Z-span and clearance holes; M4 adds spacer
-rings; M8 adds the E27 mount, cable cavity and Wago chamber._
-
-## SLICE
-
-_None yet. M2 adds the slicer: mid-plane sampling, marching squares, RDP
-simplify, Chaikin smooth. M3 adds kerf offsetting._
-
-## PATTERN
-
-_None yet. M7 adds the pattern module API and the first generators._
-
-## LAYOUT
-
-_None yet. M4 adds shelf packing with a configurable part gap._
-
-## EXPORT
-
-_None yet. M3 adds the DXF R12 writer (POLYLINE/VERTEX only — LWPOLYLINE is
-R13+ and the target laser will not take it), layers CUT and ENGRAVE._
-
----
-
-## Infrastructure shipped in M0
-
-### World convention
+### World convention — M0
 
 Z is up, 1 three.js unit = 1 mm. Set in `src/ui/Viewport.tsx`; three.js
 defaults to Y-up so every camera sets `up` explicitly. Any geometry code that
 assumes Y-up is a bug.
 
-### Feature tree
+### Preview mesher — M1
 
-`src/core/store.ts` — ordered list with add, remove, reorder, enable/disable
-and selection. Ids are `f1`, `f2`, … from a monotonic counter so a saved
-project reloads with stable ids. `src/core/types.ts` defines `Feature` and the
-seven stages.
+`src/core/surfaceNets.ts`. **Surface nets, not marching cubes.** Chosen
+because it needs no 256×16 triangle table, is deterministic, and gives
+smoother results on blended blobs. The cost is that it rounds sharp edges more
+than marching cubes at low resolution — a rounded box looks rounder than it is
+at 32 samples. This affects the preview only: slicing samples the SDF directly
+and never touches this mesh. A marching cubes extractor can be added behind
+the same `GridLike -> SurfaceNetsResult` interface if the edges start to
+mislead.
 
-### Profiles
+Preview resolution is user-selectable (32 / 48 / 64 / 96 / 128, default 64)
+and re-evaluation is debounced by 120 ms so dragging a value stays smooth.
+Slicing gets its own, finer grid in M2, and moves to a Web Worker there.
+
+### Feature tree — M0, extended M1
+
+`src/core/store.ts` — ordered list with add, remove, reorder,
+enable/disable, rename, per-parameter edit and selection. Ids are `f1`, `f2`,
+… from a monotonic counter so a saved project reloads with stable ids.
+
+### Profiles — M0
 
 `src/core/profiles.ts` — machine (bed 730 × 410 mm, margin), material
 (thickness, kerf, notes), stack (spacer height). Layer pitch is derived in one
 place, `layerPitch()` in `src/core/types.ts`, and nothing else may compute it.
 Bed size and kerf are never hardcoded in geometry code.
 
-### Error boundaries
+### Error boundaries — M0
 
 `src/ui/ErrorBoundary.tsx` wraps the app, the viewport, the feature tree and
-the profile panel separately, so a throw in one region leaves the rest usable.
+the right-hand panel separately, so a throw in one region leaves the rest
+usable.
 
 ### Validators
 
-- `tools/check-version.mjs` — package.json version matches `KERROS_VERSION`.
+Run all of them with `npm run check`.
 
-Every geometry module gets its own `tools/validate-<name>.mjs` before it
-ships, importing the real shared helpers, never stubs.
+- `tools/check-version.mjs` — package.json version matches `KERROS_VERSION`.
+- `tools/validate-sdf.mjs` — primitives against analytic distances,
+  operation identities (smooth ops with `k = 0` must equal their hard
+  counterparts), the EMPTY sentinel, module registry integrity, rotation
+  matrix orthonormality, bit-identical re-evaluation, and blend padding.
+- `tools/validate-surfacenets.mjs` — vertex accuracy against analytic
+  sphere and torus, watertightness (every edge used exactly twice), outward
+  winding via signed volume, volume within a few percent of analytic,
+  determinism, and degenerate inputs.
+
+Validators import the real modules with Node's native TypeScript support —
+never stubs, never a reimplementation of the algorithm under test. That rule
+caught the inverted triangle winding in surface nets on its first run: the
+mesh was watertight and its volume was accurate to 0.5%, but negative, which
+would have rendered the model inside-out.
+
+`src/core/sdf.ts` and `src/core/surfaceNets.ts` therefore have **no value
+imports**. Keep it that way — type-only imports are erased by Node and are
+fine, value imports would drag the whole app into the validator.

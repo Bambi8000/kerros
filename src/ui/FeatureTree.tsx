@@ -1,18 +1,19 @@
+import { useState } from 'react';
 import { useKerros } from '../core/store';
+import { OP_LABELS, SHAPE_MODULES, findModule, text } from '../core/sdf';
+import type { Op } from '../core/sdf';
 import { STAGES, STAGE_NOTES } from '../core/types';
 
-/**
- * The feature tree panel. M0 wires ordering, selection, enable and delete;
- * M1 replaces the test row with real SDF features from the module registry.
- */
 export function FeatureTree() {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
-  const addFeature = useKerros((s) => s.addFeature);
+  const addShape = useKerros((s) => s.addShape);
   const removeFeature = useKerros((s) => s.removeFeature);
   const moveFeature = useKerros((s) => s.moveFeature);
   const toggleFeature = useKerros((s) => s.toggleFeature);
   const selectFeature = useKerros((s) => s.selectFeature);
+
+  const [pending, setPending] = useState(SHAPE_MODULES[0].key);
 
   return (
     <section className="panel panel-tree">
@@ -35,74 +36,90 @@ export function FeatureTree() {
         </div>
       ) : (
         <ul className="tree-rows">
-          {features.map((f, i) => (
-            <li
-              key={f.id}
-              className={`tree-row${f.id === selectedId ? ' is-selected' : ''}${
-                f.enabled ? '' : ' is-off'
-              }`}
-              onClick={() => selectFeature(f.id)}
-            >
-              <span className="row-stage">{f.stage}</span>
-              <span className="row-name">{f.name}</span>
-              <span className="row-actions">
-                <button
-                  type="button"
-                  title="Move up"
-                  disabled={i === 0}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    moveFeature(f.id, -1);
-                  }}
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  title="Move down"
-                  disabled={i === features.length - 1}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    moveFeature(f.id, 1);
-                  }}
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  title={f.enabled ? 'Skip this feature' : 'Include this feature'}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleFeature(f.id);
-                  }}
-                >
-                  {f.enabled ? '●' : '○'}
-                </button>
-                <button
-                  type="button"
-                  title="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeFeature(f.id);
-                  }}
-                >
-                  ×
-                </button>
-              </span>
-            </li>
-          ))}
+          {features.map((f, i) => {
+            const op = text(f.params, 'op', 'union') as Op;
+            const known = findModule(f.kind) !== undefined;
+            return (
+              <li
+                key={f.id}
+                className={`tree-row${f.id === selectedId ? ' is-selected' : ''}${
+                  f.enabled ? '' : ' is-off'
+                }`}
+                onClick={() => selectFeature(f.id)}
+              >
+                <span className="row-main">
+                  <span className="row-name">{f.name}</span>
+                  <span className="row-sub">
+                    {i === 0 ? 'base solid' : OP_LABELS[op]}
+                    {known ? '' : ' · unknown module'}
+                  </span>
+                </span>
+                <span className="row-actions">
+                  <button
+                    type="button"
+                    title="Move up"
+                    disabled={i === 0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      moveFeature(f.id, -1);
+                    }}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    title="Move down"
+                    disabled={i === features.length - 1}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      moveFeature(f.id, 1);
+                    }}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    title={f.enabled ? 'Skip this feature' : 'Include this feature'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFeature(f.id);
+                    }}
+                  >
+                    {f.enabled ? '●' : '○'}
+                  </button>
+                  <button
+                    type="button"
+                    title="Delete"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeFeature(f.id);
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
 
       <footer className="panel-foot">
-        <button
-          type="button"
-          className="btn"
-          onClick={() => addFeature('placeholder', 'SHAPE', 'Test row')}
-        >
-          Add test row
-        </button>
-        <span className="foot-note">Placeholder until M1 lands the SDF core</span>
+        <div className="add-row">
+          <select value={pending} onChange={(e) => setPending(e.target.value)}>
+            {SHAPE_MODULES.map((m) => (
+              <option key={m.key} value={m.key}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <button type="button" className="btn" onClick={() => addShape(pending)}>
+            Add
+          </button>
+        </div>
+        <span className="foot-note">
+          Order is evaluation order — drag a subtract below what it cuts into
+        </span>
       </footer>
     </section>
   );

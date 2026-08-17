@@ -1,57 +1,25 @@
-import { useKerros } from '../core/store';
+import { PREVIEW_RESOLUTIONS, useKerros } from '../core/store';
 import { layerPitch } from '../core/types';
-
-interface NumberFieldProps {
-  label: string;
-  value: number;
-  unit?: string;
-  step?: number;
-  min?: number;
-  onChange: (value: number) => void;
-}
-
-function NumberField({ label, value, unit, step = 1, min = 0, onChange }: NumberFieldProps) {
-  return (
-    <label className="field">
-      <span className="field-label">{label}</span>
-      <span className="field-input">
-        <input
-          type="number"
-          value={value}
-          step={step}
-          min={min}
-          onChange={(e) => {
-            const next = Number(e.target.value);
-            if (Number.isFinite(next)) onChange(next);
-          }}
-        />
-        {unit ? <span className="field-unit">{unit}</span> : null}
-      </span>
-    </label>
-  );
-}
+import { NumberField } from './NumberField';
 
 export function ProfilePanel() {
   const machine = useKerros((s) => s.machine);
   const material = useKerros((s) => s.material);
   const stack = useKerros((s) => s.stack);
   const seed = useKerros((s) => s.seed);
+  const previewRes = useKerros((s) => s.previewRes);
   const setMachine = useKerros((s) => s.setMachine);
   const setMaterial = useKerros((s) => s.setMaterial);
   const setStack = useKerros((s) => s.setStack);
   const setSeed = useKerros((s) => s.setSeed);
+  const setPreviewRes = useKerros((s) => s.setPreviewRes);
 
   const pitch = layerPitch(material, stack);
   const usableW = machine.bedWidth - machine.margin * 2;
   const usableH = machine.bedHeight - machine.margin * 2;
-  const kerfWarning = material.kerf <= 0;
 
   return (
-    <section className="panel panel-profiles">
-      <header className="panel-head">
-        <h2>Profiles</h2>
-      </header>
-
+    <>
       <div className="group">
         <div className="group-head">Machine</div>
         <label className="field">
@@ -83,6 +51,7 @@ export function ProfilePanel() {
           value={machine.margin}
           unit="mm"
           step={0.5}
+          min={0}
           onChange={(margin) => setMachine({ margin })}
         />
         <div className="derived">
@@ -115,6 +84,7 @@ export function ProfilePanel() {
           value={material.kerf}
           unit="mm"
           step={0.01}
+          min={0}
           onChange={(kerf) => setMaterial({ kerf })}
         />
         <label className="field field-stacked">
@@ -125,10 +95,10 @@ export function ProfilePanel() {
             onChange={(e) => setMaterial({ notes: e.target.value })}
           />
         </label>
-        {kerfWarning ? (
+        {material.kerf <= 0 ? (
           <div className="warn">
-            Kerf is zero. Cut the kerf test figure in this material and enter the
-            measured value before exporting.
+            Kerf is zero. Cut the kerf test figure in this material and enter
+            the measured value before exporting.
           </div>
         ) : null}
       </div>
@@ -140,6 +110,7 @@ export function ProfilePanel() {
           value={stack.spacerHeight}
           unit="mm"
           step={0.5}
+          min={0}
           onChange={(spacerHeight) => setStack({ spacerHeight })}
         />
         <div className="derived derived-strong">
@@ -151,16 +122,33 @@ export function ProfilePanel() {
       </div>
 
       <div className="group">
+        <div className="group-head">Preview</div>
+        <label className="field">
+          <span className="field-label">Resolution</span>
+          <span className="field-input">
+            <select
+              value={previewRes}
+              onChange={(e) => setPreviewRes(Number(e.target.value))}
+            >
+              {PREVIEW_RESOLUTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {r} samples
+                </option>
+              ))}
+            </select>
+          </span>
+        </label>
+        <div className="derived">
+          Samples along the longest axis. Preview only — slicing gets its own,
+          finer grid.
+        </div>
+      </div>
+
+      <div className="group">
         <div className="group-head">Seed</div>
-        <NumberField
-          label="Global seed"
-          value={seed}
-          step={1}
-          min={0}
-          onChange={setSeed}
-        />
+        <NumberField label="Global seed" value={seed} step={1} min={0} onChange={setSeed} />
         <div className="derived">Same seed, same geometry, every evaluation</div>
       </div>
-    </section>
+    </>
   );
 }

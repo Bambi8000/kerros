@@ -7,8 +7,12 @@ import type {
   StackSettings,
 } from './types';
 import { DEFAULT_MACHINE, DEFAULT_MATERIAL, DEFAULT_STACK } from './profiles';
+import { defaultParams, findModule } from './sdf';
 
 export type ViewName = 'persp' | 'top' | 'front' | 'side';
+
+/** Sample count along the longest axis for the preview mesh. */
+export const PREVIEW_RESOLUTIONS = [32, 48, 64, 96, 128];
 
 interface KerrosState {
   /** Ordered feature tree. Order is evaluation order. */
@@ -22,21 +26,27 @@ interface KerrosState {
   stack: StackSettings;
 
   view: ViewName;
+  previewRes: number;
   /** Global PRNG seed. Every generator derives from this. */
   seed: number;
 
-  addFeature: (kind: string, stage: Stage, name: string) => void;
+  addShape: (moduleKey: string) => void;
   removeFeature: (id: string) => void;
   moveFeature: (id: string, delta: number) => void;
   toggleFeature: (id: string) => void;
   selectFeature: (id: string | null) => void;
+  renameFeature: (id: string, name: string) => void;
+  setParam: (id: string, key: string, value: number | string | boolean) => void;
 
   setMachine: (patch: Partial<MachineProfile>) => void;
   setMaterial: (patch: Partial<MaterialProfile>) => void;
   setStack: (patch: Partial<StackSettings>) => void;
   setView: (view: ViewName) => void;
+  setPreviewRes: (res: number) => void;
   setSeed: (seed: number) => void;
 }
+
+const SHAPE: Stage = 'SHAPE';
 
 export const useKerros = create<KerrosState>((set) => ({
   features: [],
@@ -48,18 +58,26 @@ export const useKerros = create<KerrosState>((set) => ({
   stack: DEFAULT_STACK,
 
   view: 'persp',
+  previewRes: 64,
   seed: 1,
 
-  addFeature: (kind, stage, name) =>
+  addShape: (moduleKey) =>
     set((s) => {
+      const mod = findModule(moduleKey);
+      if (!mod) return s;
       const id = `f${s.nextFeatureNumber}`;
+      const params = defaultParams(mod);
+      // The first solid in the tree has nothing to blend against, so give it a
+      // plain union and let later features do the blending.
+      if (s.features.length === 0) params.op = 'union';
+
       const feature: Feature = {
         id,
-        kind,
-        stage,
-        name,
+        kind: mod.key,
+        stage: SHAPE,
+        name: mod.name,
         enabled: true,
-        params: {},
+        params,
       };
       return {
         features: [...s.features, feature],
@@ -95,9 +113,22 @@ export const useKerros = create<KerrosState>((set) => ({
 
   selectFeature: (id) => set({ selectedId: id }),
 
+  renameFeature: (id, name) =>
+    set((s) => ({
+      features: s.features.map((f) => (f.id === id ? { ...f, name } : f)),
+    })),
+
+  setParam: (id, key, value) =>
+    set((s) => ({
+      features: s.features.map((f) =>
+        f.id === id ? { ...f, params: { ...f.params, [key]: value } } : f,
+      ),
+    })),
+
   setMachine: (patch) => set((s) => ({ machine: { ...s.machine, ...patch } })),
   setMaterial: (patch) => set((s) => ({ material: { ...s.material, ...patch } })),
   setStack: (patch) => set((s) => ({ stack: { ...s.stack, ...patch } })),
   setView: (view) => set({ view }),
+  setPreviewRes: (previewRes) => set({ previewRes }),
   setSeed: (seed) => set({ seed }),
 }));

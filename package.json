@@ -1,13 +1,14 @@
 {
   "name": "kerros",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check": "node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",

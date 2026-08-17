@@ -23,7 +23,7 @@
   --k-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
 
   --k-rail-left: 268px;
-  --k-rail-right: 296px;
+  --k-rail-right: 300px;
 
   color-scheme: dark;
 }
@@ -50,7 +50,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
   color: inherit;
 }
@@ -88,7 +89,6 @@ textarea {
   font-size: 14px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: var(--k-text);
 }
 
 .brand-version {
@@ -155,7 +155,7 @@ textarea {
   border-right: 1px solid var(--k-line);
 }
 
-.panel-profiles {
+.panel-right {
   border-left: 1px solid var(--k-line);
 }
 
@@ -188,6 +188,34 @@ textarea {
   color: var(--k-text-faint);
 }
 
+.panel-head-tabs {
+  gap: 0;
+  padding: 0;
+}
+
+.tab {
+  flex: 1;
+  padding: 10px 8px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid transparent;
+  font-family: var(--k-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--k-text-faint);
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--k-text-dim);
+}
+
+.tab.is-active {
+  color: var(--k-text);
+  border-bottom-color: var(--k-cut);
+}
+
 .panel-foot {
   margin-top: auto;
   position: sticky;
@@ -203,11 +231,18 @@ textarea {
 .foot-note {
   font-family: var(--k-mono);
   font-size: 10px;
+  line-height: 1.35;
   color: var(--k-text-faint);
 }
 
+.add-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+}
+
 .btn {
-  padding: 5px 10px;
+  padding: 5px 12px;
   background: var(--k-panel-raised);
   border: 1px solid var(--k-line);
   border-radius: 2px;
@@ -281,7 +316,7 @@ textarea {
 
 .tree-row {
   display: grid;
-  grid-template-columns: 44px 1fr auto;
+  grid-template-columns: 1fr auto;
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
@@ -303,16 +338,22 @@ textarea {
   text-decoration: line-through;
 }
 
-.row-stage {
-  font-family: var(--k-mono);
-  font-size: 10px;
-  color: var(--k-text-faint);
+.row-main {
+  min-width: 0;
 }
 
 .row-name {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.row-sub {
+  display: block;
+  font-family: var(--k-mono);
+  font-size: 10px;
+  color: var(--k-text-faint);
 }
 
 .row-actions {
@@ -321,7 +362,8 @@ textarea {
   opacity: 0.55;
 }
 
-.tree-row:hover .row-actions {
+.tree-row:hover .row-actions,
+.tree-row.is-selected .row-actions {
   opacity: 1;
 }
 
@@ -346,7 +388,13 @@ textarea {
   cursor: default;
 }
 
-/* ---------- profiles ---------- */
+/* ---------- inspector and profiles ---------- */
+
+.inspector-empty {
+  padding: 14px 12px;
+  font-size: 12px;
+  color: var(--k-text-faint);
+}
 
 .group {
   padding: 10px 12px 12px;
@@ -364,7 +412,7 @@ textarea {
 
 .field {
   display: grid;
-  grid-template-columns: 84px 1fr;
+  grid-template-columns: 88px 1fr;
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
@@ -383,10 +431,13 @@ textarea {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.field select,
+.add-row select {
   width: 100%;
   min-width: 0;
   padding: 4px 6px;
@@ -402,6 +453,8 @@ textarea {
 }
 
 .field-unit {
+  flex: none;
+  width: 18px;
   font-family: var(--k-mono);
   font-size: 11px;
   color: var(--k-text-faint);
@@ -410,7 +463,8 @@ textarea {
 .derived {
   margin-top: 8px;
   font-family: var(--k-mono);
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 1.5;
   color: var(--k-text-faint);
 }
 
@@ -456,7 +510,9 @@ textarea {
   position: absolute;
   left: 12px;
   bottom: 10px;
+  right: 12px;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 10px;
   pointer-events: none;
@@ -470,8 +526,13 @@ textarea {
   color: var(--k-text-dim);
 }
 
-.hud-note {
+.hud-note,
+.hud-stats {
   color: var(--k-text-faint);
+}
+
+.hud-stats {
+  margin-left: auto;
 }
 
 /* ---------- crash ---------- */
@@ -510,7 +571,7 @@ textarea {
   }
 
   .panel-tree,
-  .panel-profiles {
+  .panel-right {
     border: none;
     border-bottom: 1px solid var(--k-line);
   }

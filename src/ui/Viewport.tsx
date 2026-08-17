@@ -1,8 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { useKerros } from '../core/store';
 import type { ViewName } from '../core/store';
+import { evaluateGrid } from '../core/sdf';
+import { surfaceNets } from '../core/surfaceNets';
+import { buildGeometry } from '../core/mesh';
 
 /**
  * Kerros world convention, fixed here and nowhere else:
@@ -14,6 +17,9 @@ import type { ViewName } from '../core/store';
 /** Half-height of the orthographic frustum, mm. */
 const ORTHO_EXTENT = 320;
 
+/** Editing settles before the grid is resampled, so dragging stays smooth. */
+const EVAL_DEBOUNCE_MS = 120;
+
 const COLORS = {
   background: 0x121110,
   grid: 0x2c2926,
@@ -21,7 +27,15 @@ const COLORS = {
   bed: 0x6f6862,
   bedMargin: 0x3f3a36,
   zAxis: 0x4a9fd8,
+  model: 0xd2c8bc,
 };
+
+interface Stats {
+  triangles: number;
+  dims: string;
+  step: number;
+  ms: number;
+}
 
 function makeCamera(view: ViewName, width: number, height: number) {
   const aspect = width / height;
@@ -56,9 +70,7 @@ function makeCamera(view: ViewName, width: number, height: number) {
 }
 
 function targetFor(view: ViewName) {
-  return view === 'top'
-    ? new THREE.Vector3(0, 0, 0)
-    : new THREE.Vector3(0, 0, 60);
+  return view === 'top' ? new THREE.Vector3(0, 0, 0) : new THREE.Vector3(0, 0, 60);
 }
 
 function makeRect(w: number, h: number, z: number, color: number, opacity: number) {
@@ -73,11 +85,11 @@ function makeRect(w: number, h: number, z: number, color: number, opacity: numbe
   return new THREE.LineLoop(geometry, material);
 }
 
-function disposeGroup(group: THREE.Group) {
+function disposeChildren(group: THREE.Group) {
   group.traverse((obj) => {
-    const line = obj as THREE.Line;
-    line.geometry?.dispose();
-    const mat = line.material as THREE.Material | THREE.Material[] | undefined;
+    const withGeometry = obj as THREE.Mesh;
+    withGeometry.geometry?.dispose();
+    const mat = withGeometry.material as THREE.Material | THREE.Material[] | undefined;
     if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
     else mat?.dispose();
   });
@@ -87,11 +99,16 @@ function disposeGroup(group: THREE.Group) {
 export function Viewport() {
   const view = useKerros((s) => s.view);
   const machine = useKerros((s) => s.machine);
+  const features = useKerros((s) => s.features);
+  const previewRes = useKerros((s) => s.previewRes);
+
+  const [stats, setStats] = useState<Stats | null>(null);
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const bedRef = useRef<THREE.Group | null>(null);
+  const modelRef = useRef<THREE.Group | null>(null);
   const cameraRef = useRef<THREE.Camera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
 
@@ -121,7 +138,6 @@ export function Viewport() {
     const axes = new THREE.AxesHelper(60);
     scene.add(axes);
 
-    // Vertical reference so Z-up reads at a glance.
     const zLine = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0),
@@ -139,10 +155,17 @@ export function Viewport() {
     scene.add(bed);
     bedRef.current = bed;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const key = new THREE.DirectionalLight(0xffffff, 1.1);
-    key.position.set(200, -300, 400);
+    const model = new THREE.Group();
+    scene.add(model);
+    modelRef.current = model;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+    const key = new THREE.DirectionalLight(0xffffff, 1.5);
+    key.position.set(220, -320, 420);
     scene.add(key);
+    const fill = new THREE.DirectionalLight(0xbcd0e0, 0.5);
+    fill.position.set(-260, 200, -120);
+    scene.add(fill);
 
     let frame = 0;
     const tick = () => {
@@ -180,7 +203,8 @@ export function Viewport() {
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
-      disposeGroup(bed);
+      disposeChildren(bed);
+      disposeChildren(model);
       grid.geometry.dispose();
       (grid.material as THREE.Material).dispose();
       axes.geometry.dispose();
@@ -194,6 +218,7 @@ export function Viewport() {
       rendererRef.current = null;
       sceneRef.current = null;
       bedRef.current = null;
+      modelRef.current = null;
     };
   }, []);
 
@@ -227,7 +252,7 @@ export function Viewport() {
   useEffect(() => {
     const bed = bedRef.current;
     if (!bed) return;
-    disposeGroup(bed);
+    disposeChildren(bed);
 
     bed.add(makeRect(machine.bedWidth, machine.bedHeight, 0, COLORS.bed, 0.85));
     const usableW = Math.max(machine.bedWidth - machine.margin * 2, 1);
@@ -235,12 +260,52 @@ export function Viewport() {
     bed.add(makeRect(usableW, usableH, 0, COLORS.bedMargin, 0.9));
   }, [machine.bedWidth, machine.bedHeight, machine.margin]);
 
+  // Re-evaluate the feature tree and rebuild the preview mesh.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const model = modelRef.current;
+      if (!model) return;
+
+      const shapes = features.filter((f) => f.stage === 'SHAPE');
+      const started = performance.now();
+      const grid = evaluateGrid(shapes, previewRes);
+      const mesh = surfaceNets(grid);
+      const elapsed = performance.now() - started;
+
+      disposeChildren(model);
+
+      if (mesh.triangleCount > 0) {
+        const material = new THREE.MeshStandardMaterial({
+          color: COLORS.model,
+          roughness: 0.62,
+          metalness: 0.02,
+        });
+        model.add(new THREE.Mesh(buildGeometry(mesh), material));
+      }
+
+      setStats({
+        triangles: mesh.triangleCount,
+        dims: grid.dims.join('×'),
+        step: grid.step,
+        ms: elapsed,
+      });
+    }, EVAL_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [features, previewRes]);
+
   return (
     <div className="viewport">
       <div className="viewport-canvas" ref={mountRef} />
       <div className="viewport-hud">
         <span className="hud-view">{view}</span>
         <span className="hud-note">Z up · 1 unit = 1 mm · grid 10 mm</span>
+        {stats && stats.triangles > 0 ? (
+          <span className="hud-stats">
+            {stats.dims} samples @ {stats.step.toFixed(2)} mm ·{' '}
+            {stats.triangles.toLocaleString('en-US')} tris · {stats.ms.toFixed(0)} ms
+          </span>
+        ) : null}
       </div>
     </div>
   );
