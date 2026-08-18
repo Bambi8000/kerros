@@ -11,8 +11,10 @@ import { buildGeometry } from '../core/mesh';
 import { circleFitsInPart, groupContours } from '../core/slice';
 import type { SliceSet } from '../core/slice';
 import { rodDiameter, rodSpan } from '../core/rig';
+import { socketDiameter } from '../core/fixture';
 import {
   composeField,
+  fixturesFromFeatures,
   hasRotation,
   hasTransform,
   isFieldFeature,
@@ -58,6 +60,8 @@ const COLORS = {
   sheetCurrent: 0xe04a2f,
   rod: 0x8d8a86,
   rodSelected: 0xe04a2f,
+  fixture: 0x4a9fd8,
+  fixtureSelected: 0xe04a2f,
 };
 
 interface ViewportProps {
@@ -195,6 +199,7 @@ export function Viewport({ slices }: ViewportProps) {
   const snapEnabled = useKerros((s) => s.snapEnabled);
 
   const [stats, setStats] = useState<Stats | null>(null);
+  const fixtureCount = features.filter((f) => f.kind.startsWith('fixture:') && f.enabled).length;
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -203,6 +208,7 @@ export function Viewport({ slices }: ViewportProps) {
   const modelRef = useRef<THREE.Group | null>(null);
   const stackRef = useRef<THREE.Group | null>(null);
   const rodsRef = useRef<THREE.Group | null>(null);
+  const fixturesRef = useRef<THREE.Group | null>(null);
   const selectionRef = useRef<THREE.Group | null>(null);
   const proxyRef = useRef<THREE.Object3D | null>(null);
   const cameraRef = useRef<THREE.Camera | null>(null);
@@ -264,6 +270,10 @@ export function Viewport({ slices }: ViewportProps) {
     const rods = new THREE.Group();
     scene.add(rods);
     rodsRef.current = rods;
+
+    const fixtures = new THREE.Group();
+    scene.add(fixtures);
+    fixturesRef.current = fixtures;
 
     const selection = new THREE.Group();
     scene.add(selection);
@@ -348,11 +358,16 @@ export function Viewport({ slices }: ViewportProps) {
 
       // Rods are real meshes and thin, so they get first refusal — otherwise
       // a rod inside the form could never be clicked.
-      const rodGroup = rodsRef.current;
-      if (rodGroup) {
-        const rodHits = raycaster.intersectObjects(rodGroup.children, false);
-        if (rodHits.length > 0) {
-          const id = rodHits[0].object.userData.featureId;
+      // Rods and fixture ghosts get first refusal: they are thin or inside the
+      // form, and could never be clicked otherwise.
+      const pickable = [
+        ...(rodsRef.current ? rodsRef.current.children : []),
+        ...(fixturesRef.current ? fixturesRef.current.children : []),
+      ];
+      if (pickable.length > 0) {
+        const hits = raycaster.intersectObjects(pickable, false);
+        if (hits.length > 0) {
+          const id = hits[0].object.userData.featureId;
           if (typeof id === 'string') {
             selectFeature(id);
             return;
@@ -405,6 +420,7 @@ export function Viewport({ slices }: ViewportProps) {
       disposeChildren(model);
       disposeChildren(stack);
       disposeChildren(rods);
+      disposeChildren(fixtures);
       disposeChildren(selection);
       grid.geometry.dispose();
       (grid.material as THREE.Material).dispose();
@@ -422,6 +438,7 @@ export function Viewport({ slices }: ViewportProps) {
       modelRef.current = null;
       stackRef.current = null;
       rodsRef.current = null;
+      fixturesRef.current = null;
       selectionRef.current = null;
       proxyRef.current = null;
     };
@@ -636,10 +653,82 @@ export function Viewport({ slices }: ViewportProps) {
     }
   }, [features, selectedId, mode]);
 
+  /*
+   * Fixture ghosts.
+   *
+   * Fixtures and perforation are cut per slice, not carved out of the field, so
+   * the model preview cannot show them as holes — that only happens in Slice,
+   * Stack and Sheet. But placing them happens here, with a gizmo, and a gizmo
+   * attached to nothing visible is no way to aim a socket. So each fixture is
+   * drawn as the volume it will remove: see-through, so it reads as void rather
+   * than as material, and clickable, so it can be picked like a rod.
+   */
+  useEffect(() => {
+    const group = fixturesRef.current;
+    if (!group) return;
+
+    disposeChildren(group);
+    if (mode !== 'model') return;
+
+    for (const spec of fixturesFromFeatures(features, 0)) {
+      const height = Math.max(spec.length, 0.5);
+      const selected = spec.id === selectedId;
+      const material = new THREE.MeshStandardMaterial({
+        color: selected ? COLORS.fixtureSelected : COLORS.fixture,
+        roughness: 0.4,
+        metalness: 0,
+        transparent: true,
+        opacity: selected ? 0.5 : 0.3,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+
+      const holder = new THREE.Object3D();
+      holder.position.set(spec.x, spec.y, spec.z);
+      holder.rotation.set(0, 0, (spec.rot * Math.PI) / 180);
+
+      const addCylinder = (d: number, x = 0, y = 0) => {
+        const geometry = new THREE.CylinderGeometry(d / 2, d / 2, height, 24);
+        geometry.rotateX(Math.PI / 2);
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(x, y, 0);
+        mesh.userData.featureId = spec.id;
+        holder.add(mesh);
+      };
+
+      const addBox = (w: number, d: number) => {
+        const geometry = new THREE.BoxGeometry(w, d, height);
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.userData.featureId = spec.id;
+        holder.add(mesh);
+      };
+
+      if (spec.kind === 'socket') {
+        addCylinder(socketDiameter(spec));
+        const screws = Math.max(Math.round(spec.screws), 0);
+        if (screws > 0 && spec.screwDiameter > 0) {
+          const ring = Math.max(spec.boltCircle, 0) / 2;
+          for (let i = 0; i < screws; i++) {
+            const a = (i / screws) * Math.PI * 2;
+            addCylinder(spec.screwDiameter, ring * Math.cos(a), ring * Math.sin(a));
+          }
+        }
+      } else if (spec.kind === 'cable') {
+        if (spec.shape === 'slot') addBox(Math.max(spec.slotLength, 1), Math.max(spec.diameter, 1));
+        else addCylinder(Math.max(spec.diameter, 0.5));
+      } else {
+        addBox(Math.max(spec.width, 1), Math.max(spec.depth, 1));
+      }
+
+      group.add(holder);
+    }
+  }, [features, selectedId, mode]);
+
   // Only one of the two 3D representations is on screen at a time.
   useEffect(() => {
     if (modelRef.current) modelRef.current.visible = mode !== 'stack';
     if (stackRef.current) stackRef.current.visible = mode === 'stack';
+    if (fixturesRef.current) fixturesRef.current.visible = mode === 'model';
     if (selectionRef.current) selectionRef.current.visible = mode === 'model';
     if (mode !== 'model') gizmoRef.current?.detach();
   }, [mode]);
@@ -790,6 +879,10 @@ export function Viewport({ slices }: ViewportProps) {
             ? 'Exploded stack at real layer pitch'
             : `Click a shape to select · M move · R rotate · Esc deselect${
                 displayMode === 'solid' ? '' : ` · ${displayMode}`
+              }${
+                fixtureCount > 0
+                  ? ` · ${fixtureCount} fixture${fixtureCount === 1 ? '' : 's'} shown as ghosts, cut per slice`
+                  : ''
               }`}
         </span>
         {mode === 'stack' && slices ? (

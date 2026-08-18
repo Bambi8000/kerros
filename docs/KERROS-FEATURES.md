@@ -231,6 +231,21 @@ as bites out of the rim.
 Fixtures are applied **after rods and before perforation**, so the pattern sees
 them and keeps its bridge clear of them too.
 
+### What the Model view can and cannot show — M9.1
+
+Windows are volumes in the field, so the preview shows them as real gaps.
+**Fixtures and perforation are not** — they are cut per slice, and no amount of
+looking at the solid will reveal them. They appear in Slice, Stack and Sheet.
+
+That was fine for perforation, which the inspector already said out loud, but
+wrong for fixtures: a fixture is placed with a gizmo, and a gizmo attached to
+nothing visible is no way to aim a socket. So each fixture now draws **the volume
+it will remove** — see-through with depth writes off, so it reads as void rather
+than as material, and clickable, so it can be picked like a rod.
+
+Perforation gets no ghosts on purpose. A few hundred translucent cylinders would
+bury the form they are meant to describe.
+
 ### Centre on model — M9
 
 Windows and fixtures carry their own axis and do not follow the form when it

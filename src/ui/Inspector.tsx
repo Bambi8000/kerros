@@ -424,6 +424,11 @@ function FixtureInspector({ feature, misses }: FixtureProps) {
           </div>
         ) : null}
         <div className="derived">
+          Cut per slice, so the Model view cannot show it as a hole — it draws
+          the volume it will remove as a see-through ghost you can grab instead.
+          The actual holes appear in Slice, Stack and Sheet.
+        </div>
+        <div className="derived">
           Every dimension here is a default, not a fact. Sockets vary by make,
           Wago cases by series, cable by whatever was in the drawer. Measure the
           part in your hand before the first cut.
@@ -773,8 +778,9 @@ function PatternInspector({ feature, placed, sliced }: PatternProps) {
         </label>
         {!sliced ? (
           <div className="warn">
-            Patterns are cut per slice, so they do not appear in the Model
-            preview at all. Open Slice, Stack or Sheet to see them.
+            Cut per slice, so perforation never appears in the Model preview —
+            not as holes, and not as ghosts either, since a few hundred of them
+            would bury the form. Open Slice, Stack or Sheet to see it.
           </div>
         ) : placed === 0 ? (
           <div className="warn">
