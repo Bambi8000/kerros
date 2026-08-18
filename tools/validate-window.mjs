@@ -16,6 +16,10 @@ import {
   windowSpansZ,
   windowField,
   stockField,
+  wedgesForLayer,
+  windowedLayers,
+  layerIndexAt,
+  layerMidZ,
 } from '../src/core/window.ts';
 
 import { sliceModel, signedArea } from '../src/core/slice.ts';
@@ -48,6 +52,13 @@ function win(overrides = {}) {
   return {
     id: 'w1',
     label: 'Window 1',
+    mode: 'band',
+    chance: 1,
+    minCount: 1,
+    maxCount: 2,
+    minWidth: 20,
+    maxWidth: 60,
+    seed: 7,
     count: 4,
     width: 40,
     angle: 0,
@@ -320,6 +331,148 @@ console.log('window: degenerate settings');
   );
 
   check('the axis itself does not divide by zero', Number.isFinite(sectorDistance(0, 0, 45, win())));
+}
+
+console.log('window: per-layer rolls');
+{
+  const plan = { z0: 0, pitch: 9 };
+  const thickness = 3;
+  const spec = win({
+    mode: 'perLayer',
+    chance: 0.35,
+    minCount: 1,
+    maxCount: 2,
+    minWidth: 20,
+    maxWidth: 60,
+    z: 45,
+    length: 90,
+    seed: 7,
+  });
+
+  check('the layer index follows the pitch', layerIndexAt(plan, layerMidZ(plan, 5, thickness), thickness) === 5);
+  check('and the mid-plane is where the slicer puts it', Math.abs(layerMidZ(plan, 0, thickness) - 1.5) < 1e-9);
+
+  const rolls = [];
+  for (let k = 0; k < 40; k++) rolls.push(wedgesForLayer(spec, k).length);
+  const withWindows = rolls.filter((n) => n > 0).length;
+  check(
+    'roughly the requested share of layers get windows',
+    withWindows > 40 * 0.15 && withWindows < 40 * 0.6,
+    `${withWindows} of 40 at chance ${spec.chance}`,
+  );
+  check('most layers get none', withWindows < 40);
+  check(
+    'a chosen layer gets between one and two',
+    rolls.every((n) => n === 0 || (n >= 1 && n <= 2)),
+    rolls.join(''),
+  );
+
+  const always = win({ ...spec, chance: 1 });
+  check('chance 1 gives every layer windows', [0, 1, 2, 3, 4].every((k) => wedgesForLayer(always, k).length > 0));
+  const never = win({ ...spec, chance: 0 });
+  check('chance 0 gives none', [0, 1, 2, 3, 4].every((k) => wedgesForLayer(never, k).length === 0));
+
+  const widths = [];
+  for (let k = 0; k < 60; k++) {
+    for (const wedge of wedgesForLayer(always, k)) widths.push((wedge.half * 2) / DEG);
+  }
+  check('widths stay inside the range', widths.every((w) => w >= 19.9 && w <= 60.1), 
+    `${Math.min(...widths).toFixed(1)} to ${Math.max(...widths).toFixed(1)}`);
+  check('and they actually vary', Math.max(...widths) - Math.min(...widths) > 10);
+
+  // Compare on a layer that actually rolled something. Comparing two empty
+  // rolls would pass whatever the seeding did, which is no test at all.
+  const busy = win({ ...spec, chance: 1 });
+  const a = wedgesForLayer(busy, 12);
+  const b = wedgesForLayer(busy, 12);
+  check('the layer rolled something to compare', a.length > 0);
+  check('the same layer rolls the same every time', JSON.stringify(a) === JSON.stringify(b));
+
+  const otherSeed = wedgesForLayer(win({ ...busy, seed: 8 }), 12);
+  check('a different seed rolls differently', JSON.stringify(a) !== JSON.stringify(otherSeed));
+
+  const otherId = wedgesForLayer(win({ ...busy, id: 'w2' }), 12);
+  check('so does a different feature, at the same layer', JSON.stringify(a) !== JSON.stringify(otherId));
+
+  const otherLayer = wedgesForLayer(busy, 13);
+  check('and so does the next layer up', JSON.stringify(a) !== JSON.stringify(otherLayer));
+
+  const shifted = wedgesForLayer(win({ ...spec, minCount: 3, maxCount: 3 }), 12);
+  check(
+    'changing the count does not change whether a layer was chosen',
+    (wedgesForLayer(spec, 12).length > 0) === (shifted.length > 0),
+  );
+}
+
+console.log('window: per-layer field');
+{
+  const model = tube();
+  const plan = { z0: 0, pitch: 9 };
+  const thickness = 3;
+  const spec = win({ mode: 'perLayer', chance: 1, minCount: 1, maxCount: 1, minWidth: 40, maxWidth: 40, z: 45, length: 90 });
+
+  const layer = 4;
+  const mid = layerMidZ(plan, layer, thickness);
+  const wedges = wedgesForLayer(spec, layer);
+  check('the test layer has a window', wedges.length === 1);
+
+  const dir = wedges[0].angle * DEG;
+  const inWindow = [55 * Math.cos(dir), 55 * Math.sin(dir)];
+  check(
+    'the field is open there on that layer',
+    sectorDistance(inWindow[0], inWindow[1], mid, spec, plan, thickness) < 0,
+  );
+
+  // Each layer rolls independently, so the windows walk around the stack
+  // rather than lining up into a slot down the side.
+  const angles = [];
+  for (let k = 0; k < 20; k++) {
+    for (const w of wedgesForLayer(spec, k)) angles.push(((w.angle % 360) + 360) % 360);
+  }
+  const spread = Math.max(...angles) - Math.min(...angles);
+  check('window angles walk around the stack', spread > 90, `spread ${spread.toFixed(0)}°`);
+
+  // And a layer that rolled nothing is not cut anywhere.
+  const quiet = win({ ...spec, chance: 0 });
+  check(
+    'a layer with no windows is left whole',
+    sectorDistance(inWindow[0], inWindow[1], mid, quiet, plan, thickness) > 0,
+  );
+
+  const outsideBand = sectorDistance(inWindow[0], inWindow[1], 200, spec, plan, thickness);
+  check('nothing is cut outside the band', outsideBand > 0);
+
+  const stock = stockField(model.solid, [spec], plan, thickness);
+  check('the stock is open at the window', stock(inWindow[0], inWindow[1], mid) > 0);
+  check('and solid a quarter turn away', stock(
+    55 * Math.cos(dir + Math.PI / 2),
+    55 * Math.sin(dir + Math.PI / 2),
+    mid,
+  ) < 0);
+
+  const plug = windowField(model.solid, spec, plan, thickness);
+  check('the plug exists where the window is', plug(inWindow[0], inWindow[1], mid) < 0);
+  check(
+    'the plug face sits half the fit inside the hole face',
+    Math.abs(
+      plug(
+        55 * Math.cos(dir + wedges[0].half),
+        55 * Math.sin(dir + wedges[0].half),
+        mid,
+      ) - spec.fit / 2,
+    ) < 1e-6,
+  );
+
+  // Band 0..90 at pitch 9 with mid-planes at 1.5 + 9k puts ten of them inside.
+  const layers = windowedLayers(spec, plan, thickness, 12);
+  check('every layer whose mid-plane is in the band is reported', layers.length === 10, `${layers.length}`);
+  check('and none whose mid-plane is above it', layers.every((k) => layerMidZ(plan, k, thickness) <= 90));
+
+  const sparse = windowedLayers(win({ ...spec, chance: 0.2 }), plan, thickness, 40);
+  check('a low chance reports only a few', sparse.length > 0 && sparse.length < 20, `${sparse.length} of 40`);
+
+  const banded = windowedLayers(win({ mode: 'band' }), plan, thickness, 40);
+  check('band mode reports every layer inside the band', banded.length > 0);
 }
 
 console.log('');

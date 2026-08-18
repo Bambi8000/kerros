@@ -729,7 +729,14 @@ export function Viewport({ slices }: ViewportProps) {
       const started = performance.now();
       // The composed field, so a window shows as a gap in the preview rather
       // than appearing only once the model is sliced.
-      const field = composeField(features, 0);
+      const state = useKerros.getState();
+      const field = composeField(
+        features,
+        state.material.kerf,
+        state.seed,
+        state.material.thickness,
+        state.material.thickness + state.stack.spacerHeight,
+      );
       const grid = evaluateGridSampled(field.sample, field.bounds, previewRes);
       const mesh = surfaceNets(grid);
       const elapsed = performance.now() - started;

@@ -128,12 +128,15 @@ function WindowInspector({ feature }: { feature: Feature }) {
   const renameFeature = useKerros((s) => s.renameFeature);
   const stockKerf = useKerros((s) => s.material.kerf);
 
+  const mode = text(feature.params, 'mode', 'perLayer');
+  const perLayer = mode === 'perLayer';
   const count = num(feature.params, 'count', 4);
   const width = num(feature.params, 'width', 40);
   const fit = num(feature.params, 'fit', 0.4);
   const windowKerf = num(feature.params, 'windowKerf', stockKerf);
   const share = 360 / Math.max(Math.round(count), 1);
   const clamped = Math.min(width, share * 0.9, 178);
+  const chance = num(feature.params, 'chance', 0.3);
 
   return (
     <>
@@ -149,6 +152,18 @@ function WindowInspector({ feature }: { feature: Feature }) {
             />
           </span>
         </label>
+        <label className="field">
+          <span className="field-label">Mode</span>
+          <span className="field-input">
+            <select
+              value={mode}
+              onChange={(e) => setParam(feature.id, 'mode', e.target.value)}
+            >
+              <option value="perLayer">Per layer, random</option>
+              <option value="band">One set all the way up</option>
+            </select>
+          </span>
+        </label>
         <div className="derived">
           Takes a wedge out of the form, and the piece that came out becomes a
           part of its own on its own sheets — plexi in cardboard. The plug and
@@ -156,25 +171,84 @@ function WindowInspector({ feature }: { feature: Feature }) {
         </div>
       </div>
 
+      {perLayer ? (
+        <div className="group">
+          <div className="group-head">Rolls</div>
+          <NumberField
+            label="Chance"
+            value={chance}
+            step={0.05}
+            min={0}
+            max={1}
+            onChange={(v) => setParam(feature.id, 'chance', v)}
+          />
+          <NumberField
+            label="Count from"
+            value={num(feature.params, 'minCount', 1)}
+            step={1}
+            min={1}
+            max={12}
+            onChange={(v) => setParam(feature.id, 'minCount', Math.max(Math.round(v), 1))}
+          />
+          <NumberField
+            label="Count to"
+            value={num(feature.params, 'maxCount', 2)}
+            step={1}
+            min={1}
+            max={12}
+            onChange={(v) => setParam(feature.id, 'maxCount', Math.max(Math.round(v), 1))}
+          />
+          <NumberField
+            label="Width from"
+            value={num(feature.params, 'minWidth', 20)}
+            unit="°"
+            step={5}
+            min={0}
+            max={180}
+            onChange={(v) => setParam(feature.id, 'minWidth', v)}
+          />
+          <NumberField
+            label="Width to"
+            value={num(feature.params, 'maxWidth', 60)}
+            unit="°"
+            step={5}
+            min={0}
+            max={180}
+            onChange={(v) => setParam(feature.id, 'maxWidth', v)}
+          />
+          <div className="derived">
+            Every layer inside the band rolls for itself: at {(chance * 100).toFixed(0)}%
+            about {(chance * 100).toFixed(0)} layers in a hundred get windows, the rest
+            stay whole. Seeded from the global seed and this feature&rsquo;s id, so the
+            same lamp comes out the same, and changing one setting does not
+            reshuffle which layers were chosen.
+          </div>
+        </div>
+      ) : null}
+
       <div className="group">
-        <div className="group-head">Wedge</div>
-        <NumberField
-          label="Count"
-          value={count}
-          step={1}
-          min={1}
-          max={48}
-          onChange={(v) => setParam(feature.id, 'count', Math.max(Math.round(v), 1))}
-        />
-        <NumberField
-          label="Width"
-          value={width}
-          unit="°"
-          step={5}
-          min={0}
-          max={180}
-          onChange={(v) => setParam(feature.id, 'width', v)}
-        />
+        <div className="group-head">{perLayer ? 'Placement' : 'Wedge'}</div>
+        {perLayer ? null : (
+          <>
+            <NumberField
+              label="Count"
+              value={count}
+              step={1}
+              min={1}
+              max={48}
+              onChange={(v) => setParam(feature.id, 'count', Math.max(Math.round(v), 1))}
+            />
+            <NumberField
+              label="Width"
+              value={width}
+              unit="°"
+              step={5}
+              min={0}
+              max={180}
+              onChange={(v) => setParam(feature.id, 'width', v)}
+            />
+          </>
+        )}
         <NumberField
           label="Angle"
           value={num(feature.params, 'angle', 0)}
@@ -184,24 +258,27 @@ function WindowInspector({ feature }: { feature: Feature }) {
           max={360}
           onChange={(v) => setParam(feature.id, 'angle', v)}
         />
-        <NumberField
-          label="Twist"
-          value={num(feature.params, 'twist', 0)}
-          unit="°/mm"
-          step={0.1}
-          min={-20}
-          max={20}
-          onChange={(v) => setParam(feature.id, 'twist', v)}
-        />
-        {clamped < width - 1e-9 ? (
+        {perLayer ? null : (
+          <NumberField
+            label="Twist"
+            value={num(feature.params, 'twist', 0)}
+            unit="°/mm"
+            step={0.1}
+            min={-20}
+            max={20}
+            onChange={(v) => setParam(feature.id, 'twist', v)}
+          />
+        )}
+        {!perLayer && clamped < width - 1e-9 ? (
           <div className="warn">
             {width}° will not fit {count} times round; using {clamped.toFixed(1)}°.
             Wider windows would meet and the ring would fall into loose arcs.
           </div>
         ) : null}
         <div className="derived">
-          Twist turns the set as it goes up, so the windows spiral through the
-          stack and no two layers line up.
+          {perLayer
+            ? 'Angle offsets where each layer starts placing its windows. Each layer jitters them within their own share of the circle, so two never merge into one wide opening.'
+            : 'Twist turns the set as it goes up, so the windows spiral through the stack and no two layers line up.'}
         </div>
       </div>
 
@@ -223,8 +300,8 @@ function WindowInspector({ feature }: { feature: Feature }) {
           onChange={(v) => setParam(feature.id, 'length', v)}
         />
         <div className="derived">
-          Only layers inside the band get windows. Everything above and below is
-          solid stock.
+          Only layers whose mid-plane falls inside the band can get windows.
+          Everything above and below is solid stock.
         </div>
       </div>
 

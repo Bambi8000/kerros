@@ -24,9 +24,35 @@
 
 const DEG = Math.PI / 180;
 
+/**
+ * How the windows are laid out along the stack.
+ *
+ *   band     one set of windows, the same all the way up, optionally twisting
+ *   perLayer each layer independently rolls its own — a window is then a thing
+ *            that happens to a sheet, not a slot down the side of the lamp
+ */
+export type WindowMode = 'band' | 'perLayer';
+
+/** Where the layers are, so per-layer windows can land on them exactly. */
+export interface LayerPlan {
+  /** Bottom of the stack, mm. */
+  z0: number;
+  /** Layer pitch: material thickness plus spacer, mm. */
+  pitch: number;
+}
+
+/** One wedge on one layer. */
+export interface Wedge {
+  /** Centre direction, degrees. */
+  angle: number;
+  /** Half-width, radians, already clamped. */
+  half: number;
+}
+
 export interface WindowSpec {
   id: string;
   label: string;
+  mode: WindowMode;
   /** How many windows evenly around the axis. */
   count: number;
   /** Angular width of each, degrees. */
@@ -46,6 +72,18 @@ export interface WindowSpec {
   fit: number;
   /** Kerf of the material the window is cut from — plexi, not the stock. */
   kerf: number;
+
+  /* perLayer only. */
+  /** Chance a layer inside the band gets any windows at all, 0..1. */
+  chance: number;
+  /** How many windows a chosen layer gets. */
+  minCount: number;
+  maxCount: number;
+  /** Angular width range of each, degrees. */
+  minWidth: number;
+  maxWidth: number;
+  /** Global seed, so the whole lamp reproduces. */
+  seed: number;
 }
 
 /**
@@ -57,6 +95,82 @@ export interface WindowSpec {
  */
 const MAX_SHARE = 0.9;
 const MAX_HALF_ANGLE = 89 * DEG;
+
+/** Deterministic PRNG. */
+function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** A small stable number from a string, so a feature's id can seed with it. */
+function hashId(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/** Which layer a height belongs to, by nearest mid-plane. */
+export function layerIndexAt(plan: LayerPlan, z: number, thickness: number): number {
+  const pitch = Math.max(plan.pitch, 1e-6);
+  return Math.round((z - plan.z0 - thickness / 2) / pitch);
+}
+
+/** Mid-plane of a layer. */
+export function layerMidZ(plan: LayerPlan, index: number, thickness: number): number {
+  return plan.z0 + index * plan.pitch + thickness / 2;
+}
+
+/**
+ * The wedges one layer rolls for itself.
+ *
+ * Seeded from the global seed, the feature's id and the layer number, so the
+ * same lamp comes out the same every time, adding a feature does not reshuffle
+ * the others, and layer 7 keeps its windows when layer 3 changes.
+ *
+ * Returns nothing at all for most layers when `chance` is low, which is the
+ * point: a window is an event that happens to a sheet.
+ */
+export function wedgesForLayer(spec: WindowSpec, layer: number): Wedge[] {
+  const random = mulberry32(spec.seed * 2654435761 + hashId(spec.id) + layer * 40503);
+
+  if (random() > Math.min(Math.max(spec.chance, 0), 1)) return [];
+
+  const lo = Math.max(Math.round(Math.min(spec.minCount, spec.maxCount)), 1);
+  const hi = Math.max(Math.round(Math.max(spec.minCount, spec.maxCount)), lo);
+  const count = lo + Math.floor(random() * (hi - lo + 1));
+
+  const widthLo = Math.max(Math.min(spec.minWidth, spec.maxWidth), 0);
+  const widthHi = Math.max(spec.minWidth, spec.maxWidth);
+
+  // Windows are placed in their own share of the circle and jittered within
+  // it, rather than thrown down anywhere: two that landed on top of each other
+  // would merge into one wide opening and the reason for the count would be
+  // lost.
+  const share = 360 / count;
+  const wedges: Wedge[] = [];
+
+  for (let i = 0; i < count; i++) {
+    const width = widthLo + random() * (widthHi - widthLo);
+    const jitter = (random() - 0.5) * share * 0.5;
+    const half = Math.min(
+      (width / 2) * DEG,
+      ((share / 2) * MAX_SHARE) * DEG,
+      MAX_HALF_ANGLE,
+    );
+    if (half <= 0) continue;
+    wedges.push({ angle: spec.angle + i * share + jitter, half });
+  }
+
+  return wedges;
+}
 
 /** Half-angle actually used, after the ceilings. */
 export function windowHalfAngle(spec: WindowSpec): number {
@@ -73,12 +187,62 @@ export function windowHalfAngle(spec: WindowSpec): number {
  * approximation the two-half-plane form makes at the apex falls where there is
  * no material to get wrong.
  */
+/** Distance to one wedge, infinite prism about the Z axis. */
+function wedgeDistance(x: number, y: number, wedge: Wedge): number {
+  const radius = Math.hypot(x, y);
+  if (radius < 1e-9) return -radius;
+  const a = Math.atan2(y, x) - wedge.angle * DEG;
+  const u = radius * Math.cos(a);
+  const v = radius * Math.sin(a);
+  return Math.abs(v) * Math.cos(wedge.half) - u * Math.sin(wedge.half);
+}
+
+/**
+ * Distance to the sector volume in per-layer mode.
+ *
+ * Each layer's windows live in that layer's own band, one pitch tall and
+ * centred on its mid-plane. The field is therefore continuous within a layer
+ * and steps between layers, which is exactly what the physical stack does —
+ * every sheet is cut on its own.
+ */
+function perLayerDistance(
+  x: number,
+  y: number,
+  z: number,
+  spec: WindowSpec,
+  plan: LayerPlan,
+  thickness: number,
+): number {
+  const halfLength = Math.max(spec.length, 0.01) / 2;
+  const band = Math.max(z - (spec.z + halfLength), spec.z - halfLength - z);
+
+  const layer = layerIndexAt(plan, z, thickness);
+  const wedges = wedgesForLayer(spec, layer);
+  if (wedges.length === 0) return Math.abs(band) + 1e3;
+
+  const mid = layerMidZ(plan, layer, thickness);
+  const halfPitch = Math.max(plan.pitch, 1e-6) / 2;
+  const slab = Math.max(z - (mid + halfPitch), mid - halfPitch - z);
+
+  let d = Infinity;
+  for (const wedge of wedges) d = Math.min(d, wedgeDistance(x, y, wedge));
+
+  return Math.max(d, slab, band);
+}
+
 export function sectorDistance(
   x: number,
   y: number,
   z: number,
   spec: WindowSpec,
+  plan?: LayerPlan,
+  thickness = 3,
 ): number {
+  if (spec.mode === 'perLayer') {
+    if (!plan) return 1e3;
+    return perLayerDistance(x, y, z, spec, plan, thickness);
+  }
+
   const count = Math.max(Math.round(spec.count), 1);
   const share = (Math.PI * 2) / count;
   const half = windowHalfAngle(spec);
@@ -122,9 +286,12 @@ export function windowSpansZ(spec: WindowSpec, z: number): boolean {
 export function windowField(
   solid: (x: number, y: number, z: number) => number,
   spec: WindowSpec,
+  plan?: LayerPlan,
+  thickness = 3,
 ): (x: number, y: number, z: number) => number {
   const inset = Math.max(spec.fit, 0) / 2;
-  return (x, y, z) => Math.max(solid(x, y, z), sectorDistance(x, y, z, spec)) + inset;
+  return (x, y, z) =>
+    Math.max(solid(x, y, z), sectorDistance(x, y, z, spec, plan, thickness)) + inset;
 }
 
 /**
@@ -137,13 +304,32 @@ export function windowField(
 export function stockField(
   solid: (x: number, y: number, z: number) => number,
   windows: WindowSpec[],
+  plan?: LayerPlan,
+  thickness = 3,
 ): (x: number, y: number, z: number) => number {
   if (windows.length === 0) return solid;
   return (x, y, z) => {
     let d = solid(x, y, z);
     for (const spec of windows) {
-      d = Math.max(d, -sectorDistance(x, y, z, spec));
+      d = Math.max(d, -sectorDistance(x, y, z, spec, plan, thickness));
     }
     return d;
   };
+}
+
+/** Layers inside the band that rolled at least one window, for reporting. */
+export function windowedLayers(
+  spec: WindowSpec,
+  plan: LayerPlan,
+  thickness: number,
+  layerCount: number,
+): number[] {
+  const out: number[] = [];
+  const halfLength = Math.max(spec.length, 0) / 2;
+  for (let k = 0; k < layerCount; k++) {
+    const z = layerMidZ(plan, k, thickness);
+    if (z < spec.z - halfLength || z > spec.z + halfLength) continue;
+    if (spec.mode === 'band' || wedgesForLayer(spec, k).length > 0) out.push(k);
+  }
+  return out;
 }

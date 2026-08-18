@@ -60,7 +60,7 @@ export function useSlices(enabled: boolean): SliceResult {
     setResult((prev) => ({ ...prev, pending: true }));
 
     const timer = window.setTimeout(() => {
-      const field = composeField(features, kerf);
+      const field = composeField(features, kerf, seed, thickness, thickness + spacerHeight);
       const bounds = field.bounds;
 
       if (!bounds) {
@@ -79,7 +79,7 @@ export function useSlices(enabled: boolean): SliceResult {
       // they are cut from their own material.
       const windows = field.windows.map((spec) => ({
         label: spec.label,
-        set: sliceModel(windowField(field.solid, spec), bounds, {
+        set: sliceModel(windowField(field.solid, spec, field.plan, field.thickness), bounds, {
           ...layerOptions,
           kerf: spec.kerf,
         }),

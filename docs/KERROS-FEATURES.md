@@ -224,6 +224,43 @@ pieces of code agree about a wedge.
 `twist` spirals the windows up the stack, so no two layers line up — the same
 idea as turning the perforation lattice per layer, and the same reason.
 
+### Per layer, random — M8.1
+
+The default mode. A window is **something that happens to a sheet**, not a slot
+down the side of the lamp: each layer inside the band rolls for itself, and most
+layers roll nothing.
+
+| Param | Meaning | Default |
+| --- | --- | --- |
+| `chance` | probability a layer gets any windows | 0.3 |
+| `minCount` `maxCount` | how many that layer gets | 1 to 2 |
+| `minWidth` `maxWidth` | angular width range of each, degrees | 20 to 60 |
+
+The field stays a field. Each layer's windows live in a band one pitch tall
+centred on that layer's mid-plane, so the whole thing is still one distance
+function — continuous within a layer, stepping between layers, which is exactly
+what a stack of separately cut sheets does. `LayerPlan` carries the bottom of
+the model and the pitch, built from the same numbers the slicer uses, so a
+window lands on the plane the slice is taken on rather than near it.
+
+Rolls are seeded from the global seed, the feature's **id**, and the layer
+number. Three consequences worth having: the same lamp comes out the same,
+adding a second window feature does not reshuffle the first, and changing the
+count or width does not change *which* layers were chosen — a validator checks
+that last one specifically, because it is the difference between adjusting a
+design and rerolling it.
+
+Windows on one layer are placed in their own share of the circle and jittered
+within it, rather than thrown anywhere: two that landed on top of each other
+would merge into one wide opening and the count would stop meaning anything.
+
+A real run — 120 mm sphere, 10 mm shell, chance 0.3 over a 78 mm band — put
+windows on two of fourteen layers, each breaking its ring into two arcs and
+producing two plexi plugs.
+
+`band` mode is still there, unchanged, for one set of windows running the whole
+height with an optional twist.
+
 ### Kerf pulls the two apart in opposite directions
 
 This is the part that has to be right or nothing fits. The hole is a hole, so

@@ -17,7 +17,7 @@ import {
   shellModifier,
 } from './sdf';
 import { stockField } from './window';
-import type { WindowSpec } from './window';
+import type { LayerPlan, WindowSpec } from './window';
 import { ROD_CLEARANCE } from './rig';
 import type { RodSpec } from './rig';
 import type { PartPlacement } from './nest';
@@ -332,6 +332,14 @@ export const useKerros = create<KerrosState>((set, get) => ({
             name: `Window ${count}`,
             enabled: true,
             params: {
+              // Per layer by default: a window that happens to a sheet reads as
+              // a lamp, where a slot down the whole side reads as a mistake.
+              mode: 'perLayer',
+              chance: 0.3,
+              minCount: 1,
+              maxCount: 2,
+              minWidth: 20,
+              maxWidth: 60,
               count: 4,
               width: 40,
               angle: 0,
@@ -726,13 +734,25 @@ export function shellWallOf(features: Feature[]): number {
 }
 
 /** Window features of a tree, as the window module wants them. */
-export function windowsFromFeatures(features: Feature[], fallbackKerf: number): WindowSpec[] {
+export function windowsFromFeatures(
+  features: Feature[],
+  fallbackKerf: number,
+  seed: number,
+): WindowSpec[] {
   const out: WindowSpec[] = [];
   for (const f of features) {
     if (f.kind !== 'window' || !f.enabled) continue;
+    const mode = f.params.mode === 'band' ? 'band' : 'perLayer';
     out.push({
       id: f.id,
       label: f.name,
+      mode,
+      chance: Math.min(Math.max(Number(f.params.chance) ?? 0.3, 0), 1),
+      minCount: Math.max(Math.round(Number(f.params.minCount) || 1), 1),
+      maxCount: Math.max(Math.round(Number(f.params.maxCount) || 1), 1),
+      minWidth: Math.max(Number(f.params.minWidth) || 0, 0),
+      maxWidth: Math.max(Number(f.params.maxWidth) || 0, 0),
+      seed,
       count: Math.max(Math.round(Number(f.params.count) || 1), 1),
       width: Number(f.params.width) || 0,
       angle: Number(f.params.angle) || 0,
@@ -754,17 +774,31 @@ export function windowsFromFeatures(features: Feature[], fallbackKerf: number): 
  * out of it — the plug of each window is cut from that, so it has to stay
  * available separately.
  */
-export function composeField(features: Feature[], kerf: number) {
+export function composeField(
+  features: Feature[],
+  kerf: number,
+  seed: number,
+  thickness: number,
+  pitch: number,
+) {
   const fieldFeatures = features.filter(isFieldFeature);
   const prepared = prepareFeatures(fieldFeatures);
-  const windows = windowsFromFeatures(features, kerf);
+  const windows = windowsFromFeatures(features, kerf, seed);
+  const bounds = modelBounds(fieldFeatures);
+
+  // Per-layer windows have to land on the same planes the slicer will take, so
+  // the layer plan is built from the same numbers: the bottom of the model and
+  // the pitch.
+  const plan: LayerPlan = { z0: bounds ? bounds.min[2] : 0, pitch: Math.max(pitch, 0.01) };
 
   const solid = (x: number, y: number, z: number) => evaluatePoint(prepared, x, y, z);
 
   return {
     solid,
-    sample: stockField(solid, windows),
+    sample: stockField(solid, windows, plan, thickness),
     windows,
-    bounds: modelBounds(fieldFeatures),
+    plan,
+    thickness,
+    bounds,
   };
 }
