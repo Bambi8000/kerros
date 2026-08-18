@@ -15,6 +15,7 @@ import { socketDiameter } from '../core/fixture';
 import {
   composeField,
   fixturesFromFeatures,
+  importEntry,
   hasRotation,
   hasTransform,
   isFieldFeature,
@@ -162,10 +163,27 @@ function tidy(value: number) {
 
 /** Wireframe box around the selected feature's own bounds. */
 function makeSelectionOutline(feature: Feature): THREE.Object3D | null {
-  const mod = findModule(feature.kind);
-  if (!mod) return null;
+  // An import has no module to ask, so its box comes from the baked mesh — and
+  // it has to be scaled, or the outline sits nowhere near the thing it marks.
+  let b: [number, number, number, number, number, number];
 
-  const b = mod.bounds(feature.params);
+  if (feature.kind === 'import') {
+    const entry = importEntry(feature.id);
+    if (!entry) return null;
+    const s = Math.max(num(feature.params, 'scale', 1), 1e-4);
+    b = [
+      entry.soup.min[0] * s,
+      entry.soup.min[1] * s,
+      entry.soup.min[2] * s,
+      entry.soup.max[0] * s,
+      entry.soup.max[1] * s,
+      entry.soup.max[2] * s,
+    ];
+  } else {
+    const mod = findModule(feature.kind);
+    if (!mod) return null;
+    b = mod.bounds(feature.params);
+  }
   const sx = Math.max(b[3] - b[0], 0.1);
   const sy = Math.max(b[4] - b[1], 0.1);
   const sz = Math.max(b[5] - b[2], 0.1);

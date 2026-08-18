@@ -2,6 +2,7 @@ import {
   BRUSH_OPS,
   attachableShapes,
   importEntry,
+  importSizeOf,
   rodSpanOf,
   shellWallOf,
   useKerros,
@@ -148,6 +149,7 @@ function ImportInspector({ feature }: { feature: Feature }) {
   const renameFeature = useKerros((s) => s.renameFeature);
   const loadImport = useKerros((s) => s.loadImport);
   const rebakeImport = useKerros((s) => s.rebakeImport);
+  const fitImportSize = useKerros((s) => s.fitImportSize);
   // Read so the panel refreshes when a bake finishes; the grids live elsewhere.
   const revision = useKerros((s) => s.importRevision);
   const wall = useKerros((s) => shellWallOf(s.features));
@@ -159,6 +161,12 @@ function ImportInspector({ feature }: { feature: Feature }) {
   const path = text(feature.params, 'path', '');
   const error = text(feature.params, 'error', '');
   const resolution = num(feature.params, 'resolution', 80);
+  const scale = num(feature.params, 'scale', 1);
+  const size = importSizeOf(feature);
+  const longest = size ? Math.max(size[0], size[1], size[2]) : 0;
+  // The exact band scales with everything else, so that is what a shell has to
+  // fit inside.
+  const scaledReach = entry ? entry.grid.reach * scale : 0;
 
   const pick = async () => {
     const file = await openBinary(['stl', 'obj'], '.stl,.obj');
@@ -218,6 +226,45 @@ function ImportInspector({ feature }: { feature: Feature }) {
         ) : null}
       </div>
 
+      {entry ? (
+        <div className="group">
+          <div className="group-head">Size</div>
+          <NumberField
+            label="Longest axis"
+            value={Math.round(longest * 100) / 100}
+            unit="mm"
+            step={1}
+            min={0.1}
+            max={5000}
+            onChange={(v) => fitImportSize(feature.id, v)}
+          />
+          <NumberField
+            label="Scale"
+            value={scale}
+            step={0.05}
+            min={0.001}
+            max={1000}
+            onChange={(v) => setParam(feature.id, 'scale', v)}
+          />
+          {size ? (
+            <div className="derived derived-strong">
+              {size[0].toFixed(1)} × {size[1].toFixed(1)} × {size[2].toFixed(1)} mm
+              <span className="derived-sub">
+                on the bed, at scale {scale}
+              </span>
+            </div>
+          ) : null}
+          <div className="derived">
+            Uniform, and uniform on purpose: multiplying every distance by the
+            same number leaves a true distance field, so blends and kerf keep
+            meaning what they say. Scaling the axes independently is what breaks
+            that, which is why no primitive has a scale at all. An import needs
+            one because it arrives at whatever size the exporter left it — often
+            in inches.
+          </div>
+        </div>
+      ) : null}
+
       <div className="group">
         <div className="group-head">Sampling</div>
         <label className="field">
@@ -242,12 +289,17 @@ function ImportInspector({ feature }: { feature: Feature }) {
           whatever they sample it at. Detail finer than one sample is gone for
           good, which is the honest cost of importing rather than modelling.
         </div>
-        {entry && wall > 0 && wall > entry.grid.reach - 1 ? (
+        {entry ? (
+          <div className="derived">
+            Exact to {scaledReach.toFixed(1)} mm from the surface at this scale.
+          </div>
+        ) : null}
+        {entry && wall > 0 && wall > scaledReach - 1 ? (
           <div className="warn">
             The shell wall is {wall} mm but the imported field is only exact{' '}
-            {entry.grid.reach.toFixed(1)} mm in. Raise the resolution or thin the
-            wall, or the cavity will sit where the field was clamped rather than
-            where it belongs.
+            {scaledReach.toFixed(1)} mm in. Raise the resolution, scale the mesh
+            up, or thin the wall — otherwise the cavity sits where the field was
+            clamped rather than where it belongs.
           </div>
         ) : null}
       </div>

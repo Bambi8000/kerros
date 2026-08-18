@@ -1145,6 +1145,32 @@ deep enough for any wall anyone would cut from sheet, on a trinket and on a shad
 alike. The inspector reports it in millimetres and warns when a shell in the tree
 is thicker.
 
+### Uniform scale, and only for imports
+
+No primitive has a scale, and the reason is written into `TRANSFORM_PARAMS`:
+non-uniform scaling destroys the distance property, which blends and kerf
+offsetting both depend on. **Uniform scaling does not.** `s · d(p / s)`
+multiplies every distance by the same number, so the field stays true and a
+10 mm blend still means 10 mm.
+
+An import needs it. A mesh arrives at whatever size the exporter left it, often
+in inches or at a hundred times the intended size, and a feature that cannot be
+resized is a feature nobody can use. So an import carries `scale`, uniform, and
+gets a gizmo like anything else with a position — `hasTransform` and
+`hasRotation` had both missed it, which is why neither the gizmo nor the
+selection outline appeared.
+
+The inspector leads with **longest axis in millimetres** rather than the
+multiplier, because the actual thought is "make this 180 mm tall", not "multiply
+by 2.3714". The measurement is taken from the mesh itself rather than the padded
+grid: the person means the object, not the box of air around it. Scale survives
+replacing the file, since resizing is usually the first thing done to an import
+and should not be undone by swapping in a fixed version of the same mesh.
+
+The reach scales too, so the shell warning compares the wall against
+`reach × scale`. Scaling a small import up is therefore also a way to make it
+shellable.
+
 ### The project file records the path, not the geometry
 
 A 96³ grid is 884,000 floats. Embedding that as base64 would break the one thing

@@ -168,6 +168,8 @@ interface KerrosState {
   loadImport: (id: string | null, name: string, bytes: Uint8Array) => string;
   /** Re-bake an already loaded mesh at another resolution. */
   rebakeImport: (id: string, resolution: number) => void;
+  /** Scale an import so its longest axis measures this, in mm. */
+  fitImportSize: (id: string, mm: number) => void;
   /**
    * Bumped whenever a mesh is baked. Grids live outside the store — they are
    * megabytes of Float32 and have no business in a state object that gets
@@ -567,6 +569,10 @@ export const useKerros = create<KerrosState>((set, get) => ({
       ry: existing?.params.ry ?? 0,
       rz: existing?.params.rz ?? 0,
       resolution,
+      // Uniform, and kept across a reload of the same mesh: resizing an import
+      // is usually the first thing done to it and should not be undone by
+      // swapping the file for a fixed version of itself.
+      scale: existing?.params.scale ?? 1,
       path: name,
       triangles: report.soup.triangleCount,
       error: '',
@@ -625,6 +631,28 @@ export const useKerros = create<KerrosState>((set, get) => ({
           f.id === id ? { ...f, params: { ...f.params, resolution: clamped } } : f,
         ),
         importRevision: s.importRevision + 1,
+      };
+    }),
+
+  fitImportSize: (id, mm) =>
+    set((s) => {
+      const entry = importVolumes.get(id);
+      if (!entry || !(mm > 0)) return s;
+
+      // Measured on the mesh itself, not the padded grid: the person means the
+      // object, not the box of air around it.
+      const size = Math.max(
+        entry.soup.max[0] - entry.soup.min[0],
+        entry.soup.max[1] - entry.soup.min[1],
+        entry.soup.max[2] - entry.soup.min[2],
+      );
+      if (!(size > 0)) return s;
+
+      const scale = Math.round((mm / size) * 10000) / 10000;
+      return {
+        features: s.features.map((f) =>
+          f.id === id ? { ...f, params: { ...f.params, scale } } : f,
+        ),
       };
     }),
 
@@ -1227,6 +1255,7 @@ export function hasTransform(feature: Feature): boolean {
   return (
     feature.stage === 'RIG' ||
     feature.kind === 'window' ||
+    feature.kind === 'import' ||
     findModule(feature.kind) !== undefined
   );
 }
@@ -1270,7 +1299,7 @@ export function fixturesFromFeatures(features: Feature[], kerf: number): Fixture
  * than a free orientation.
  */
 export function hasRotation(feature: Feature): boolean {
-  return findModule(feature.kind) !== undefined;
+  return feature.kind === 'import' || findModule(feature.kind) !== undefined;
 }
 
 /** Where a feature's gizmo should stand, in world mm. */
@@ -1421,4 +1450,16 @@ export function composeField(
 /** Shapes a sculpt feature can be attached to, in tree order. */
 export function attachableShapes(features: Feature[]): Feature[] {
   return features.filter((f) => findModule(f.kind) !== undefined);
+}
+
+/** The size an import measures on the bed, in mm, after its scale. */
+export function importSizeOf(feature: Feature): [number, number, number] | null {
+  const entry = importVolumes.get(feature.id);
+  if (!entry) return null;
+  const scale = Math.max(Number(feature.params.scale) || 1, 1e-4);
+  return [
+    (entry.soup.max[0] - entry.soup.min[0]) * scale,
+    (entry.soup.max[1] - entry.soup.min[1]) * scale,
+    (entry.soup.max[2] - entry.soup.min[2]) * scale,
+  ];
 }

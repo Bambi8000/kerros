@@ -870,6 +870,17 @@ export type PreparedStep =
       op: Op;
       k: number;
       frame: Frame;
+      /**
+       * Uniform scale, and uniform on purpose.
+       *
+       * `s * d(p / s)` is still a true distance field: every distance is
+       * multiplied by the same number, so blends and kerf offsets keep meaning
+       * what they say. Scaling the axes independently is what breaks that, which
+       * is why no primitive has a scale at all — but an import arrives at
+       * whatever size the exporter left it, often in inches, and refusing to
+       * resize it would make the feature useless.
+       */
+      scale: number;
     }
   | {
       type: 'sculpt';
@@ -919,6 +930,7 @@ export function prepareFeatures(features: EvalFeature[]): PreparedStep[] {
           op: text(f.params, 'op', 'union') as Op,
           k: num(f.params, 'k', 0),
           frame: frameOf(f.params),
+          scale: Math.max(num(f.params, 'scale', 1), 1e-4),
         });
       }
       continue;
@@ -1009,7 +1021,13 @@ export function evaluatePoint(prepared: PreparedStep[], x: number, y: number, z:
       // goes into the feature's frame — which is what lets an import be moved
       // and turned like any other solid.
       const [lx, ly, lz] = frameToLocal(step.frame, x, y, z);
-      d = opApply(step.op, d, step.volume.sample(lx, ly, lz), step.k);
+      const s = step.scale;
+      d = opApply(
+        step.op,
+        d,
+        s * step.volume.sample(lx / s, ly / s, lz / s),
+        step.k,
+      );
       continue;
     }
 
@@ -1088,12 +1106,13 @@ export function modelBounds(
     if (!opIsAdditive(text(feature.params, 'op', 'union') as Op)) continue;
     const frame = frameOf(feature.params);
     const box = feature.volume;
+    const scale = Math.max(num(feature.params, 'scale', 1), 1e-4);
     for (let c = 0; c < 8; c++) {
       const corner = frameToWorld(
         frame,
-        c & 1 ? box.max[0] : box.min[0],
-        c & 2 ? box.max[1] : box.min[1],
-        c & 4 ? box.max[2] : box.min[2],
+        (c & 1 ? box.max[0] : box.min[0]) * scale,
+        (c & 2 ? box.max[1] : box.min[1]) * scale,
+        (c & 4 ? box.max[2] : box.min[2]) * scale,
       );
       grow(corner, corner);
     }
@@ -1296,7 +1315,8 @@ export function nearestFeatureIndex(
     // An import can be pointed at: its surface is as real as a primitive's.
     if (f.type === 'import') {
       const [lx, ly, lz] = toLocalFrame(f.frame, x, y, z);
-      const d = Math.abs(f.volume.sample(lx, ly, lz));
+      const s = f.scale;
+      const d = Math.abs(s * f.volume.sample(lx / s, ly / s, lz / s));
       if (d < bestDistance) {
         bestDistance = d;
         best = f.index;

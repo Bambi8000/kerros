@@ -16,6 +16,7 @@ import {
 } from '../src/core/meshImport.ts';
 
 import { voxelise, sampleMeshGrid, meshGridBounds } from '../src/core/voxelise.ts';
+import { prepareFeatures, evaluatePoint, modelBounds, nearestFeatureIndex } from '../src/core/sdf.ts';
 
 let failures = 0;
 
@@ -308,6 +309,71 @@ console.log('voxelise: reach and resolution');
   const outside = sampleMeshGrid(fine.grid, 500, 0, 0);
   check('far outside the grid the field is large and positive', outside > fine.grid.reach);
   check('and grows with distance', sampleMeshGrid(fine.grid, 1000, 0, 0) > outside);
+}
+
+console.log('import: uniform scale keeps it a distance field');
+{
+  // s * d(p / s) multiplies every distance by the same number, so a blend still
+  // means what it says. Scaling axes independently is what breaks that, which is
+  // why no primitive has a scale — but an import arrives at whatever size the
+  // exporter left it, often in inches.
+  const soup = importMesh(binarySTL(boxTriangles(20, 20, 20)), 'box.stl').soup;
+  const baked = voxelise(soup, { resolution: 64 });
+  const box = meshGridBounds(baked.grid);
+  const volume = {
+    sample: (x, y, z) => sampleMeshGrid(baked.grid, x, y, z),
+    min: box.min,
+    max: box.max,
+  };
+
+  const tree = (scale) => [
+    { id: 'i1', kind: 'import', enabled: true, params: { op: 'union', k: 0, scale }, volume },
+  ];
+
+  const plain = prepareFeatures(tree(1));
+  const doubled = prepareFeatures(tree(2));
+
+  check('unscaled, the face is where the mesh put it', Math.abs(evaluatePoint(plain, 20, 0, 0)) < baked.grid.step);
+  check('doubled, the face has moved out with it', Math.abs(evaluatePoint(doubled, 40, 0, 0)) < baked.grid.step * 2);
+  // Deep inside, the value is the reach clamp times the scale rather than the
+  // true depth — the clamp scales along with everything else, which is the
+  // consistent answer even though it is not the exact one.
+  check(
+    'the old face is now well inside, at the scaled clamp',
+    Math.abs(evaluatePoint(doubled, 20, 0, 0) + 2 * baked.grid.reach) < 0.5,
+    `${evaluatePoint(doubled, 20, 0, 0).toFixed(2)} against a clamp of ${(-2 * baked.grid.reach).toFixed(2)}`,
+  );
+
+  // Distances themselves must scale, not just the surface position.
+  const outsideAt = (prepared, x) => evaluatePoint(prepared, x, 0, 0);
+  check(
+    'a distance outside scales by the same factor',
+    Math.abs(outsideAt(doubled, 50) - 2 * outsideAt(plain, 25)) < baked.grid.step * 2,
+    `${outsideAt(doubled, 50).toFixed(2)} against ${(2 * outsideAt(plain, 25)).toFixed(2)}`,
+  );
+
+  const half = prepareFeatures(tree(0.5));
+  check('halving works the same way', Math.abs(evaluatePoint(half, 10, 0, 0)) < baked.grid.step);
+
+  const bounds = modelBounds(tree(2));
+  check('bounds follow the scale', bounds.max[0] >= 40, `max x ${bounds.max[0].toFixed(1)}`);
+  const smallBounds = modelBounds(tree(0.5));
+  check('and shrink with it', smallBounds.max[0] < 20);
+
+  check('a scaled import can still be clicked', nearestFeatureIndex(tree(2), 40, 0, 0) === 0);
+
+  const moved = prepareFeatures([
+    { ...tree(2)[0], params: { op: 'union', k: 0, scale: 2, px: 100, rz: 30 } },
+  ]);
+  check(
+    'scale composes with the transform',
+    Math.abs(evaluatePoint(moved, 100, 0, 0) + 2 * baked.grid.reach) < 0.5,
+  );
+  check('and the old place is empty', evaluatePoint(moved, 0, 0, 0) > 0);
+
+  const degenerate = prepareFeatures(tree(0));
+  check('a zero scale is clamped rather than dividing by nothing',
+    Number.isFinite(evaluatePoint(degenerate, 0, 0, 0)));
 }
 
 console.log('');
