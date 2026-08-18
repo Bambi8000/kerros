@@ -503,6 +503,46 @@ export function circleFitsInPart(
   return true;
 }
 
+/**
+ * Can this polygon be cut as a hole in this part?
+ *
+ * The circle version of this test exists because a rod hole crossing a contour
+ * breaks triangulation and cuts a bite out of the edge instead of a hole. The
+ * same applies to a pocket, and more often: a Wago chamber is large, and the
+ * layer it lands on may be a narrow ring with nowhere near enough material.
+ *
+ * Every vertex must be inside the outer ring, outside every existing hole, and
+ * at least `clearance` from any edge.
+ */
+export function polygonFitsInPart(
+  group: ContourGroup,
+  points: number[],
+  clearance = 0,
+): boolean {
+  if (points.length < 6) return false;
+
+  for (let i = 0; i < points.length; i += 2) {
+    const x = points[i];
+    const y = points[i + 1];
+
+    if (!pointInRing(group.outer.points, x, y)) return false;
+    for (const hole of group.holes) {
+      if (pointInRing(hole.points, x, y)) return false;
+    }
+
+    if (clearance > 0) {
+      for (const contour of [group.outer, ...group.holes]) {
+        const pts = contour.points;
+        for (let j = 0; j < pts.length; j += 2) {
+          if (Math.hypot(pts[j] - x, pts[j + 1] - y) < clearance) return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
 /* ------------------------------------------------------------------ *
  * Slicing
  * ------------------------------------------------------------------ */

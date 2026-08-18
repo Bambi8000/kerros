@@ -13,6 +13,8 @@ import type { Op } from '../core/sdf';
 import { shellModifier } from '../core/sdf';
 import { ROD_CLEARANCE, ROD_SIZES } from '../core/rig';
 import { PATTERN_KINDS, PATTERN_LABELS } from '../core/pattern';
+import { FIXTURE_LABELS, SOCKET_PRESETS, fixtureExtent } from '../core/fixture';
+import type { FixtureKind } from '../core/fixture';
 import type { PatternKind } from '../core/pattern';
 import type { Feature } from '../core/types';
 import { NumberField } from './NumberField';
@@ -127,6 +129,7 @@ function WindowInspector({ feature }: { feature: Feature }) {
   const setParam = useKerros((s) => s.setParam);
   const renameFeature = useKerros((s) => s.renameFeature);
   const stockKerf = useKerros((s) => s.material.kerf);
+  const centreOnModel = useKerros((s) => s.centreOnModel);
 
   const mode = text(feature.params, 'mode', 'perLayer');
   const perLayer = mode === 'perLayer';
@@ -313,6 +316,13 @@ function WindowInspector({ feature }: { feature: Feature }) {
           min={0}
           onChange={(v) => setParam(feature.id, 'length', v)}
         />
+        <button
+          type="button"
+          className="btn btn-wide"
+          onClick={() => centreOnModel(feature.id)}
+        >
+          Centre on model
+        </button>
         <div className="derived">
           The wedges radiate from this axis, so move it with the shape. A window
           is its own volume rather than something applied to the form, which is
@@ -351,6 +361,272 @@ function WindowInspector({ feature }: { feature: Feature }) {
           the plug is cut wide so it burns down to size — so both numbers have to
           be right. Stock kerf is {stockKerf} mm; this material&rsquo;s is{' '}
           {windowKerf} mm.
+        </div>
+      </div>
+    </>
+  );
+}
+
+interface FixtureProps {
+  feature: Feature;
+  misses: number | undefined;
+}
+
+function FixtureInspector({ feature, misses }: FixtureProps) {
+  const setParam = useKerros((s) => s.setParam);
+  const renameFeature = useKerros((s) => s.renameFeature);
+  const centreOnModel = useKerros((s) => s.centreOnModel);
+  const kerf = useKerros((s) => s.material.kerf);
+  const thickness = useKerros((s) => s.material.thickness);
+  const spacer = useKerros((s) => s.stack.spacerHeight);
+
+  const kind = text(feature.params, 'fixture', 'socket') as FixtureKind;
+  const preset = text(feature.params, 'preset', 'nipple');
+  const shape = text(feature.params, 'shape', 'round');
+  const pitch = thickness + spacer;
+  const band = num(feature.params, 'length', pitch);
+  const layers = Math.max(Math.floor(band / Math.max(pitch, 0.01)) + 1, 1);
+
+  const spec = {
+    kind,
+    preset,
+    diameter: num(feature.params, 'diameter', 8),
+    screws: num(feature.params, 'screws', 0),
+    boltCircle: num(feature.params, 'boltCircle', 30),
+    screwDiameter: num(feature.params, 'screwDiameter', 3.2),
+    shape,
+    slotLength: num(feature.params, 'slotLength', 24),
+    width: num(feature.params, 'width', 32),
+    depth: num(feature.params, 'depth', 22),
+  };
+  const extent = fixtureExtent(spec as never);
+
+  return (
+    <>
+      <div className="group">
+        <div className="group-head">{FIXTURE_LABELS[kind]}</div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <span className="field-input">
+            <input
+              type="text"
+              value={feature.name}
+              onChange={(e) => renameFeature(feature.id, e.target.value)}
+            />
+          </span>
+        </label>
+        {misses !== undefined && misses > 0 ? (
+          <div className="warn">
+            {misses} of these holes will not fit the layer they land on and were
+            left out. They need {extent.toFixed(1)} mm of material across —
+            usually that means aiming the band at a solid layer, a cap or a foot,
+            rather than at a ring.
+          </div>
+        ) : null}
+        <div className="derived">
+          Every dimension here is a default, not a fact. Sockets vary by make,
+          Wago cases by series, cable by whatever was in the drawer. Measure the
+          part in your hand before the first cut.
+        </div>
+      </div>
+
+      {kind === 'socket' ? (
+        <div className="group">
+          <div className="group-head">Socket</div>
+          <label className="field">
+            <span className="field-label">Fit</span>
+            <span className="field-input">
+              <select
+                value={preset}
+                onChange={(e) => setParam(feature.id, 'preset', e.target.value)}
+              >
+                <option value="nipple">M10 nipple · Ø{SOCKET_PRESETS.nipple} mm</option>
+                <option value="body">Socket body · Ø{SOCKET_PRESETS.body} mm</option>
+                <option value="custom">Measured</option>
+              </select>
+            </span>
+          </label>
+          {preset === 'custom' ? (
+            <NumberField
+              label="Diameter"
+              value={num(feature.params, 'diameter', 10.5)}
+              unit="mm"
+              step={0.1}
+              min={0.5}
+              max={120}
+              onChange={(v) => setParam(feature.id, 'diameter', v)}
+            />
+          ) : null}
+          <NumberField
+            label="Screws"
+            value={num(feature.params, 'screws', 0)}
+            step={1}
+            min={0}
+            max={8}
+            onChange={(v) => setParam(feature.id, 'screws', Math.max(Math.round(v), 0))}
+          />
+          {num(feature.params, 'screws', 0) > 0 ? (
+            <>
+              <NumberField
+                label="Bolt circle"
+                value={num(feature.params, 'boltCircle', 30)}
+                unit="mm"
+                step={0.5}
+                min={1}
+                max={200}
+                onChange={(v) => setParam(feature.id, 'boltCircle', v)}
+              />
+              <NumberField
+                label="Screw Ø"
+                value={num(feature.params, 'screwDiameter', 3.2)}
+                unit="mm"
+                step={0.1}
+                min={0.5}
+                max={20}
+                onChange={(v) => setParam(feature.id, 'screwDiameter', v)}
+              />
+            </>
+          ) : null}
+          <div className="derived">
+            The nipple fit passes the socket&rsquo;s threaded tube through and
+            lets its own nut clamp the plate. The body fit drops the socket in
+            to sit on its shoulder, and that diameter varies more between makes
+            than anything else here.
+          </div>
+        </div>
+      ) : null}
+
+      {kind === 'cable' ? (
+        <div className="group">
+          <div className="group-head">Channel</div>
+          <label className="field">
+            <span className="field-label">Shape</span>
+            <span className="field-input">
+              <select
+                value={shape}
+                onChange={(e) => setParam(feature.id, 'shape', e.target.value)}
+              >
+                <option value="round">Round</option>
+                <option value="slot">Slot</option>
+              </select>
+            </span>
+          </label>
+          <NumberField
+            label={shape === 'slot' ? 'Width' : 'Diameter'}
+            value={num(feature.params, 'diameter', 8)}
+            unit="mm"
+            step={0.5}
+            min={0.5}
+            max={60}
+            onChange={(v) => setParam(feature.id, 'diameter', v)}
+          />
+          {shape === 'slot' ? (
+            <NumberField
+              label="Length"
+              value={num(feature.params, 'slotLength', 24)}
+              unit="mm"
+              step={1}
+              min={1}
+              max={300}
+              onChange={(v) => setParam(feature.id, 'slotLength', v)}
+            />
+          ) : null}
+          <div className="derived">
+            A slot lets the cable lie flat and gives it room to move as the stack
+            goes together; a round hole holds it where it is put.
+          </div>
+        </div>
+      ) : null}
+
+      {kind === 'chamber' ? (
+        <div className="group">
+          <div className="group-head">Pocket</div>
+          <NumberField
+            label="Width"
+            value={num(feature.params, 'width', 32)}
+            unit="mm"
+            step={1}
+            min={1}
+            max={400}
+            onChange={(v) => setParam(feature.id, 'width', v)}
+          />
+          <NumberField
+            label="Depth"
+            value={num(feature.params, 'depth', 22)}
+            unit="mm"
+            step={1}
+            min={1}
+            max={400}
+            onChange={(v) => setParam(feature.id, 'depth', v)}
+          />
+          <NumberField
+            label="Corner"
+            value={num(feature.params, 'corner', 3)}
+            unit="mm"
+            step={0.5}
+            min={0}
+            max={50}
+            onChange={(v) => setParam(feature.id, 'corner', v)}
+          />
+          <div className="derived">
+            A pocket through several layers is the chamber the connectors sit in.
+            Leave a couple of millimetres over the case size: a Wago goes in
+            with fingers, not with a mallet.
+          </div>
+        </div>
+      ) : null}
+
+      <div className="group">
+        <div className="group-head">Placement</div>
+        <NumberField
+          label="Position X"
+          value={num(feature.params, 'px', 0)}
+          unit="mm"
+          step={0.5}
+          onChange={(v) => setParam(feature.id, 'px', v)}
+        />
+        <NumberField
+          label="Position Y"
+          value={num(feature.params, 'py', 0)}
+          unit="mm"
+          step={0.5}
+          onChange={(v) => setParam(feature.id, 'py', v)}
+        />
+        <NumberField
+          label="Position Z"
+          value={num(feature.params, 'pz', 0)}
+          unit="mm"
+          step={1}
+          onChange={(v) => setParam(feature.id, 'pz', v)}
+        />
+        <NumberField
+          label="Band"
+          value={band}
+          unit="mm"
+          step={1}
+          min={0}
+          onChange={(v) => setParam(feature.id, 'length', v)}
+        />
+        <NumberField
+          label="Rotation"
+          value={num(feature.params, 'rot', 0)}
+          unit="°"
+          step={5}
+          min={-360}
+          max={360}
+          onChange={(v) => setParam(feature.id, 'rot', v)}
+        />
+        <button
+          type="button"
+          className="btn btn-wide"
+          onClick={() => centreOnModel(feature.id)}
+        >
+          Centre on model
+        </button>
+        <div className="derived">
+          Reaches {layers} {layers === 1 ? 'layer' : 'layers'} at the current{' '}
+          {pitch.toFixed(1)} mm pitch. Holes are cut {kerf} mm under size so they
+          open out to the numbers above.
         </div>
       </div>
     </>
@@ -715,11 +991,13 @@ function ShapeInspector({ feature }: { feature: Feature }) {
 interface InspectorProps {
   /** Holes each pattern feature placed, from the last slicing run. */
   patternCounts: Record<string, number>;
+  /** Fixture holes that did not fit, by feature id. */
+  fixtureMisses: Record<string, number>;
   /** Whether slicing has run at all — it does not while modelling. */
   sliced: boolean;
 }
 
-export function Inspector({ patternCounts, sliced }: InspectorProps) {
+export function Inspector({ patternCounts, fixtureMisses, sliced }: InspectorProps) {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
 
@@ -734,6 +1012,9 @@ export function Inspector({ patternCounts, sliced }: InspectorProps) {
   }
 
   if (feature.stage === 'RIG') return <RodInspector feature={feature} />;
+  if (feature.kind.startsWith('fixture:')) {
+    return <FixtureInspector feature={feature} misses={fixtureMisses[feature.id]} />;
+  }
   if (feature.kind === 'window') return <WindowInspector feature={feature} />;
   if (feature.stage === 'CARVE') return <ShellInspector feature={feature} />;
   if (feature.stage === 'PATTERN') {

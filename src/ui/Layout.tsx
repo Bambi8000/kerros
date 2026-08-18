@@ -71,6 +71,7 @@ export function Layout() {
     reports: sliceReports,
     windows: sliceWindows,
     patternCounts,
+    fixtureMisses,
     ms: sliceMs,
     pending: slicePending,
   } = useSlices(mode !== 'model');
@@ -250,7 +251,11 @@ export function Layout() {
               mode === 'sheet' ? (
                 <PartInspector sheets={sheets} />
               ) : (
-                <Inspector patternCounts={patternCounts} sliced={slices !== null} />
+                <Inspector
+                  patternCounts={patternCounts}
+                  fixtureMisses={fixtureMisses}
+                  sliced={slices !== null}
+                />
               )
             ) : (
               <ProfilePanel slices={slices} reports={sliceReports} sheets={sheets} />

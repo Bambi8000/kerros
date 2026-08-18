@@ -17,6 +17,8 @@ import {
   shellModifier,
 } from './sdf';
 import { stockField } from './window';
+import { FIXTURE_LABELS, SOCKET_PRESETS } from './fixture';
+import type { FixtureKind, FixtureSpec } from './fixture';
 import type { LayerPlan, WindowSpec } from './window';
 import { ROD_CLEARANCE } from './rig';
 import type { RodSpec } from './rig';
@@ -142,6 +144,9 @@ interface KerrosState {
   addShell: () => void;
   addPattern: () => void;
   addWindow: () => void;
+  addFixture: (kind: FixtureKind) => void;
+  /** Put a feature's axis at the middle of the model's footprint. */
+  centreOnModel: (id: string) => void;
   /** Stretch a rod to span the whole model. */
   fitRodToModel: (id: string) => void;
   removeFeature: (id: string) => void;
@@ -360,6 +365,67 @@ export const useKerros = create<KerrosState>((set, get) => ({
         nextFeatureNumber: s.nextFeatureNumber + 1,
         selectedId: id,
         panel: 'inspector' as const,
+      };
+    }),
+
+  /**
+   * Lamp fixtures: the socket mount, the cable channel, the Wago chamber.
+   *
+   * A fixture belongs to particular sheets, so its band starts one layer tall
+   * and sits at the bottom of the model, where the socket plate usually goes.
+   */
+  addFixture: (kind) =>
+    set((s) => {
+      const bounds = modelBounds(s.features.filter(isFieldFeature));
+      const id = `f${s.nextFeatureNumber}`;
+      const count = s.features.filter((f) => f.kind === `fixture:${kind}`).length + 1;
+      const pitch = s.material.thickness + s.stack.spacerHeight;
+
+      return {
+        features: [
+          ...s.features,
+          {
+            id,
+            kind: `fixture:${kind}`,
+            stage: 'RIG' as Stage,
+            name: count > 1 ? `${FIXTURE_LABELS[kind]} ${count}` : FIXTURE_LABELS[kind],
+            enabled: true,
+            params: {
+              fixture: kind,
+              px: bounds ? Math.round(((bounds.min[0] + bounds.max[0]) / 2) * 10) / 10 : 0,
+              py: bounds ? Math.round(((bounds.min[1] + bounds.max[1]) / 2) * 10) / 10 : 0,
+              pz: bounds ? Math.round((bounds.min[2] + s.material.thickness / 2) * 10) / 10 : 0,
+              length: Math.max(pitch * 0.9, s.material.thickness),
+              rot: 0,
+              preset: kind === 'socket' ? 'nipple' : 'custom',
+              diameter: kind === 'cable' ? 8 : SOCKET_PRESETS.nipple,
+              screws: 0,
+              boltCircle: 30,
+              screwDiameter: 3.2,
+              shape: 'round',
+              slotLength: 24,
+              width: 32,
+              depth: 22,
+              corner: 3,
+            },
+          },
+        ],
+        nextFeatureNumber: s.nextFeatureNumber + 1,
+        selectedId: id,
+        panel: 'inspector' as const,
+      };
+    }),
+
+  centreOnModel: (id) =>
+    set((s) => {
+      const bounds = modelBounds(s.features.filter(isFieldFeature));
+      if (!bounds) return s;
+      const px = Math.round(((bounds.min[0] + bounds.max[0]) / 2) * 10) / 10;
+      const py = Math.round(((bounds.min[1] + bounds.max[1]) / 2) * 10) / 10;
+      return {
+        features: s.features.map((f) =>
+          f.id === id ? { ...f, params: { ...f.params, px, py } } : f,
+        ),
       };
     }),
 
@@ -701,6 +767,37 @@ export function hasTransform(feature: Feature): boolean {
     feature.kind === 'window' ||
     findModule(feature.kind) !== undefined
   );
+}
+
+/** Fixture specs of a tree, as the fixture module wants them. */
+export function fixturesFromFeatures(features: Feature[], kerf: number): FixtureSpec[] {
+  const out: FixtureSpec[] = [];
+  for (const f of features) {
+    if (!f.kind.startsWith('fixture:') || !f.enabled) continue;
+    const kind = f.kind.slice('fixture:'.length) as FixtureKind;
+    out.push({
+      id: f.id,
+      label: f.name,
+      kind,
+      x: Number(f.params.px) || 0,
+      y: Number(f.params.py) || 0,
+      z: Number(f.params.pz) || 0,
+      length: Math.max(Number(f.params.length) || 0, 0),
+      rot: Number(f.params.rot) || 0,
+      kerf,
+      preset: typeof f.params.preset === 'string' ? f.params.preset : 'custom',
+      diameter: Number(f.params.diameter) || 0,
+      screws: Math.max(Math.round(Number(f.params.screws) || 0), 0),
+      boltCircle: Number(f.params.boltCircle) || 0,
+      screwDiameter: Number(f.params.screwDiameter) || 0,
+      shape: typeof f.params.shape === 'string' ? f.params.shape : 'round',
+      slotLength: Number(f.params.slotLength) || 0,
+      width: Number(f.params.width) || 0,
+      depth: Number(f.params.depth) || 0,
+      corner: Number(f.params.corner) || 0,
+    });
+  }
+  return out;
 }
 
 /**

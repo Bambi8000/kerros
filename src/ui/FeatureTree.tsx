@@ -7,6 +7,12 @@ import type { Feature } from '../core/types';
 
 /** One line under a feature's name, saying what it does at a glance. */
 function subtitleFor(f: Feature, index: number, op: Op): string {
+  if (f.kind.startsWith('fixture:')) {
+    const kind = f.kind.slice('fixture:'.length);
+    if (kind === 'socket') return `socket · ${f.params.preset ?? 'nipple'}`;
+    if (kind === 'cable') return `cable · ${f.params.shape ?? 'round'} Ø${Number(f.params.diameter) || 0}`;
+    return `pocket · ${Number(f.params.width) || 0}×${Number(f.params.depth) || 0} mm`;
+  }
   if (f.kind === 'window') {
     return `${Number(f.params.count) || 0} windows · ${Number(f.params.width) || 0}°`;
   }
@@ -32,6 +38,7 @@ export function FeatureTree() {
   const addShell = useKerros((s) => s.addShell);
   const addPattern = useKerros((s) => s.addPattern);
   const addWindow = useKerros((s) => s.addWindow);
+  const addFixture = useKerros((s) => s.addFixture);
   const removeFeature = useKerros((s) => s.removeFeature);
   const moveFeature = useKerros((s) => s.moveFeature);
   const toggleFeature = useKerros((s) => s.toggleFeature);
@@ -155,6 +162,17 @@ export function FeatureTree() {
           </button>
           <button type="button" className="btn" onClick={addWindow}>
             Window
+          </button>
+        </div>
+        <div className="add-row-three">
+          <button type="button" className="btn" onClick={() => addFixture('socket')}>
+            E27
+          </button>
+          <button type="button" className="btn" onClick={() => addFixture('cable')}>
+            Cable
+          </button>
+          <button type="button" className="btn" onClick={() => addFixture('chamber')}>
+            Wago
           </button>
         </div>
         <span className="foot-note">

@@ -191,6 +191,54 @@ Kerf and shell compose correctly without either knowing about the other: the
 compensated contour grows the outer ring by half a kerf and shrinks the inner
 by half a kerf, so the wall as cut ends up the thickness you asked for.
 
+## Fixtures — **shipped** (M9)
+
+`src/core/fixture.ts`. The parts that make it a lamp rather than a sculpture: an
+E27 socket mount, a cable channel, and a chamber for Wago connectors.
+
+All three are **dimensioned holes in particular sheets**, applied per slice like
+rod clearances rather than as volumes in the field. Same reason as perforation: a
+socket hole belongs to the one layer that carries the socket, and the layer where
+a carved volume happens to be 2 mm across is the layer that tears.
+
+| Fixture | What it cuts |
+| --- | --- |
+| `socket` | main hole plus an optional bolt circle of screw holes |
+| `cable` | a round hole, or a slot the cable can lie flat in |
+| `chamber` | a rounded pocket for the connectors |
+
+**Every dimension is a default, not a fact.** The M10 nipple clearance is 10.5
+mm and a socket body is about 40.5 mm, but body diameters vary more between makes
+than anything else here, Wago cases vary by series, and cable is whatever was in
+the drawer. The inspector says so where it cannot be checked.
+
+Kerf is arithmetic: circles lose half a kerf on the radius, pockets lose a whole
+kerf on each overall dimension, so both open out to the numbers typed in.
+
+### Pockets need a home
+
+`polygonFitsInPart()` in the slicer is the polygon counterpart of the circle test
+rods already used. It matters more here: a Wago chamber is large, and the layer
+it lands on is very often a narrow ring with nowhere near enough material. Holes
+that will not fit are **counted and left out**, and the inspector reports how
+many and how much material they needed.
+
+A real run showed the point immediately. On a 120 mm sphere with a capped base,
+the bottom layer is only 13 mm in radius — the Ø10.5 mm socket hole fits, but a
+34 mm bolt circle does not, and three screw holes were reported rather than cut
+as bites out of the rim.
+
+Fixtures are applied **after rods and before perforation**, so the pattern sees
+them and keeps its bridge clear of them too.
+
+### Centre on model — M9
+
+Windows and fixtures carry their own axis and do not follow the form when it
+moves, which is deliberate — an off-centre socket or an eccentric window is a
+useful thing. Both inspectors now have a **Centre on model** button, the same
+convenience a rod has in `Fit to model height`, so the common case is one click
+rather than two numbers copied by eye.
+
 ## Windows — **shipped** (M8)
 
 `src/core/window.ts`. A wedge taken out of the form, and the piece that came
