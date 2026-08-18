@@ -22,6 +22,10 @@ import {
 } from './sdf';
 import type { Frame } from './sdf';
 import { WINDOW_WORLD, resolveWindow, stockField, windowToLocal, windowToWorld } from './window';
+import { importMesh, openEdgeCount } from './meshImport';
+import type { TriangleSoup } from './meshImport';
+import { meshGridBounds, sampleMeshGrid, voxelise } from './voxelise';
+import type { MeshGrid } from './voxelise';
 import { FIXTURE_LABELS, SOCKET_PRESETS } from './fixture';
 import type { FixtureKind, FixtureSpec } from './fixture';
 import type { LayerPlan, WindowFrame, WindowSpec } from './window';
@@ -160,6 +164,16 @@ interface KerrosState {
   addPattern: () => void;
   addWindow: () => void;
   addFixture: (kind: FixtureKind) => void;
+  /** Read a mesh, bake it, and hang it on a feature. Creates one if needed. */
+  loadImport: (id: string | null, name: string, bytes: Uint8Array) => string;
+  /** Re-bake an already loaded mesh at another resolution. */
+  rebakeImport: (id: string, resolution: number) => void;
+  /**
+   * Bumped whenever a mesh is baked. Grids live outside the store — they are
+   * megabytes of Float32 and have no business in a state object that gets
+   * compared on every render — so this is what tells the memos to recompute.
+   */
+  importRevision: number;
   /** Put a feature's axis at the middle of the model's footprint. */
   centreOnModel: (id: string) => void;
   /** Stretch a rod to span the whole model. */
@@ -233,6 +247,33 @@ interface KerrosState {
 
 const SHAPE: Stage = 'SHAPE';
 
+/** A baked import, held outside the store. */
+export interface ImportEntry {
+  soup: TriangleSoup;
+  grid: MeshGrid;
+  volume: { sample: (x: number, y: number, z: number) => number; min: [number, number, number]; max: [number, number, number] };
+  /** Edges used by one triangle. Zero means watertight. */
+  openEdges: number;
+  ms: number;
+}
+
+/**
+ * Baked meshes, by feature id.
+ *
+ * Deliberately not in the store. A grid is a megabyte or more of Float32, and
+ * putting it in state means every selector comparison walks past it. The store
+ * carries `importRevision` instead, which is the one number that has to change
+ * for the memos to notice.
+ *
+ * The consequence is that a grid does not survive a reload, which is also why
+ * the project file records the path and not the geometry.
+ */
+const importVolumes = new Map<string, ImportEntry>();
+
+export function importEntry(id: string): ImportEntry | undefined {
+  return importVolumes.get(id);
+}
+
 /** Tenths of a millimetre: stroke points do not need sixteen decimal places. */
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
@@ -289,6 +330,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
   view: 'persp',
   mode: 'model',
   panel: 'inspector',
+  importRevision: 0,
 
   sculptMode: false,
   brushOp: 'smoothUnion',
@@ -461,6 +503,131 @@ export const useKerros = create<KerrosState>((set, get) => ({
    * A fixture belongs to particular sheets, so its band starts one layer tall
    * and sits at the bottom of the model, where the socket plate usually goes.
    */
+  loadImport: (id, name, bytes) => {
+    const report = importMesh(bytes, name);
+    const s = get();
+
+    // A feature is made even when the read failed, so the failure has somewhere
+    // to be reported rather than vanishing with the file.
+    const target = id ?? `f${s.nextFeatureNumber}`;
+    const short = name.split(/[\\/]/).pop() ?? name;
+
+    if (!report.soup) {
+      if (id === null) {
+        set({
+          features: [
+            ...s.features,
+            {
+              id: target,
+              kind: 'import',
+              stage: 'SHAPE' as Stage,
+              name: short,
+              enabled: true,
+              params: { op: 'union', k: 0, resolution: 80, path: name, error: report.error ?? '' },
+            },
+          ],
+          nextFeatureNumber: s.nextFeatureNumber + 1,
+          selectedId: target,
+          panel: 'inspector' as const,
+        });
+      } else {
+        set({
+          features: s.features.map((f) =>
+            f.id === target ? { ...f, params: { ...f.params, error: report.error ?? '' } } : f,
+          ),
+        });
+      }
+      return target;
+    }
+
+    const existing = s.features.find((f) => f.id === target);
+    const resolution = Math.max(Number(existing?.params.resolution) || 80, 16);
+    const baked = voxelise(report.soup, { resolution });
+    const box = meshGridBounds(baked.grid);
+
+    importVolumes.set(target, {
+      soup: report.soup,
+      grid: baked.grid,
+      volume: {
+        sample: (x, y, z) => sampleMeshGrid(baked.grid, x, y, z),
+        min: box.min,
+        max: box.max,
+      },
+      openEdges: openEdgeCount(report.soup),
+      ms: baked.ms,
+    });
+
+    const params = {
+      op: existing ? (existing.params.op ?? 'union') : 'union',
+      k: existing ? (existing.params.k ?? 0) : 0,
+      px: existing?.params.px ?? 0,
+      py: existing?.params.py ?? 0,
+      pz: existing?.params.pz ?? 0,
+      rx: existing?.params.rx ?? 0,
+      ry: existing?.params.ry ?? 0,
+      rz: existing?.params.rz ?? 0,
+      resolution,
+      path: name,
+      triangles: report.soup.triangleCount,
+      error: '',
+    };
+
+    if (existing) {
+      set({
+        features: s.features.map((f) => (f.id === target ? { ...f, params } : f)),
+        importRevision: s.importRevision + 1,
+      });
+    } else {
+      set({
+        features: [
+          ...s.features,
+          {
+            id: target,
+            kind: 'import',
+            stage: 'SHAPE' as Stage,
+            name: short,
+            enabled: true,
+            params,
+          },
+        ],
+        nextFeatureNumber: s.nextFeatureNumber + 1,
+        selectedId: target,
+        panel: 'inspector' as const,
+        importRevision: s.importRevision + 1,
+      });
+    }
+
+    return target;
+  },
+
+  rebakeImport: (id, resolution) =>
+    set((s) => {
+      const entry = importVolumes.get(id);
+      if (!entry) return s;
+
+      const clamped = Math.max(Math.round(resolution), 16);
+      const baked = voxelise(entry.soup, { resolution: clamped });
+      const box = meshGridBounds(baked.grid);
+
+      importVolumes.set(id, {
+        ...entry,
+        grid: baked.grid,
+        volume: {
+          sample: (x, y, z) => sampleMeshGrid(baked.grid, x, y, z),
+          min: box.min,
+          max: box.max,
+        },
+        ms: baked.ms,
+      });
+
+      return {
+        features: s.features.map((f) =>
+          f.id === id ? { ...f, params: { ...f.params, resolution: clamped } } : f,
+        ),
+        importRevision: s.importRevision + 1,
+      };
+    }),
+
   addFixture: (kind) =>
     set((s) => {
       const bounds = modelBounds(s.features.filter(isFieldFeature));
@@ -1225,7 +1392,11 @@ export function composeField(
   thickness: number,
   pitch: number,
 ) {
-  const fieldFeatures = features.filter(isFieldFeature);
+  // Imports carry their baked volume through to the evaluator here, since the
+  // grids live outside the store.
+  const fieldFeatures = features.filter(isFieldFeature).map((f) =>
+    f.kind === 'import' ? { ...f, volume: importVolumes.get(f.id)?.volume } : f,
+  );
   const prepared = prepareFeatures(fieldFeatures);
   const windows = windowsFromFeatures(features, kerf, seed);
   const bounds = modelBounds(fieldFeatures);

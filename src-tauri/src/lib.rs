@@ -47,11 +47,22 @@ fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("could not read {path}: {e}"))
 }
 
+/// Read a file as raw bytes, for meshes.
+///
+/// Returns a raw IPC response rather than a `Vec<u8>`, which would be
+/// serialised as a JSON array of numbers — several times the size, for a file
+/// that can easily be megabytes.
+#[tauri::command]
+fn read_binary_file(path: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("could not read {path}: {e}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![write_text_file, read_text_file])
+        .invoke_handler(tauri::generate_handler![write_text_file, read_text_file, read_binary_file])
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

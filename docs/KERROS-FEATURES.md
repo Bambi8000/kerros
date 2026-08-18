@@ -1089,6 +1089,83 @@ perpendicular to the bed and no single kerf value will fix the fit.
 
 ---
 
+## Mesh import — **shipped** (M9)
+
+`src/core/meshImport.ts` reads the file, `src/core/voxelise.ts` turns it into a
+signed distance grid, and from there an import behaves like any other solid:
+blend it, subtract from it, shell it, slice it, click it, move it.
+
+STL binary, STL ASCII and OBJ. Binary is detected **by arithmetic**, not by
+looking for the word `solid` at the front — plenty of binary STLs begin with it,
+their 80-byte header having been filled with whatever the exporter felt like. A
+binary STL's length is exactly 84 bytes plus 50 per triangle, and that is the
+test.
+
+Face normals in the file are ignored. The sign comes from the geometry, because
+a file's normals are as often wrong as right.
+
+### No three-mesh-bvh
+
+The handoff specified it. It is a three.js dependency, and slicing happens in a
+field the validators load in Node with no three at all — so the search is done
+here instead, with the same broad phase the sculpt strokes use, in about forty
+lines.
+
+### Magnitude and sign are computed differently on purpose
+
+**Magnitude** is the exact point-to-triangle distance, through a broad phase over
+triangles: one bucket lookup, then a linear scan of the few triangles nearby.
+
+**Sign** comes from crossing counts along the grid's own Z lines, not from a ray
+per sample. The samples are a regular lattice, so each column can be done once:
+collect where triangles cross that line, sort, and inside alternates between
+them. Exact parity, once per column rather than a million times, and with none of
+the flakiness of choosing a nearest triangle's normal at a crease.
+
+**The parity lines are nudged a fraction of a cell off the grid points**, and that
+is not a nicety. The half-open barycentric test makes a shared *edge* count once,
+which parity needs. A shared *vertex* is another matter: four or more triangles
+meet, several accept the hit, and the count comes out even with zero-length
+inside spans. On a symmetric mesh that case sits squarely on the axis — a
+sphere's poles at x = y = 0, with grid points landing exactly on them — so it is
+the first thing that happens, not a rare accident. It was: the whole central
+column of the test sphere came out hollow.
+
+### The reach is what decides whether an import can be shelled
+
+Distances are exact out to a reach and clamped beyond it, inside and out. A shell
+takes its wall off the **inside**, so it needs the interior distance to be real at
+least a wall's depth in; where the field is clamped the cavity lands on the clamp
+instead of where it belongs.
+
+The first version used a fixed eight cells, which is 5 mm on a 40 mm import — and
+a 5 mm shell then put its cavity exactly on the clamp, giving a field of exactly
+zero at the centre. So the reach scales with the object: 15% of the longest axis,
+deep enough for any wall anyone would cut from sheet, on a trinket and on a shade
+alike. The inspector reports it in millimetres and warns when a shell in the tree
+is thicker.
+
+### The project file records the path, not the geometry
+
+A 96³ grid is 884,000 floats. Embedding that as base64 would break the one thing
+the project format is for — being a file a person can read and diff — so the
+project stores the path, the resolution and the transform, and an import has to
+be **located again** after opening. That is how CAD handles external references,
+and the inspector says so plainly rather than presenting an empty feature.
+
+Grids live in a module-level map outside the store, not in state: a grid is
+megabytes of Float32 and has no business in an object that gets compared on every
+render. The store carries `importRevision`, the one number that has to change for
+the memos to notice.
+
+### Not closed is reported, not refused
+
+`openEdgeCount` counts edges belonging to a single triangle. Zero means
+watertight, which is what parity needs to be right. Anything else is **reported
+with a count** and imported anyway: a mesh with a few holes usually still
+voxelises usefully near the parts that matter, and the person is better placed to
+judge that than the program is.
+
 ## Native shell — **shipped** (M10)
 
 Tauri 2 wraps the same Vite app in a native window. `src-tauri/` is a sibling of

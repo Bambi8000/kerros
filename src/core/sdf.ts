@@ -832,6 +832,18 @@ export interface SdfGrid {
 }
 
 /** The minimum a feature needs to expose to be evaluated. */
+/**
+ * A baked mesh import: a signed distance grid and how to read it.
+ *
+ * Kept behind a function so the SDF core stays import-free — the voxeliser owns
+ * the sampling, this only needs to call it.
+ */
+export interface MeshVolume {
+  sample: (x: number, y: number, z: number) => number;
+  min: [number, number, number];
+  max: [number, number, number];
+}
+
 export interface EvalFeature {
   /** Needed so a sculpt feature can name the shape it is attached to. */
   id?: string;
@@ -840,12 +852,25 @@ export interface EvalFeature {
   params: Params;
   /** Sculpt features carry their strokes here rather than in params. */
   strokes?: SculptStroke[];
+  /**
+   * Import features carry their baked volume here. Absent when the file has not
+   * been located, in which case the feature contributes nothing.
+   */
+  volume?: MeshVolume;
 }
 
 /** One evaluation step: either a solid to combine, or a modifier to apply. */
 export type PreparedStep =
   | ({ type: 'shape' } & Prepared)
   | { type: 'modifier'; index: number; mod: ModifierModule; params: Params }
+  | {
+      type: 'import';
+      index: number;
+      volume: MeshVolume;
+      op: Op;
+      k: number;
+      frame: Frame;
+    }
   | {
       type: 'sculpt';
       index: number;
@@ -883,6 +908,21 @@ export function prepareFeatures(features: EvalFeature[]): PreparedStep[] {
   for (let index = 0; index < features.length; index++) {
     const f = features[index];
     if (!f.enabled) continue;
+
+    if (f.kind === 'import') {
+      // Nothing to evaluate until the file has been located and baked.
+      if (f.volume) {
+        out.push({
+          type: 'import',
+          index,
+          volume: f.volume,
+          op: text(f.params, 'op', 'union') as Op,
+          k: num(f.params, 'k', 0),
+          frame: frameOf(f.params),
+        });
+      }
+      continue;
+    }
 
     if (f.kind === 'sculpt') {
       const strokes: PreparedStroke[] = [];
@@ -934,6 +974,16 @@ export function prepareFeatures(features: EvalFeature[]): PreparedStep[] {
   return out;
 }
 
+/** Frame version of the same, for steps that carry a frame rather than a matrix. */
+export function toLocalFrame(
+  frame: Frame,
+  x: number,
+  y: number,
+  z: number,
+): [number, number, number] {
+  return frameToLocal(frame, x, y, z);
+}
+
 /** Transform a world point into one prepared feature's local space. */
 export function toLocal(f: Prepared, x: number, y: number, z: number): [number, number, number] {
   const wx = x - f.tx;
@@ -953,6 +1003,15 @@ export function evaluatePoint(prepared: PreparedStep[], x: number, y: number, z:
   let d = EMPTY;
   for (let i = 0; i < prepared.length; i++) {
     const step = prepared[i];
+
+    if (step.type === 'import') {
+      // The grid was baked in the mesh's own coordinates, so the query point
+      // goes into the feature's frame — which is what lets an import be moved
+      // and turned like any other solid.
+      const [lx, ly, lz] = frameToLocal(step.frame, x, y, z);
+      d = opApply(step.op, d, step.volume.sample(lx, ly, lz), step.k);
+      continue;
+    }
 
     if (step.type === 'sculpt') {
       // Into the attached shape's frame, where the strokes were recorded.
@@ -1021,6 +1080,24 @@ export function modelBounds(
     maxY = Math.max(maxY, hi[1]);
     maxZ = Math.max(maxZ, hi[2]);
   };
+
+  // An import is a solid, so its box sets bounds — transformed, since the box
+  // was baked in the mesh's own coordinates.
+  for (const feature of features) {
+    if (feature.kind !== 'import' || !feature.enabled || !feature.volume) continue;
+    if (!opIsAdditive(text(feature.params, 'op', 'union') as Op)) continue;
+    const frame = frameOf(feature.params);
+    const box = feature.volume;
+    for (let c = 0; c < 8; c++) {
+      const corner = frameToWorld(
+        frame,
+        c & 1 ? box.max[0] : box.min[0],
+        c & 2 ? box.max[1] : box.min[1],
+        c & 4 ? box.max[2] : box.min[2],
+      );
+      grow(corner, corner);
+    }
+  }
 
   // Sculpt strokes that add material set bounds like any other solid: without
   // this, a stroke pulled out past the base shape would be cut off by the grid.
@@ -1162,6 +1239,7 @@ export function evaluateGrid(features: EvalFeature[], res: number): SdfGrid {
   let maxBlend = 0;
   for (const f of prepared) {
     if (f.type === 'shape' && opUsesBlend(f.op) && f.k > maxBlend) maxBlend = f.k;
+    if (f.type === 'import' && opUsesBlend(f.op) && f.k > maxBlend) maxBlend = f.k;
     if (f.type === 'sculpt') {
       for (const stroke of f.strokes) {
         if (opUsesBlend(stroke.op) && stroke.k > maxBlend) maxBlend = stroke.k;
@@ -1215,6 +1293,17 @@ export function nearestFeatureIndex(
   let bestDistance = Infinity;
 
   for (const f of prepared) {
+    // An import can be pointed at: its surface is as real as a primitive's.
+    if (f.type === 'import') {
+      const [lx, ly, lz] = toLocalFrame(f.frame, x, y, z);
+      const d = Math.abs(f.volume.sample(lx, ly, lz));
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = f.index;
+      }
+      continue;
+    }
+
     // A modifier has no surface of its own, so nothing can point at it.
     if (f.type !== 'shape') continue;
     const [lx, ly, lz] = toLocal(f, x, y, z);

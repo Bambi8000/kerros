@@ -197,6 +197,67 @@ export async function saveMany(
   }
 }
 
+export interface BinaryFile {
+  name: string;
+  bytes: Uint8Array;
+}
+
+/** Whatever the bridge hands back, as bytes. */
+function asBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (Array.isArray(value)) return new Uint8Array(value);
+  return new Uint8Array(0);
+}
+
+/** Ask for a binary file — a mesh. Returns null on cancel. */
+export async function openBinary(
+  extensions: string[],
+  accept: string,
+): Promise<BinaryFile | null> {
+  if (!isNative()) {
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = accept;
+      input.style.display = 'none';
+
+      input.addEventListener('change', () => {
+        const file = input.files?.[0];
+        document.body.removeChild(input);
+        if (!file) {
+          resolve(null);
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () =>
+          resolve({ name: file.name, bytes: new Uint8Array(reader.result as ArrayBuffer) });
+        reader.onerror = () => resolve(null);
+        reader.readAsArrayBuffer(file);
+      });
+
+      document.body.appendChild(input);
+      input.click();
+    });
+  }
+
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const chosen = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: 'Mesh', extensions }],
+    });
+    if (typeof chosen !== 'string') return null;
+
+    const { invoke } = await import('@tauri-apps/api/core');
+    const raw = await invoke<unknown>('read_binary_file', { path: chosen });
+    return { name: chosen, bytes: asBytes(raw) };
+  } catch {
+    return null;
+  }
+}
+
 /** Ask for a file to open. Returns null when the person changed their mind. */
 export async function openText(
   extensions: string[],

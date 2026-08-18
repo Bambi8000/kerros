@@ -3,10 +3,15 @@ import { useKerros } from '../core/store';
 import { OP_LABELS, SHAPE_MODULES, findModule, text } from '../core/sdf';
 import type { Op } from '../core/sdf';
 import { STAGES, STAGE_NOTES } from '../core/types';
+import { openBinary } from './download';
 import type { Feature } from '../core/types';
 
 /** One line under a feature's name, saying what it does at a glance. */
 function subtitleFor(f: Feature, index: number, op: Op): string {
+  if (f.kind === 'import') {
+    const triangles = Number(f.params.triangles) || 0;
+    return triangles > 0 ? `mesh · ${triangles.toLocaleString('en-US')} triangles` : 'mesh · not loaded';
+  }
   if (f.kind === 'sculpt') {
     const count = f.strokes?.length ?? 0;
     const attached = typeof f.params.attachTo === 'string' && f.params.attachTo !== '';
@@ -47,6 +52,7 @@ export function FeatureTree() {
   const addWindow = useKerros((s) => s.addWindow);
   const addFixture = useKerros((s) => s.addFixture);
   const ensureSculpt = useKerros((s) => s.ensureSculpt);
+  const loadImport = useKerros((s) => s.loadImport);
   const removeFeature = useKerros((s) => s.removeFeature);
   const moveFeature = useKerros((s) => s.moveFeature);
   const toggleFeature = useKerros((s) => s.toggleFeature);
@@ -172,9 +178,22 @@ export function FeatureTree() {
             Window
           </button>
         </div>
-        <button type="button" className="btn btn-wide" onClick={() => ensureSculpt()}>
-          Sculpt
-        </button>
+        <div className="add-row">
+          <button type="button" className="btn" onClick={() => ensureSculpt()}>
+            Sculpt
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              void openBinary(['stl', 'obj'], '.stl,.obj').then((file) => {
+                if (file) loadImport(null, file.name, file.bytes);
+              });
+            }}
+          >
+            Import…
+          </button>
+        </div>
         <div className="add-row-three">
           <button type="button" className="btn" onClick={() => addFixture('socket')}>
             E27

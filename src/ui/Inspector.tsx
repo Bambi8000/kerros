@@ -1,4 +1,12 @@
-import { BRUSH_OPS, attachableShapes, rodSpanOf, shellWallOf, useKerros } from '../core/store';
+import {
+  BRUSH_OPS,
+  attachableShapes,
+  importEntry,
+  rodSpanOf,
+  shellWallOf,
+  useKerros,
+} from '../core/store';
+import { openBinary } from './download';
 import type { BrushOp } from '../core/store';
 import {
   BLEND_PARAM,
@@ -132,6 +140,167 @@ const BRUSH_LABELS: Record<BrushOp, string> = {
   subtract: 'Carve',
   smoothSubtract: 'Carve, blended',
 };
+
+const IMPORT_RESOLUTIONS = [48, 64, 80, 112, 144];
+
+function ImportInspector({ feature }: { feature: Feature }) {
+  const setParam = useKerros((s) => s.setParam);
+  const renameFeature = useKerros((s) => s.renameFeature);
+  const loadImport = useKerros((s) => s.loadImport);
+  const rebakeImport = useKerros((s) => s.rebakeImport);
+  // Read so the panel refreshes when a bake finishes; the grids live elsewhere.
+  const revision = useKerros((s) => s.importRevision);
+  const wall = useKerros((s) => shellWallOf(s.features));
+
+  const entry = importEntry(feature.id);
+  void revision;
+
+  const op = text(feature.params, 'op', 'union') as Op;
+  const path = text(feature.params, 'path', '');
+  const error = text(feature.params, 'error', '');
+  const resolution = num(feature.params, 'resolution', 80);
+
+  const pick = async () => {
+    const file = await openBinary(['stl', 'obj'], '.stl,.obj');
+    if (file) loadImport(feature.id, file.name, file.bytes);
+  };
+
+  return (
+    <>
+      <div className="group">
+        <div className="group-head">Imported mesh</div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <span className="field-input">
+            <input
+              type="text"
+              value={feature.name}
+              onChange={(e) => renameFeature(feature.id, e.target.value)}
+            />
+          </span>
+        </label>
+
+        {error !== '' ? <div className="warn">{error}</div> : null}
+
+        {entry ? (
+          <div className="derived derived-strong">
+            {entry.soup.triangleCount.toLocaleString('en-US')} triangles
+            <span className="derived-sub">
+              baked in {entry.ms} ms · {entry.grid.step.toFixed(2)} mm samples ·
+              exact to {entry.grid.reach.toFixed(1)} mm from the surface
+            </span>
+          </div>
+        ) : (
+          <div className="warn">
+            No mesh loaded. A project remembers which file it imported, not the
+            geometry — the grid is megabytes and the project file is meant to stay
+            readable — so after opening a project the mesh has to be located
+            again.
+          </div>
+        )}
+
+        <button type="button" className="btn btn-wide" onClick={() => void pick()}>
+          {entry ? 'Replace mesh…' : 'Locate mesh…'}
+        </button>
+        {path !== '' ? (
+          <div className="derived">
+            <code>{path}</code>
+          </div>
+        ) : null}
+
+        {entry && entry.openEdges > 0 ? (
+          <div className="warn">
+            {entry.openEdges} edges belong to only one triangle, so the mesh is
+            not closed. Inside and out are worked out by counting crossings, and
+            that needs a closed surface — expect wrong solid or hollow patches
+            near the holes.
+          </div>
+        ) : null}
+      </div>
+
+      <div className="group">
+        <div className="group-head">Sampling</div>
+        <label className="field">
+          <span className="field-label">Resolution</span>
+          <span className="field-input">
+            <select
+              value={resolution}
+              onChange={(e) => rebakeImport(feature.id, Number(e.target.value))}
+              disabled={!entry}
+            >
+              {IMPORT_RESOLUTIONS.map((r) => (
+                <option key={r} value={r}>
+                  {r} samples
+                </option>
+              ))}
+            </select>
+          </span>
+        </label>
+        <div className="derived">
+          A mesh is baked into a distance grid once, and everything downstream
+          reads that grid — so the preview and the slicer see the same surface,
+          whatever they sample it at. Detail finer than one sample is gone for
+          good, which is the honest cost of importing rather than modelling.
+        </div>
+        {entry && wall > 0 && wall > entry.grid.reach - 1 ? (
+          <div className="warn">
+            The shell wall is {wall} mm but the imported field is only exact{' '}
+            {entry.grid.reach.toFixed(1)} mm in. Raise the resolution or thin the
+            wall, or the cavity will sit where the field was clamped rather than
+            where it belongs.
+          </div>
+        ) : null}
+      </div>
+
+      <div className="group">
+        <div className="group-head">In the tree</div>
+        <label className="field">
+          <span className="field-label">Operation</span>
+          <span className="field-input">
+            <select value={op} onChange={(e) => setParam(feature.id, 'op', e.target.value)}>
+              {OPS.map((o) => (
+                <option key={o} value={o}>
+                  {OP_LABELS[o]}
+                </option>
+              ))}
+            </select>
+          </span>
+        </label>
+        {opUsesBlend(op) ? (
+          <NumberField
+            label={BLEND_PARAM.label}
+            value={num(feature.params, 'k', 0)}
+            unit={BLEND_PARAM.unit}
+            step={BLEND_PARAM.step}
+            min={BLEND_PARAM.min}
+            max={BLEND_PARAM.max}
+            onChange={(v) => setParam(feature.id, 'k', v)}
+          />
+        ) : null}
+        <div className="derived">
+          An import behaves like any other solid: blend it, subtract from it,
+          shell it, slice it. It can be clicked and moved too.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">Placement</div>
+        {TRANSFORM_PARAMS.map((spec) => (
+          <NumberField
+            key={spec.key}
+            label={spec.label}
+            value={num(feature.params, spec.key, spec.def)}
+            unit={spec.unit}
+            step={spec.step}
+            min={spec.min}
+            max={spec.max}
+            onChange={(v) => setParam(feature.id, spec.key, v)}
+          />
+        ))}
+      </div>
+    </>
+  );
+}
 
 function SculptInspector({ feature }: { feature: Feature }) {
   const renameFeature = useKerros((s) => s.renameFeature);
@@ -1219,6 +1388,7 @@ export function Inspector({ patternCounts, fixtureMisses, sliced }: InspectorPro
   }
 
   if (feature.stage === 'RIG') return <RodInspector feature={feature} />;
+  if (feature.kind === 'import') return <ImportInspector feature={feature} />;
   if (feature.kind === 'sculpt') return <SculptInspector feature={feature} />;
   if (feature.kind.startsWith('fixture:')) {
     return <FixtureInspector feature={feature} misses={fixtureMisses[feature.id]} />;
