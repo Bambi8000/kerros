@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM, useKerros } from '../core/store';
 import type { DisplayMode, GizmoMode, ViewName, WorkspaceMode } from '../core/store';
 import { KERROS_VERSION } from '../version';
 import { ErrorBoundary } from './ErrorBoundary';
 import { FeatureTree } from './FeatureTree';
 import { Inspector } from './Inspector';
+import { PartInspector } from './PartInspector';
 import { ProfilePanel } from './ProfilePanel';
 import { SheetView } from './SheetView';
 import { SliceInspector } from './SliceInspector';
@@ -37,7 +38,9 @@ const DISPLAYS: { key: DisplayMode; label: string; hint: string }[] = [
   { key: 'wire', label: 'Wire', hint: 'Wireframe only' },
 ];
 
-type Tab = 'inspector' | 'profiles';
+// The panel choice lives in the store: selecting something is a request to
+// inspect it, so the selection and the panel change happen in one place rather
+// than racing in two effects.
 
 export function Layout() {
   const view = useKerros((s) => s.view);
@@ -56,8 +59,8 @@ export function Layout() {
 
   const currentLayer = useKerros((s) => s.currentLayer);
   const setCurrentLayer = useKerros((s) => s.setCurrentLayer);
-
-  const [tab, setTab] = useState<Tab>('inspector');
+  const panel = useKerros((s) => s.panel);
+  const setPanel = useKerros((s) => s.setPanel);
 
   // Slicing runs only while a view needs it, and once for both consumers.
   const {
@@ -68,16 +71,6 @@ export function Layout() {
   } = useSlices(mode !== 'model');
   const sheets = useSheets(slices);
   const layerCount = slices?.slices.length ?? 0;
-
-  // Picking a feature is a request to edit it, so bring the inspector forward.
-  useEffect(() => {
-    if (selectedId) setTab('inspector');
-  }, [selectedId]);
-
-  // Slicing settings live in the profiles panel, so open it on the way there.
-  useEffect(() => {
-    if (mode !== 'model') setTab('profiles');
-  }, [mode]);
 
   // Layer stepping belongs to the workspace, not to one panel: paging up and
   // down the stack is the same gesture whether you are looking at a single
@@ -233,23 +226,27 @@ export function Layout() {
           <header className="panel-head panel-head-tabs">
             <button
               type="button"
-              className={`tab${tab === 'inspector' ? ' is-active' : ''}`}
-              onClick={() => setTab('inspector')}
+              className={`tab${panel === 'inspector' ? ' is-active' : ''}`}
+              onClick={() => setPanel('inspector')}
             >
               Inspector
             </button>
             <button
               type="button"
-              className={`tab${tab === 'profiles' ? ' is-active' : ''}`}
-              onClick={() => setTab('profiles')}
+              className={`tab${panel === 'profiles' ? ' is-active' : ''}`}
+              onClick={() => setPanel('profiles')}
             >
               Profiles
             </button>
           </header>
 
-          <ErrorBoundary label={tab === 'inspector' ? 'Inspector' : 'Profiles'}>
-            {tab === 'inspector' ? (
-              <Inspector />
+          <ErrorBoundary label={panel === 'inspector' ? 'Inspector' : 'Profiles'}>
+            {panel === 'inspector' ? (
+              mode === 'sheet' ? (
+                <PartInspector sheets={sheets} />
+              ) : (
+                <Inspector />
+              )
             ) : (
               <ProfilePanel slices={slices} reports={sliceReports} sheets={sheets} />
             )}

@@ -43,6 +43,17 @@ export interface PlacedPart extends PartGeometry {
   /** Translation from part coordinates to sheet coordinates. */
   dx: number;
   dy: number;
+  /** Rotation already baked into this part's geometry, degrees. */
+  rot?: number;
+  /**
+   * The point rotation turns about, in part coordinates.
+   *
+   * This is the centre of the part's *unrotated* bounding box. Rotating a shape
+   * about a point does not leave the resulting bounding box centred on that
+   * point, so the pivot has to be carried rather than recomputed from `bbox` —
+   * otherwise a rotation handle drifts away from the part as it turns.
+   */
+  pivot: [number, number];
   /** True when a person put it here and the nester must leave it alone. */
   pinned?: boolean;
   bbox: BBox;
@@ -78,11 +89,24 @@ export interface NestResult {
 
 const DEFAULT_MAX_SHEETS = 60;
 
-/** Where a person dragged a part to. */
+/**
+ * Roughly how wide a label will be.
+ *
+ * The real width comes from the stroke font, which this module deliberately
+ * does not import. Slightly generous, so a spot that passes here has room for
+ * the real thing.
+ */
+export function estimateLabelWidth(label: string, height: number): number {
+  return label.length * height * 0.8;
+}
+
+/** Where a person dragged a part to, and how far they turned it. */
 export interface PartPlacement {
   sheet: number;
   dx: number;
   dy: number;
+  /** Rotation about the part's own centre, degrees. */
+  rot?: number;
 }
 
 /* ------------------------------------------------------------------ *
@@ -281,7 +305,7 @@ export function nestParts(parts: PartGeometry[], options: NestOptions): NestResu
       sheet = openSheet();
     }
 
-    const labelWidth = labelHeight > 0 ? part.label.length * (labelHeight * 0.8) : 0;
+    const labelWidth = labelHeight > 0 ? estimateLabelWidth(part.label, labelHeight) : 0;
     let labelAt: [number, number] | null = null;
     let usedLabelHeight = labelHeight;
 
@@ -297,6 +321,7 @@ export function nestParts(parts: PartGeometry[], options: NestOptions): NestResu
     const placed: PlacedPart = {
       ...part,
       bbox,
+      pivot: [(bbox.minX + bbox.maxX) / 2, (bbox.minY + bbox.maxY) / 2],
       dx: cursorX - bbox.minX,
       dy: shelfY - bbox.minY,
       labelAt,
@@ -379,6 +404,7 @@ export function findOverlaps(sheet: Sheet, tolerance = 1e-6): string[] {
 export function applyPlacements(
   result: NestResult,
   placements: Record<string, PartPlacement>,
+  sheetSize?: { width: number; height: number },
 ): NestResult {
   if (Object.keys(placements).length === 0) return result;
 
@@ -397,11 +423,54 @@ export function applyPlacements(
         (buckets.get(sheet.index) as PlacedPart[]).push(part);
         continue;
       }
+
       const target = Math.min(Math.max(Math.round(placement.sheet), 1), sheetCount);
+      const rot = placement.rot ?? 0;
+
+      // Rotation is baked in, so the bounding box, the label spot and every
+      // downstream check are all computed from the geometry as it will be cut.
+      //
+      // Any rotation already on the part is undone first, about the same
+      // pivot, so this function is safe to run on its own output: turning to
+      // 40 degrees and then to 80 gives the same geometry as turning to 80
+      // once, rather than compounding to 120.
+      const base = part.rot ? rotatePart(part, -part.rot, part.pivot) : part;
+      const spun = rot !== 0 ? rotatePart(base, rot, part.pivot) : base;
+      const bbox = boundsOf(spun);
+
+      let labelAt = part.labelAt;
+      if (rot !== 0 && part.labelHeight > 0 && part.label.length > 0) {
+        // The label stays upright — a rotated part number is hard to read —
+        // so its spot has to be found again on the turned material.
+        const width = estimateLabelWidth(part.label, part.labelHeight);
+        labelAt =
+          findLabelSpot(spun, width, part.labelHeight) ??
+          findLabelSpot(spun, width * 0.6, part.labelHeight * 0.6);
+      }
+
+      let { dx, dy } = placement;
+      if (sheetSize) {
+        [dx, dy] = clampPlacement(
+          { ...spun, bbox, pivot: part.pivot, dx, dy, labelAt, labelHeight: part.labelHeight },
+          dx,
+          dy,
+          sheetSize.width,
+          sheetSize.height,
+        );
+      }
+
       (buckets.get(target) as PlacedPart[]).push({
-        ...part,
-        dx: placement.dx,
-        dy: placement.dy,
+        ...spun,
+        bbox,
+        // The pivot stays where it was: rotation is always applied to the
+        // original geometry about the original centre, so turning a part twice
+        // gives the same result as turning it once by the sum.
+        pivot: part.pivot,
+        dx,
+        dy,
+        rot,
+        labelAt,
+        labelHeight: labelAt ? part.labelHeight : 0,
         pinned: true,
       });
     }
@@ -689,4 +758,98 @@ export function analyseSheet(sheet: Sheet, clearance = 0): SheetReport {
     pairs,
     closest,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Rotation
+ * ------------------------------------------------------------------ */
+
+/**
+ * Turn a part about its own centre.
+ *
+ * Rotation is baked into the geometry rather than carried as a transform, so
+ * everything downstream — bounds, clamping, hit testing, collision, export —
+ * reads the same fields it always did and needs no special case. The part's
+ * bounding-box centre is the pivot, which is what turning a piece on the bed
+ * feels like.
+ *
+ * Corrugated board is the reason this exists. The flutes inside run one way,
+ * and a cut edge exposes them; every part cut at the same angle gives every
+ * layer an identical edge and an identical way of passing light. Turning parts
+ * against the flute is a material decision, not a packing one.
+ */
+export function rotatePart(
+  part: PartGeometry,
+  degrees: number,
+  pivot?: [number, number],
+): PartGeometry {
+  const angle = (degrees * Math.PI) / 180;
+  if (Math.abs(angle) < 1e-12) return part;
+
+  const box = boundsOf(part);
+  const cx = pivot ? pivot[0] : (box.minX + box.maxX) / 2;
+  const cy = pivot ? pivot[1] : (box.minY + box.maxY) / 2;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  const spin = (points: number[]) => {
+    const out = new Array<number>(points.length);
+    for (let i = 0; i < points.length; i += 2) {
+      const x = points[i] - cx;
+      const y = points[i + 1] - cy;
+      out[i] = cx + x * cos - y * sin;
+      out[i + 1] = cy + x * sin + y * cos;
+    }
+    return out;
+  };
+
+  const spinCircle = (circle: Circle): Circle => {
+    const x = circle.x - cx;
+    const y = circle.y - cy;
+    return {
+      x: cx + x * cos - y * sin,
+      y: cy + x * sin + y * cos,
+      r: circle.r,
+    };
+  };
+
+  return {
+    ...part,
+    outer: spin(part.outer),
+    outerCircle: part.outerCircle ? spinCircle(part.outerCircle) : undefined,
+    holes: part.holes.map(spin),
+    circles: part.circles.map(spinCircle),
+  };
+}
+
+/** Deterministic PRNG, the same one the rest of Kerros seeds from. */
+function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * A rotation for every part, drawn from the seed.
+ *
+ * Same seed, same angles, every time — a lamp is reproducible or it is not a
+ * design. Angles are derived per part from the seed mixed with the part's
+ * position in the list, so adding a part at the end does not reshuffle the
+ * ones before it.
+ */
+export function scatterRotations(
+  ids: string[],
+  seed: number,
+  maxAngle = 180,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  ids.forEach((id, index) => {
+    const random = mulberry32(seed * 2654435761 + index * 40503);
+    out[id] = Math.round((random() * 2 - 1) * maxAngle * 10) / 10;
+  });
+  return out;
 }

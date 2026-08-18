@@ -11,6 +11,7 @@ import { defaultParams, findModule, modelBounds } from './sdf';
 import { ROD_CLEARANCE } from './rig';
 import type { RodSpec } from './rig';
 import type { PartPlacement } from './nest';
+import type { ProjectData } from './project';
 
 export type ViewName = 'persp' | 'top' | 'front' | 'side';
 
@@ -19,6 +20,12 @@ export const PREVIEW_RESOLUTIONS = [32, 48, 64, 96, 128];
 
 /** What the workspace is showing. */
 export type WorkspaceMode = 'model' | 'slice' | 'stack' | 'sheet';
+
+/** Which way the flutes run in the stock, or none for plain material. */
+export type FluteDirection = 'none' | 'horizontal' | 'vertical';
+
+/** Which panel the right rail is showing. */
+export type Panel = 'inspector' | 'profiles';
 
 /** Samples along the longest XY axis when slicing. */
 export const SLICE_RESOLUTIONS = [120, 200, 300, 420];
@@ -54,8 +61,19 @@ interface KerrosState {
   material: MaterialProfile;
   stack: StackSettings;
 
+  /** Project name, used for the saved filename and the manifest. */
+  projectName: string;
+
   view: ViewName;
   mode: WorkspaceMode;
+  /**
+   * Which panel the right rail shows.
+   *
+   * Kept in the store rather than in the panel's own state, because selecting
+   * something *is* a request to inspect it: the selection action and the panel
+   * change then happen together instead of racing in two effects.
+   */
+  panel: Panel;
   previewRes: number;
   displayMode: DisplayMode;
   gizmoMode: GizmoMode;
@@ -92,6 +110,16 @@ interface KerrosState {
   /** Part selected in the sheet view. Separate from the feature selection. */
   selectedPartId: string | null;
   /**
+   * Corrugation direction of the stock. Corrugated board has flutes running
+   * one way inside it, and a cut edge exposes them, so the angle a part is cut
+   * at changes how its edge looks and how it passes light.
+   */
+  fluteDirection: FluteDirection;
+  /** Flute pitch, mm. B flute is about 6.5, C about 7.9, E about 3.5. */
+  flutePitch: number;
+  /** Widest angle the scatter button will turn a part, degrees. */
+  scatterAngle: number;
+  /**
    * Slice inspector: refit the view to each layer as you step through.
    * Off by default — a fixed scale is what shows the form narrowing.
    */
@@ -117,6 +145,12 @@ interface KerrosState {
   setStack: (patch: Partial<StackSettings>) => void;
   setView: (view: ViewName) => void;
   setMode: (mode: WorkspaceMode) => void;
+  setPanel: (panel: Panel) => void;
+  setProjectName: (name: string) => void;
+  /** Replace everything a project file describes. */
+  applyProject: (data: ProjectData, nextFeatureNumber: number) => void;
+  /** Everything a project file should hold. */
+  projectData: () => ProjectData;
   setPreviewRes: (res: number) => void;
   setDisplayMode: (mode: DisplayMode) => void;
   setSliceRes: (res: number) => void;
@@ -135,6 +169,11 @@ interface KerrosState {
   setPartPlacement: (id: string, placement: PartPlacement) => void;
   clearPartPlacement: (id: string) => void;
   clearAllPlacements: () => void;
+  /** Set several placements at once, so a scatter is a single update. */
+  mergePlacements: (placements: Record<string, PartPlacement>) => void;
+  setFluteDirection: (direction: FluteDirection) => void;
+  setFlutePitch: (mm: number) => void;
+  setScatterAngle: (degrees: number) => void;
   setGizmoMode: (mode: GizmoMode) => void;
   setSnapEnabled: (enabled: boolean) => void;
   setSeed: (seed: number) => void;
@@ -142,7 +181,7 @@ interface KerrosState {
 
 const SHAPE: Stage = 'SHAPE';
 
-export const useKerros = create<KerrosState>((set) => ({
+export const useKerros = create<KerrosState>((set, get) => ({
   features: [],
   selectedId: null,
   nextFeatureNumber: 1,
@@ -151,8 +190,11 @@ export const useKerros = create<KerrosState>((set) => ({
   material: DEFAULT_MATERIAL,
   stack: DEFAULT_STACK,
 
+  projectName: 'Untitled lamp',
+
   view: 'persp',
   mode: 'model',
+  panel: 'inspector',
   previewRes: 64,
   displayMode: 'solid',
   gizmoMode: 'translate',
@@ -172,6 +214,9 @@ export const useKerros = create<KerrosState>((set) => ({
   currentSheet: 1,
   partPlacements: {},
   selectedPartId: null,
+  fluteDirection: 'horizontal',
+  flutePitch: 6.5,
+  scatterAngle: 180,
   seed: 1,
 
   addShape: (moduleKey) =>
@@ -279,7 +324,8 @@ export const useKerros = create<KerrosState>((set) => ({
       ),
     })),
 
-  selectFeature: (id) => set({ selectedId: id }),
+  // Selecting brings the inspector forward: one action, one place.
+  selectFeature: (id) => set(id ? { selectedId: id, panel: 'inspector' } : { selectedId: id }),
 
   renameFeature: (id, name) =>
     set((s) => ({
@@ -305,6 +351,8 @@ export const useKerros = create<KerrosState>((set) => ({
   setStack: (patch) => set((s) => ({ stack: { ...s.stack, ...patch } })),
   setView: (view) => set({ view }),
   setMode: (mode) => set({ mode }),
+  setPanel: (panel) => set({ panel }),
+  setProjectName: (projectName) => set({ projectName }),
   setPreviewRes: (previewRes) => set({ previewRes }),
   setDisplayMode: (displayMode) => set({ displayMode }),
   setSliceRes: (sliceRes) => set({ sliceRes }),
@@ -320,7 +368,8 @@ export const useKerros = create<KerrosState>((set) => ({
   setMakeSpacers: (makeSpacers) => set({ makeSpacers }),
   setCurrentSheet: (currentSheet) => set({ currentSheet: Math.max(1, Math.round(currentSheet)) }),
 
-  selectPart: (selectedPartId) => set({ selectedPartId }),
+  selectPart: (selectedPartId) =>
+    set(selectedPartId ? { selectedPartId, panel: 'inspector' } : { selectedPartId }),
 
   setPartPlacement: (id, placement) =>
     set((s) => ({ partPlacements: { ...s.partPlacements, [id]: placement } })),
@@ -334,6 +383,91 @@ export const useKerros = create<KerrosState>((set) => ({
     }),
 
   clearAllPlacements: () => set({ partPlacements: {} }),
+
+  mergePlacements: (placements) =>
+    set((s) => ({ partPlacements: { ...s.partPlacements, ...placements } })),
+
+  setFluteDirection: (fluteDirection) => set({ fluteDirection }),
+  setFlutePitch: (flutePitch) => set({ flutePitch: Math.max(flutePitch, 0.5) }),
+  setScatterAngle: (scatterAngle) =>
+    set({ scatterAngle: Math.min(Math.max(scatterAngle, 0), 180) }),
+
+  projectData: () => {
+    const s = get();
+    return {
+      name: s.projectName,
+      machine: { ...s.machine },
+      material: { ...s.material },
+      stack: { ...s.stack },
+      seed: s.seed,
+      features: s.features.map((f) => ({
+        id: f.id,
+        kind: f.kind,
+        stage: f.stage as string,
+        name: f.name,
+        enabled: f.enabled,
+        params: { ...f.params },
+      })),
+      slicing: {
+        sliceRes: s.sliceRes,
+        sliceTolerance: s.sliceTolerance,
+        sliceSmoothing: s.sliceSmoothing,
+        minFeature: s.minFeature,
+        previewRes: s.previewRes,
+      },
+      layout: {
+        partGap: s.partGap,
+        labelHeight: s.labelHeight,
+        ringWidth: s.ringWidth,
+        makeSpacers: s.makeSpacers,
+        fluteDirection: s.fluteDirection as string,
+        flutePitch: s.flutePitch,
+        scatterAngle: s.scatterAngle,
+        partPlacements: Object.fromEntries(
+          Object.entries(s.partPlacements).map(([id, p]) => [
+            id,
+            { sheet: p.sheet, dx: p.dx, dy: p.dy, rot: p.rot ?? 0 },
+          ]),
+        ),
+      },
+    };
+  },
+
+  applyProject: (data, nextFeatureNumber) =>
+    set({
+      projectName: data.name,
+      machine: { ...data.machine },
+      material: { ...data.material },
+      stack: { ...data.stack },
+      seed: data.seed,
+      features: data.features.map((f) => ({
+        id: f.id,
+        kind: f.kind,
+        stage: f.stage as Stage,
+        name: f.name,
+        enabled: f.enabled,
+        params: { ...f.params },
+      })),
+      nextFeatureNumber,
+      sliceRes: data.slicing.sliceRes,
+      sliceTolerance: data.slicing.sliceTolerance,
+      sliceSmoothing: data.slicing.sliceSmoothing,
+      minFeature: data.slicing.minFeature,
+      previewRes: data.slicing.previewRes,
+      partGap: data.layout.partGap,
+      labelHeight: data.layout.labelHeight,
+      ringWidth: data.layout.ringWidth,
+      makeSpacers: data.layout.makeSpacers,
+      fluteDirection: data.layout.fluteDirection as FluteDirection,
+      flutePitch: data.layout.flutePitch,
+      scatterAngle: data.layout.scatterAngle,
+      partPlacements: { ...data.layout.partPlacements },
+      // Selections point at things that may no longer exist.
+      selectedId: null,
+      selectedPartId: null,
+      currentLayer: 1,
+      currentSheet: 1,
+    }),
   setGizmoMode: (gizmoMode) => set({ gizmoMode }),
   setSnapEnabled: (snapEnabled) => set({ snapEnabled }),
   setSeed: (seed) => set({ seed }),

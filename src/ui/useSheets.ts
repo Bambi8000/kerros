@@ -64,7 +64,10 @@ export function useSheets(slices: SliceSet | null): SheetResult {
 
     // Manual placements go on last, so re-nesting rearranges everything except
     // what a person deliberately put somewhere.
-    const placed = applyPlacements(nested, partPlacements);
+    const placed = applyPlacements(nested, partPlacements, {
+      width: Math.max(machine.bedWidth - machine.margin * 2, 1),
+      height: Math.max(machine.bedHeight - machine.margin * 2, 1),
+    });
 
     // The real check: do the outlines actually meet, and is there enough room
     // between them. Bounding boxes cannot tell you either — a part nested into

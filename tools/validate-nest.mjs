@@ -28,6 +28,9 @@ import {
   clampPlacement,
   partAt,
   placedBox,
+  rotatePart,
+  scatterRotations,
+  estimateLabelWidth,
 } from '../src/core/nest.ts';
 
 import {
@@ -619,6 +622,210 @@ console.log('nest: true-shape collision');
   check(
     'but a small part sitting on the ring band is',
     analyseSheet(onTop.sheets[0], 0).colliding.length === 2,
+  );
+}
+
+console.log('nest: rotation');
+{
+  const bar = {
+    id: 'bar',
+    label: 'B',
+    kind: 'slice',
+    outer: [0, 0, 40, 0, 40, 10, 0, 10],
+    holes: [],
+    circles: [{ x: 5, y: 5, r: 2 }],
+  };
+
+  check('zero rotation returns the part untouched', rotatePart(bar, 0) === bar);
+
+  const turned = rotatePart(bar, 90);
+  const box = boundsOf(turned);
+  check(
+    'a 40 x 10 bar turned 90 degrees is 10 x 40',
+    Math.abs(box.maxX - box.minX - 10) < 1e-9 && Math.abs(box.maxY - box.minY - 40) < 1e-9,
+    `${(box.maxX - box.minX).toFixed(3)} x ${(box.maxY - box.minY).toFixed(3)}`,
+  );
+
+  const before = boundsOf(bar);
+  check(
+    'it turns about its own centre',
+    Math.abs((box.minX + box.maxX) / 2 - (before.minX + before.maxX) / 2) < 1e-9 &&
+      Math.abs((box.minY + box.maxY) / 2 - (before.minY + before.maxY) / 2) < 1e-9,
+  );
+
+  const area = (pts) => {
+    let sum = 0;
+    const n = pts.length / 2;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      sum += pts[i * 2] * pts[j * 2 + 1] - pts[j * 2] * pts[i * 2 + 1];
+    }
+    return sum / 2;
+  };
+  check('area is preserved', Math.abs(area(turned.outer) - area(bar.outer)) < 1e-9);
+  check('orientation is preserved', Math.sign(area(turned.outer)) === Math.sign(area(bar.outer)));
+
+  check('holes and circles come along', turned.circles.length === 1);
+  const c = turned.circles[0];
+  check('a circle keeps its radius', Math.abs(c.r - 2) < 1e-12);
+  check(
+    'and moves with the part',
+    Math.abs(c.x - 5) > 1e-6 || Math.abs(c.y - 5) > 1e-6,
+  );
+
+  const round = rotatePart(rotatePart(bar, 90), -90);
+  let worst = 0;
+  for (let i = 0; i < bar.outer.length; i++) {
+    worst = Math.max(worst, Math.abs(round.outer[i] - bar.outer[i]));
+  }
+  check('rotating there and back returns the original', worst < 1e-9, `off by ${worst.toExponential(2)}`);
+
+  const spacer = {
+    id: 'sp',
+    label: 'M5',
+    kind: 'spacer',
+    outer: ring(0, 0, 8),
+    outerCircle: { x: 0, y: 0, r: 8 },
+    holes: [],
+    circles: [{ x: 0, y: 0, r: 2.5 }],
+  };
+  const spun = rotatePart(spacer, 37);
+  check('a concentric ring is unmoved by rotation', Math.hypot(spun.outerCircle.x, spun.outerCircle.y) < 1e-9);
+  check('and keeps its exact circle', Math.abs(spun.outerCircle.r - 8) < 1e-12);
+}
+
+console.log('nest: rotation through placement');
+{
+  const options = { sheetWidth: 400, sheetHeight: 300, gap: 4, labelHeight: 4 };
+  const bar = {
+    id: 'r1',
+    label: 'L01',
+    kind: 'slice',
+    outer: [0, 0, 120, 0, 120, 40, 0, 40],
+    holes: [],
+    circles: [],
+  };
+  const auto = nestParts([bar], options);
+  check('the bar nests', auto.sheets.length === 1);
+  check('and gets a label', auto.sheets[0].parts[0].labelAt !== null);
+
+  const upright = applyPlacements(auto, { r1: { sheet: 1, dx: 60, dy: 60, rot: 90 } }, {
+    width: options.sheetWidth,
+    height: options.sheetHeight,
+  });
+  const part = upright.sheets[0].parts[0];
+  check('the placed part records its rotation', part.rot === 90);
+  check(
+    'its bounding box is the rotated one',
+    Math.abs(part.bbox.maxX - part.bbox.minX - 40) < 1e-9,
+    `${(part.bbox.maxX - part.bbox.minX).toFixed(2)} wide`,
+  );
+  check('it still has a label spot on the turned material', part.labelAt !== null);
+
+  const labelBox = {
+    minX: part.labelAt[0],
+    minY: part.labelAt[1],
+    maxX: part.labelAt[0] + estimateLabelWidth(part.label, part.labelHeight),
+    maxY: part.labelAt[1] + part.labelHeight,
+  };
+  check(
+    'and the label sits inside the rotated bounds',
+    labelBox.minX >= part.bbox.minX - 1e-6 &&
+      labelBox.maxX <= part.bbox.maxX + 1e-6 &&
+      labelBox.minY >= part.bbox.minY - 1e-6 &&
+      labelBox.maxY <= part.bbox.maxY + 1e-6,
+  );
+
+  const pushed = applyPlacements(auto, { r1: { sheet: 1, dx: 5000, dy: 5000, rot: 45 } }, {
+    width: options.sheetWidth,
+    height: options.sheetHeight,
+  });
+  const clamped = placedBox(pushed.sheets[0].parts[0]);
+  check(
+    'a rotated part is clamped to the sheet, using its rotated size',
+    clamped.maxX <= options.sheetWidth + 1e-9 && clamped.maxY <= options.sheetHeight + 1e-9,
+  );
+  check(
+    'and is not pushed off the near edge either',
+    clamped.minX >= -1e-9 && clamped.minY >= -1e-9,
+  );
+}
+
+console.log('nest: the rotation pivot holds still');
+{
+  const options = { sheetWidth: 400, sheetHeight: 300, gap: 4, labelHeight: 0 };
+  // A deliberately lopsided part: its bounding box centre moves under
+  // rotation, so a handle hung off the box would drift away from it.
+  const wedge = {
+    id: 'w',
+    label: 'W',
+    kind: 'slice',
+    outer: [0, 0, 120, 0, 120, 20, 60, 60, 0, 20],
+    holes: [],
+    circles: [],
+  };
+  const auto = nestParts([wedge], options);
+  const before = auto.sheets[0].parts[0];
+
+  check('an unrotated part has a pivot at its box centre', 
+    Math.abs(before.pivot[0] - (before.bbox.minX + before.bbox.maxX) / 2) < 1e-9 &&
+    Math.abs(before.pivot[1] - (before.bbox.minY + before.bbox.maxY) / 2) < 1e-9);
+
+  const size = { width: options.sheetWidth, height: options.sheetHeight };
+  const turned = applyPlacements(auto, { w: { sheet: 1, dx: 100, dy: 100, rot: 40 } }, size);
+  const after = turned.sheets[0].parts[0];
+
+  check('the pivot survives rotation unchanged',
+    after.pivot[0] === before.pivot[0] && after.pivot[1] === before.pivot[1]);
+
+  check(
+    'and the rotated box centre really has moved away from it, which is why',
+    Math.abs(after.pivot[0] - (after.bbox.minX + after.bbox.maxX) / 2) > 1e-6 ||
+      Math.abs(after.pivot[1] - (after.bbox.minY + after.bbox.maxY) / 2) > 1e-6,
+  );
+
+  // Turning twice must equal turning once by the sum, or repeated drags creep.
+  const once = applyPlacements(auto, { w: { sheet: 1, dx: 100, dy: 100, rot: 80 } }, size)
+    .sheets[0].parts[0];
+  const twice = applyPlacements(
+    applyPlacements(auto, { w: { sheet: 1, dx: 100, dy: 100, rot: 40 } }, size),
+    { w: { sheet: 1, dx: 100, dy: 100, rot: 80 } },
+    size,
+  ).sheets[0].parts[0];
+  let worst = 0;
+  for (let i = 0; i < once.outer.length; i++) {
+    worst = Math.max(worst, Math.abs(once.outer[i] - twice.outer[i]));
+  }
+  check(
+    'rotation is applied to the original geometry, so repeated turns do not creep',
+    worst < 1e-9,
+    `off by ${worst.toExponential(2)}`,
+  );
+}
+
+console.log('nest: scattered rotations');
+{
+  const ids = ['a', 'b', 'c', 'd', 'e'];
+  const first = scatterRotations(ids, 1);
+  const again = scatterRotations(ids, 1);
+  check('the same seed gives the same angles', JSON.stringify(first) === JSON.stringify(again));
+
+  const other = scatterRotations(ids, 2);
+  check('a different seed gives different angles', JSON.stringify(first) !== JSON.stringify(other));
+
+  check('every part gets an angle', ids.every((id) => typeof first[id] === 'number'));
+  check('angles stay within range', ids.every((id) => Math.abs(first[id]) <= 180));
+
+  const limited = scatterRotations(ids, 1, 20);
+  check('a smaller limit is respected', ids.every((id) => Math.abs(limited[id]) <= 20));
+
+  const spread = new Set(ids.map((id) => first[id]));
+  check('angles actually differ from each other', spread.size === ids.length);
+
+  const grown = scatterRotations([...ids, 'f'], 1);
+  check(
+    'adding a part at the end does not reshuffle the others',
+    ids.every((id) => grown[id] === first[id]),
   );
 }
 

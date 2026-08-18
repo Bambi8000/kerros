@@ -17,3 +17,13 @@ export function downloadText(filename: string, contents: string, mime = 'applica
   // Revoked on the next tick so the click has definitely been handled.
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
+
+/** Read a file the person picked, as text. */
+export function readTextFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.readAsText(file);
+  });
+}

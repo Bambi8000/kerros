@@ -1,11 +1,13 @@
+import { useRef, useState } from 'react';
 import { PREVIEW_RESOLUTIONS, SLICE_RESOLUTIONS, useKerros } from '../core/store';
 import { layerPitch } from '../core/types';
 import type { GapReport, SliceSet } from '../core/slice';
 import { kerfTestDocument, writeDxfR12 } from '../core/dxf';
 import { manifestText, sheetToDxf } from '../core/job';
 import { KERROS_VERSION } from '../version';
+import { parseProject, projectFilename, serializeProject } from '../core/project';
 import { NumberField } from './NumberField';
-import { downloadText } from './download';
+import { downloadText, readTextFile } from './download';
 import type { SheetResult } from './useSheets';
 
 interface Props {
@@ -16,6 +18,10 @@ interface Props {
 }
 
 export function ProfilePanel({ slices, reports, sheets }: Props) {
+  const projectName = useKerros((s) => s.projectName);
+  const setProjectName = useKerros((s) => s.setProjectName);
+  const [loadMessage, setLoadMessage] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const machine = useKerros((s) => s.machine);
   const material = useKerros((s) => s.material);
   const stack = useKerros((s) => s.stack);
@@ -50,6 +56,15 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
   const makeSpacers = useKerros((s) => s.makeSpacers);
   const setMakeSpacers = useKerros((s) => s.setMakeSpacers);
   const clearAllPlacements = useKerros((s) => s.clearAllPlacements);
+  const rodCount = useKerros(
+    (s) => s.features.filter((f) => f.kind === 'rod' && f.enabled).length,
+  );
+  const fluteDirection = useKerros((s) => s.fluteDirection);
+  const setFluteDirection = useKerros((s) => s.setFluteDirection);
+  const flutePitch = useKerros((s) => s.flutePitch);
+  const setFlutePitch = useKerros((s) => s.setFlutePitch);
+  const scatterAngle = useKerros((s) => s.scatterAngle);
+  const setScatterAngle = useKerros((s) => s.setScatterAngle);
 
   const collidingSheets = Object.entries(sheets.reports)
     .filter(([, report]) => report.colliding.length > 0)
@@ -109,6 +124,32 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
     );
   };
 
+  const saveProject = () => {
+    const data = useKerros.getState().projectData();
+    downloadText(
+      projectFilename(data.name),
+      serializeProject(data, KERROS_VERSION, new Date().toISOString()),
+      'application/json',
+    );
+    setLoadMessage({ kind: 'ok', text: `Saved ${projectFilename(data.name)}` });
+  };
+
+  const loadProject = async (file: File) => {
+    const result = parseProject(await readTextFile(file));
+    if (!result.ok || !result.data) {
+      setLoadMessage({ kind: 'bad', text: result.error ?? 'That file could not be read.' });
+      return;
+    }
+    useKerros.getState().applyProject(result.data, result.nextFeatureNumber);
+    setLoadMessage({
+      kind: 'ok',
+      text:
+        result.warnings.length > 0
+          ? `Opened with ${result.warnings.length} warning${result.warnings.length === 1 ? '' : 's'}: ${result.warnings[0]}`
+          : `Opened ${file.name}`,
+    });
+  };
+
   const exportKerfTest = () => {
     downloadText('kerros-kerf-test.dxf', writeDxfR12(kerfTestDocument()));
   };
@@ -119,6 +160,53 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
 
   return (
     <>
+      <div className="group">
+        <div className="group-head">Project</div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <span className="field-input">
+            <input
+              type="text"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+            />
+          </span>
+        </label>
+        <button type="button" className="btn btn-wide" onClick={saveProject}>
+          Save project
+        </button>
+        <button
+          type="button"
+          className="btn btn-wide"
+          onClick={() => fileRef.current?.click()}
+        >
+          Open project…
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".json,.kerros.json,application/json"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            // Cleared so picking the same file twice still fires a change.
+            e.target.value = '';
+            if (file) void loadProject(file);
+          }}
+        />
+        {loadMessage ? (
+          <div className={loadMessage.kind === 'bad' ? 'warn' : 'derived'}>
+            {loadMessage.text}
+          </div>
+        ) : null}
+        <div className="derived">
+          A .kerros.json holds the profiles, the whole feature tree, the seed
+          and every hand placement — everything needed to cut this lamp again.
+          What mode you had open and what was selected is not part of the
+          design, so it is not saved.
+        </div>
+      </div>
+
       <div className="group">
         <div className="group-head">Machine</div>
         <label className="field">
@@ -350,6 +438,52 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
       </div>
 
       <div className="group">
+        <div className="group-head">Stock grain</div>
+        <label className="field">
+          <span className="field-label">Flutes</span>
+          <span className="field-input">
+            <select
+              value={fluteDirection}
+              onChange={(e) =>
+                setFluteDirection(e.target.value as 'none' | 'horizontal' | 'vertical')
+              }
+            >
+              <option value="none">None (plain sheet)</option>
+              <option value="horizontal">Horizontal</option>
+              <option value="vertical">Vertical</option>
+            </select>
+          </span>
+        </label>
+        {fluteDirection !== 'none' ? (
+          <NumberField
+            label="Flute pitch"
+            value={flutePitch}
+            unit="mm"
+            step={0.5}
+            min={0.5}
+            max={30}
+            onChange={setFlutePitch}
+          />
+        ) : null}
+        <NumberField
+          label="Scatter ±"
+          value={scatterAngle}
+          unit="°"
+          step={5}
+          min={0}
+          max={180}
+          onChange={setScatterAngle}
+        />
+        <div className="derived">
+          Corrugated board has flutes running one way inside it, and a cut edge
+          exposes them. Cut every part at the same angle and every layer's edge
+          looks identical and passes light identically. The Scatter button in
+          the sheet view turns each part by a seeded random angle within this
+          limit — same seed, same lamp.
+        </div>
+      </div>
+
+      <div className="group">
         <div className="group-head">Nesting</div>
         <NumberField
           label="Part gap"
@@ -402,6 +536,19 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
         ) : (
           <div className="derived">Open Sheet to nest the job onto the bed.</div>
         )}
+        {makeSpacers && rodCount === 0 ? (
+          <div className="derived">
+            No spacer rings, because there are no rods. A ring fills the gap
+            between two layers on a rod, so rods come first — add one with
+            &ldquo;Add rod&rdquo; in the feature tree.
+          </div>
+        ) : null}
+        {makeSpacers && rodCount > 0 && spacerTotal === 0 && total > 1 ? (
+          <div className="derived">
+            No spacer rings: no rod reaches two layers, so there are no gaps to
+            fill. Check each rod&rsquo;s Z position and length.
+          </div>
+        ) : null}
         {spacerMismatch ? (
           <div className="warn">
             Rings can only be a whole sheet thick. {stack.spacerHeight} mm was

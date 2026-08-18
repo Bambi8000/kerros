@@ -191,6 +191,11 @@ for them, because rotating a rod about its own axis means nothing.
 radius, outside = rod radius + ring width + half a kerf. A rod spanning n
 layers has n−1 gaps; a rod reaching one layer or none needs no spacers.
 
+Spacers exist **per rod**, so a model with no rods generates none — there are
+no gaps to fill. That is correct, but silence about it reads as a bug, so the
+profiles panel says so plainly, and says it again when rods exist but none of
+them reaches two layers.
+
 **The handoff says one ring per gap, and that is wrong.** A ring can only be a
 whole sheet thick, so a 6 mm gap cut from 3 mm plexi needs **two** rings
 stacked, not one. `ringsPerGap()` computes the count and
@@ -403,6 +408,101 @@ range rather than dropped — shrinking a job must not silently lose parts.
 **Overlap is not prevented.** A person dragging a part has a reason, and the
 honest response is to show what happened rather than refuse the drag. The check
 is a warning, not a lock, and export writes exactly what is on the sheet.
+
+### Rotation and stock grain — M4.3
+
+Corrugated board has flutes running one way inside it, and a cut edge exposes
+them. Cut every part at the same angle and every layer's edge looks identical
+and passes light identically. **The angle a part is cut at is a material
+decision, not a packing one** — which is why rotation lives with placement and
+why the sheet view draws the flutes.
+
+`rotatePart()` turns a part about its **bounding-box centre**, which is what
+turning a piece on the bed feels like. Rotation is **baked into the geometry**
+rather than carried as a transform, so bounds, clamping, hit testing, collision
+and export all read the same fields they always did and need no special case.
+The validator checks that area and orientation survive, that a 40 × 10 bar
+turned 90° measures 10 × 40, that a there-and-back rotation returns the
+original to 1e-9, and that a concentric spacer ring is unmoved.
+
+**The engraved label stays upright.** A rotated part number is hard to read, so
+after rotation the label spot is found again on the turned material — which
+also guarantees it still lands on material rather than in a hole that has moved
+under it.
+
+Rotated parts are clamped to the sheet using their **rotated** size, so turning
+a part near an edge slides it back in rather than hanging it off the bed.
+
+**The pivot is carried, not recomputed.** Rotating a shape about a point does
+not leave the resulting bounding box centred on that point, so `PlacedPart`
+holds `pivot` — the centre of the part's *unrotated* box. Without it a rotation
+handle hung off the bounding box drifts away from the part as it turns, and a
+lopsided part rotates about a moving point. A validator uses a deliberately
+lopsided wedge to prove the box centre really does move while the pivot does
+not.
+
+Any rotation already on a part is undone before a new one is applied, about the
+same pivot, so `applyPlacements` is safe to run on its own output: turning to
+40° and then to 80° gives the same geometry as turning to 80° once, rather than
+compounding to 120°.
+
+`scatterRotations()` gives every part a seeded random angle within a chosen
+limit. Angles derive from the global seed mixed with each part's index, so the
+same seed gives the same lamp and adding a part at the end does not reshuffle
+the ones before it.
+
+The sheet view draws the flutes as parallel lines at a settable pitch — B flute
+is about 6.5 mm, C about 7.9, E about 3.5 — under everything else, so the angle
+each part's edge cuts across the grain is visible before anything is cut.
+Controls: drag the **knob** above a selected part to turn it freely — press,
+turn, let go — landing on 1° or, with Shift held, on 15°. The knob takes pointer
+events before the part does, so grabbing it never drags the part. `⟲` `⟳` or
+`[` `]` step 15° (Shift 5°), the part inspector takes an exact angle, and
+`Scatter` does the whole sheet at once.
+
+### Project files — M4.5
+
+`src/core/project.ts`, saved as `.kerros.json`. Holds the profiles, the whole
+feature tree, the seed, the slicing settings and every hand placement —
+everything needed to cut the same lamp again. Transient interface state (which
+mode is open, which layer is showing, what is selected) is deliberately left
+out: it is not part of the design.
+
+**Parsing is defensive**, because a project file is the one artefact a person
+keeps for years, edits by hand, and opens in a newer build than the one that
+wrote it:
+
+- A file from a **newer format version is refused**, not guessed at. Quietly
+  misreading geometry is worse than not opening.
+- Anything else wrong is a **warning, not a failure**: a feature with no kind
+  is skipped, an unknown stage falls back to SHAPE, a duplicate id is
+  renumbered, a parameter that is not a value is dropped, out-of-range numbers
+  are clamped, a placement without a position is discarded. A file with one bad
+  feature still opens.
+- Feature numbering resumes past the highest loaded `fN`, so newly added
+  features cannot collide with loaded ones.
+
+The validator round-trips a full project byte-for-byte, then feeds the parser
+garbage, a foreign file, a future version, an empty file, and a file where
+nearly every field is the wrong type.
+
+### The panel choice lives in the store — M4.5
+
+Selecting something **is** a request to inspect it, so `selectFeature` and
+`selectPart` set the panel themselves. Before this the panel was local state
+driven by two effects — one forcing Profiles on leaving Model mode, one pulling
+Inspector back on selection — and which won depended on effect ordering. One
+action, one place, no race.
+
+### Part inspector — M4.4
+
+A part is not a feature: it has no parameters of its own, it is what the tree
+produced. What it does have is a place on the bed and an angle, and those
+deserve exact numbers as well as dragging. Selecting a part on a sheet brings
+the inspector forward and shows its label, layer, size, position, rotation,
+whether it is pinned, its angle to the flutes, and any clearance problem. Before
+this the panel was locked to Profiles the moment you left Model mode, so
+selecting a part showed nothing at all.
 
 ### What the collision check actually measures — M4.2
 
