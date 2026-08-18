@@ -53,6 +53,16 @@ export interface WindowSpec {
   id: string;
   label: string;
   mode: WindowMode;
+  /**
+   * Where the wedge's axis stands, mm.
+   *
+   * A window is its own volume, not something applied to the accumulated
+   * field, so unlike a shell it does not follow the form when the form moves.
+   * It needs a position of its own or it stays on the world axis while the
+   * shape walks away from it.
+   */
+  x: number;
+  y: number;
   /** How many windows evenly around the axis. */
   count: number;
   /** Angular width of each, degrees. */
@@ -231,13 +241,18 @@ function perLayerDistance(
 }
 
 export function sectorDistance(
-  x: number,
-  y: number,
+  worldX: number,
+  worldY: number,
   z: number,
   spec: WindowSpec,
   plan?: LayerPlan,
   thickness = 3,
 ): number {
+  // Everything below works in the wedge's own frame, so the axis can stand
+  // wherever the form does.
+  const x = worldX - (spec.x ?? 0);
+  const y = worldY - (spec.y ?? 0);
+
   if (spec.mode === 'perLayer') {
     if (!plan) return 1e3;
     return perLayerDistance(x, y, z, spec, plan, thickness);

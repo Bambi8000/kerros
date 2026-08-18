@@ -224,6 +224,24 @@ pieces of code agree about a wedge.
 `twist` spirals the windows up the stack, so no two layers line up — the same
 idea as turning the perforation lattice per layer, and the same reason.
 
+### A window has an axis — M8.2
+
+A shell follows the form when the form moves, because it acts on the accumulated
+field. **A window does not**, because it is its own volume subtracted from that
+field — and with no position of its own it stayed on the world axis while the
+shape walked away from it. Reported straight from a model where moving the
+sphere took the shell along and left the windows behind.
+
+So a window carries `px` `py` for its axis, defaulting to the model's XY centre
+when added, and it gets a gizmo. `hasRotation()` now separates the two questions
+the viewport was conflating: shapes can be turned freely, while rods and windows
+can be moved in all three axes but have no orientation to set — a rod turned
+about its own axis is unchanged, and a window is aimed by its `angle` parameter.
+
+Moving the axis does **not** reroll which layers got windows: the rolls are
+seeded from the layer number, not from the geometry. Validated, because
+otherwise nudging the shape would redesign the lamp.
+
 ### Per layer, random — M8.1
 
 The default mode. A window is **something that happens to a sheet**, not a slot

@@ -13,10 +13,11 @@ import type { SliceSet } from '../core/slice';
 import { rodDiameter, rodSpan } from '../core/rig';
 import {
   composeField,
+  hasRotation,
   hasTransform,
   isFieldFeature,
-  rodSpanOf,
   rodsFromFeatures,
+  transformOriginOf,
 } from '../core/store';
 import type { Feature } from '../core/types';
 
@@ -470,7 +471,7 @@ export function Viewport({ slices }: ViewportProps) {
       if (!proxy || !id) return;
 
       const feature = state.features.find((f) => f.id === id);
-      if (feature?.stage === 'RIG') {
+      if (feature && !hasRotation(feature)) {
         state.setTransform(id, {
           px: tidy(proxy.position.x),
           py: tidy(proxy.position.y),
@@ -542,19 +543,15 @@ export function Viewport({ slices }: ViewportProps) {
     gizmo.showY = true;
     gizmo.showZ = true;
 
-    // A rod moves in all three axes like anything else — its Z position is
-    // the middle of its span. Rotating one would mean nothing, so translate
-    // is the only mode it gets.
-    if (feature.stage === 'RIG') gizmo.setMode('translate');
+    // Rods and windows move in all three axes but have no orientation to set:
+    // a rod turned about its own axis is unchanged, and a window is aimed by
+    // its angle parameter. Translate is the only mode they get.
+    if (!hasRotation(feature)) gizmo.setMode('translate');
 
     applyTransform(proxy, feature.params);
-    if (feature.stage === 'RIG') {
-      const [low, high] = rodSpanOf(feature.params);
-      proxy.position.set(
-        num(feature.params, 'px', 0),
-        num(feature.params, 'py', 0),
-        (low + high) / 2,
-      );
+    if (!hasRotation(feature)) {
+      const [ox, oy, oz] = transformOriginOf(feature);
+      proxy.position.set(ox, oy, oz);
       proxy.rotation.set(0, 0, 0);
     }
     gizmo.attach(proxy);
@@ -575,14 +572,10 @@ export function Viewport({ slices }: ViewportProps) {
 
     const feature = features.find((f) => f.id === selectedId);
     if (!feature) return;
-    if (feature.stage === 'RIG') {
+    if (!hasRotation(feature)) {
       if (!draggingRef.current && proxyRef.current) {
-        const [low, high] = rodSpanOf(feature.params);
-        proxyRef.current.position.set(
-          num(feature.params, 'px', 0),
-          num(feature.params, 'py', 0),
-          (low + high) / 2,
-        );
+        const [ox, oy, oz] = transformOriginOf(feature);
+        proxyRef.current.position.set(ox, oy, oz);
         proxyRef.current.rotation.set(0, 0, 0);
       }
       return;

@@ -321,6 +321,10 @@ export const useKerros = create<KerrosState>((set, get) => ({
       const count = s.features.filter((f) => f.kind === 'window').length + 1;
       const z = bounds ? (bounds.min[2] + bounds.max[2]) / 2 : 50;
       const length = bounds ? (bounds.max[2] - bounds.min[2]) * 0.6 : 60;
+      // Centred on the form, not on the world axis: a window is its own volume
+      // and does not follow the shape the way a shell does.
+      const axisX = bounds ? (bounds.min[0] + bounds.max[0]) / 2 : 0;
+      const axisY = bounds ? (bounds.min[1] + bounds.max[1]) / 2 : 0;
 
       return {
         features: [
@@ -335,6 +339,8 @@ export const useKerros = create<KerrosState>((set, get) => ({
               // Per layer by default: a window that happens to a sheet reads as
               // a lamp, where a slot down the whole side reads as a mistake.
               mode: 'perLayer',
+              px: Math.round(axisX * 10) / 10,
+              py: Math.round(axisY * 10) / 10,
               chance: 0.3,
               minCount: 1,
               maxCount: 2,
@@ -690,7 +696,35 @@ export function rodsFromFeatures(features: Feature[]): RodSpec[] {
  * nothing read, which looked like a broken drag.
  */
 export function hasTransform(feature: Feature): boolean {
-  return feature.stage === 'RIG' || findModule(feature.kind) !== undefined;
+  return (
+    feature.stage === 'RIG' ||
+    feature.kind === 'window' ||
+    findModule(feature.kind) !== undefined
+  );
+}
+
+/**
+ * Can this feature be rotated?
+ *
+ * Only shapes. A rod turned about its own axis is unchanged, and a window is
+ * turned by its `angle` parameter, which is an angle about the stack rather
+ * than a free orientation.
+ */
+export function hasRotation(feature: Feature): boolean {
+  return findModule(feature.kind) !== undefined;
+}
+
+/** Where a feature's gizmo should stand, in world mm. */
+export function transformOriginOf(feature: Feature): [number, number, number] {
+  const x = Number(feature.params.px) || 0;
+  const y = Number(feature.params.py) || 0;
+
+  if (feature.stage === 'RIG') {
+    const [low, high] = rodSpanOf(feature.params);
+    return [x, y, (low + high) / 2];
+  }
+
+  return [x, y, Number(feature.params.pz) || 0];
 }
 
 /** Pattern settings of a feature, in the shape the generator wants. */
@@ -752,6 +786,8 @@ export function windowsFromFeatures(
       maxCount: Math.max(Math.round(Number(f.params.maxCount) || 1), 1),
       minWidth: Math.max(Number(f.params.minWidth) || 0, 0),
       maxWidth: Math.max(Number(f.params.maxWidth) || 0, 0),
+      x: Number(f.params.px) || 0,
+      y: Number(f.params.py) || 0,
       seed,
       count: Math.max(Math.round(Number(f.params.count) || 1), 1),
       width: Number(f.params.width) || 0,

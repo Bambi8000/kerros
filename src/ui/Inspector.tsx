@@ -283,7 +283,21 @@ function WindowInspector({ feature }: { feature: Feature }) {
       </div>
 
       <div className="group">
-        <div className="group-head">Band</div>
+        <div className="group-head">Axis and band</div>
+        <NumberField
+          label="Position X"
+          value={num(feature.params, 'px', 0)}
+          unit="mm"
+          step={0.5}
+          onChange={(v) => setParam(feature.id, 'px', v)}
+        />
+        <NumberField
+          label="Position Y"
+          value={num(feature.params, 'py', 0)}
+          unit="mm"
+          step={0.5}
+          onChange={(v) => setParam(feature.id, 'py', v)}
+        />
         <NumberField
           label="Position Z"
           value={num(feature.params, 'pz', 0)}
@@ -300,6 +314,11 @@ function WindowInspector({ feature }: { feature: Feature }) {
           onChange={(v) => setParam(feature.id, 'length', v)}
         />
         <div className="derived">
+          The wedges radiate from this axis, so move it with the shape. A window
+          is its own volume rather than something applied to the form, which is
+          why it does not follow along the way a shell does. Drag it in the Top
+          view; rotation about the stack is the Angle above.
+          <br />
           Only layers whose mid-plane falls inside the band can get windows.
           Everything above and below is solid stock.
         </div>

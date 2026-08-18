@@ -53,6 +53,8 @@ function win(overrides = {}) {
     id: 'w1',
     label: 'Window 1',
     mode: 'band',
+    x: 0,
+    y: 0,
     chance: 1,
     minCount: 1,
     maxCount: 2,
@@ -331,6 +333,61 @@ console.log('window: degenerate settings');
   );
 
   check('the axis itself does not divide by zero', Number.isFinite(sectorDistance(0, 0, 45, win())));
+}
+
+console.log('window: the axis has a position');
+{
+  const spec = win({ count: 4, width: 40, angle: 0 });
+  const moved = win({ count: 4, width: 40, angle: 0, x: 200, y: 0 });
+
+  check('at the origin the window is on the +X side', sectorDistance(50, 0, 45, spec) < 0);
+  check(
+    'moving the axis takes the window with it',
+    sectorDistance(250, 0, 45, moved) < 0,
+    'the window should now be 200 mm along',
+  );
+  // Careful: with four windows every 90 degrees, the -X direction from the
+  // moved axis is also a window, so the old spot happens to still be open.
+  // Measure between two of them instead.
+  check(
+    'and leaves material where the old wedge was between windows',
+    sectorDistance(200 + 50 * Math.cos(45 * DEG), 50 * Math.sin(45 * DEG), 45, moved) > 0,
+  );
+  check(
+    'the window count still holds around the new axis',
+    sectorDistance(200, 50, 45, moved) < 0 && sectorDistance(150, 0, 45, moved) < 0,
+  );
+  check(
+    'the field is the same shape, just shifted',
+    Math.abs(sectorDistance(50, 10, 45, spec) - sectorDistance(250, 10, 45, moved)) < 1e-9,
+  );
+
+  const plan = { z0: 0, pitch: 9 };
+  const perLayerHere = win({ mode: 'perLayer', chance: 1, minCount: 1, maxCount: 1, minWidth: 40, maxWidth: 40, z: 45, length: 90 });
+  const perLayerThere = win({ ...perLayerHere, x: -150, y: 60 });
+  const mid = layerMidZ(plan, 4, 3);
+  const wedge = wedgesForLayer(perLayerHere, 4)[0];
+  const dir = wedge.angle * DEG;
+
+  check(
+    'per-layer windows move with the axis too',
+    Math.abs(
+      sectorDistance(55 * Math.cos(dir), 55 * Math.sin(dir), mid, perLayerHere, plan, 3) -
+        sectorDistance(
+          -150 + 55 * Math.cos(dir),
+          60 + 55 * Math.sin(dir),
+          mid,
+          perLayerThere,
+          plan,
+          3,
+        ),
+    ) < 1e-9,
+  );
+  check(
+    'and the rolls do not change when the axis moves',
+    JSON.stringify(wedgesForLayer(perLayerHere, 4)) ===
+      JSON.stringify(wedgesForLayer(perLayerThere, 4)),
+  );
 }
 
 console.log('window: per-layer rolls');
