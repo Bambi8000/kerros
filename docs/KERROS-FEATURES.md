@@ -45,7 +45,7 @@ returns a local AABB and is what sizes the voxel grid.
 | `capsule` | Capsule | `h` (straight length, along local Z) `r` |
 | `torus` | Torus | `R` (major) `r` (tube), lies in the local XY plane |
 | `ellipsoid` | Ellipsoid | `rx` `ry` `rz` |
-| `superellipsoid` | Superellipsoid | `rx` `ry` `rz` `e` (exponent; 2 is an ellipsoid, higher squares it off) |
+| `superellipsoid` | Superellipsoid | `rx` `ry` `rz` `e` (exponent, default 1.4) |
 
 Accuracy notes, because they matter downstream:
 
@@ -53,10 +53,18 @@ Accuracy notes, because they matter downstream:
   fields. Blend radii mean exactly what they say.
 - `ellipsoid` uses the standard bounded approximation: accurate near the
   surface, conservative further out.
-- `superellipsoid` is a p-norm, **not** a Euclidean distance. The field is
-  compressed away from the surface, so blends against it come out slightly
-  tighter than the blend radius suggests. Fine for shaping, documented so it
-  is not debugged twice.
+- `superellipsoid` divides the p-norm by its gradient magnitude, giving the
+  first-order distance estimate: exact at the surface and within a few percent
+  nearby, which is all a blend or a slice reads. The raw p-norm, which the
+  first version used, is compressed or stretched depending on direction and
+  throws off every blend that touches it.
+
+  Its exponent defaults to **1.4, deliberately below 2**. At 4 a
+  superellipsoid *is* a rounded box — that is what the p-norm does at that
+  power — and it adds nothing the rounded box module does not already do. The
+  shapes worth having are the pinched ones under 2, where the form pulls in
+  between the axes: at e = 1 the diagonal reaches 58% of the axis radius,
+  where at e = 2 it reaches 100%.
 
 ### Display modes — M3.1
 
@@ -137,10 +145,51 @@ full blend radius would inflate the grid roughly fourfold in volume for
 nothing. `tools/validate-sdf.mjs` asserts across blend radii 10–120 mm that no
 sample on the grid boundary ends up inside the solid.
 
-## CARVE — planned (M5)
+## CARVE — **shipped** (M5)
 
-Shell and subtract volumes. Subtract already works as an operation on any
-shape feature; CARVE adds the shell (`abs(d) - t/2`) as its own feature.
+Subtracting volumes was always available as an operation on any shape feature.
+CARVE adds the other half: **modifiers**.
+
+### Modifiers
+
+A modifier is not a solid. It takes the distance the tree has produced so far
+and returns a new one, so it reshapes the whole form rather than adding to it.
+`ModifierModule` exports `{ key, name, params, apply(d, x, y, z, params) }` and
+`prepareFeatures` interleaves modifiers with shapes in tree order.
+
+Three consequences, all enforced by validators: a modifier sets **no bounds**
+(it adds no material), it is **never picked** by a click (it has no surface of
+its own), and a modifier above an empty tree does nothing — a shell must not
+conjure a wall out of the empty-field sentinel.
+
+### Shell
+
+| Param | Meaning | Default |
+| --- | --- | --- |
+| `t` | wall thickness, mm | 6 |
+| `capTop` / `capTopZ` | keep the form solid above a height | off |
+| `capBottom` / `capBottomZ` | keep it solid below a height | off |
+
+Written as `max(d, -(d + t))`, **not** the usual `abs(d) - t/2`. The difference
+is not cosmetic: the abs form moves the outer surface inward by half the wall,
+quietly shrinking the shape you designed. This form leaves the silhouette
+exactly where it was and takes the wall off the inside, which is what a lamp
+needs — the outline is the design.
+
+Caps stop the cavity at a height, leaving solid slices there: a closed top, a
+solid foot, or both. They are a proper intersection of the cavity against a
+half-space, not a switch on `z`, so **the field stays continuous** across the
+cap plane and slices through the transition come out clean. A validator checks
+the field either side of the plane for a jump.
+
+With no caps, every slice of a shelled form is a ring — which is the whole
+point for a lamp: light escapes through the middle and between the layers.
+Where the form narrows to less than the wall thickness the slice comes back
+solid on its own, with no special case.
+
+Kerf and shell compose correctly without either knowing about the other: the
+compensated contour grows the outer ring by half a kerf and shrinks the inner
+by half a kerf, so the wall as cut ends up the thickness you asked for.
 
 ## RIG — **shipped in part** (M3)
 
@@ -331,7 +380,75 @@ Flagged layers are ringed in the slice inspector and counted in the profiles
 panel. **They are flagged, not blocked** — the maker decides, but not by
 accident.
 
-## PATTERN — planned (M7)
+## PATTERN — **shipped** (M7)
+
+`src/core/pattern.ts`. Perforation in the wall of each slice.
+
+### Per slice, not through the solid
+
+Patterns are applied **in 2D, per layer**, never as a 3D volume subtraction.
+That is a manufacturability decision rather than a shortcut: a hole carved
+through the form becomes a different shape on every layer it crosses, and the
+layer where it happens to be half a millimetre wide is the one that falls apart
+on the bed. Placing holes per slice means every hole is checked against the
+material it is actually cut from.
+
+### The region needs no polygon offsetting
+
+The handoff describes the pattern region as the band between the outer and inner
+contours, inset by a margin — which sounds like a job for polygon offsetting.
+It is not. The distance field already knows how far any point is from the
+boundary, so a hole of radius r is accepted wherever the material is at least
+`r + minBridge` deep. Exact, no library, and automatically right on sloped
+walls, where the field reports the true shortest distance to the surface rather
+than the in-plane one.
+
+### One acceptance test, four generators
+
+| Kind | What it does |
+| --- | --- |
+| `grid` | square lattice |
+| `hex` | staggered lattice, more even light |
+| `scatter` | seeded dart throwing with rejection |
+| `radial` | rings out from the centre, angular step matched to the radial one |
+
+Every generator funnels through `holeFits()`, so **`minBridge` is respected by
+construction** rather than by each generator remembering to. Three clearances,
+all the same number, because a bridge is a bridge whatever is on the other side
+of it: to the wall face, to holes already in the slice (rod clearances), and to
+the pattern holes placed so far.
+
+`measuredBridge()` measures the result independently of the code that placed it,
+and the validator asserts the limit on the output of all four generators, with
+and without rod holes present. A wall too thin to hold the hole yields **no
+holes at all**, which is the honest answer rather than holes that break out of
+it — checked with a 2.5 mm wall and a 4 mm hole.
+
+Patterns are generated **after** rods, and each pattern sees the ones before it,
+so nothing ever crowds anything. Holes are kerf-compensated the same way rod
+holes are: cut radius = radius − kerf/2.
+
+### Per-layer variation
+
+`rotatePerLayer` turns each layer's lattice by a seeded angle, so no two layers
+line up and the light through the stack breaks up. Seeded from the global seed
+mixed with the layer number: the same seed gives the same lamp, and consecutive
+layers differ. With it off, a symmetric form gives identical layers, which a
+validator also checks.
+
+### Not yet
+
+Polygon-shaped patterns — slots, voronoi cells, ring segments — need the region
+as geometry rather than as a test, and go on the roadmap with true-shape
+nesting.
+
+### A pattern has no position — M7
+
+Neither does a shell. Both act on the whole form rather than sitting somewhere
+in it, so `hasTransform()` reports false for them and the gizmo does not attach.
+Before this it did attach, and dragging wrote transform parameters that nothing
+read — a drag that appeared to do nothing while quietly filling the feature with
+values. The Move, Rotate and Snap buttons are disabled for them too.
 
 ## LAYOUT — **shipped** (M4)
 
@@ -485,6 +602,27 @@ wrote it:
 The validator round-trips a full project byte-for-byte, then feeds the parser
 garbage, a foreign file, a future version, an empty file, and a file where
 nearly every field is the wrong type.
+
+### The canvas must not size the layout — M4.6
+
+Both 2D views paint into a canvas whose drawing buffer is sized from the
+measured element size. Setting the element's **CSS** size in pixels as well
+turns that measurement into a feedback loop: a canvas with a pixel width has an
+intrinsic min-content width, a bare `1fr` grid track cannot shrink below its
+content's min-content width, so the track is pinned open at the canvas width —
+and the next measurement reads the wider track and grows the canvas again. The
+grid creeps wider on every repaint until the right-hand rail is pushed off
+screen, and every edit that triggers a redraw makes the whole layout twitch.
+
+Two changes, both necessary:
+
+- the middle track is `minmax(0, 1fr)`, so it may shrink below its content;
+- the canvas is positioned absolutely at `100%` of its box and **only its
+  drawing buffer is sized in JS**, so it contributes no intrinsic width at all.
+
+This was reported as two separate complaints — an inspector that would not
+appear, and a sheet view that jittered while parts were rotated. They were the
+same bug.
 
 ### The panel choice lives in the store — M4.5
 

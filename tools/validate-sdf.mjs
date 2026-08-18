@@ -25,6 +25,13 @@ import {
   modelBounds,
   evaluateGrid,
   nearestFeatureIndex,
+  prepareFeatures,
+  evaluatePoint,
+  sdSuperellipsoid,
+  shellModifier,
+  findModifier,
+  defaultModifierParams,
+  MODIFIER_MODULES,
 } from '../src/core/sdf.ts';
 
 let failures = 0;
@@ -282,6 +289,131 @@ console.log('sdf: blend padding');
   }
   check(`blend k=${c.k} fits inside the grid`, boundaryInside === 0, `${boundaryInside} boundary samples inside`);
   }
+}
+
+console.log('sdf: superellipsoid field');
+{
+  const R = 50;
+  // At e = 2 a superellipsoid is a sphere, so the field can be checked against
+  // the exact answer rather than against itself.
+  check('the surface is at zero on an axis', near(sdSuperellipsoid(R, 0, 0, R, R, R, 2), 0, 1e-9));
+  const diag = R / Math.sqrt(3);
+  check(
+    'and on a diagonal',
+    near(sdSuperellipsoid(diag, diag, diag, R, R, R, 2), 0, 1e-9),
+  );
+  check(
+    'just outside, it is within 5% of the true distance',
+    Math.abs(sdSuperellipsoid(R + 5, 0, 0, R, R, R, 2) - 5) / 5 < 0.05,
+    `got ${sdSuperellipsoid(R + 5, 0, 0, R, R, R, 2).toFixed(4)}`,
+  );
+  check(
+    'just inside too',
+    Math.abs(sdSuperellipsoid(R - 5, 0, 0, R, R, R, 2) + 5) / 5 < 0.1,
+    `got ${sdSuperellipsoid(R - 5, 0, 0, R, R, R, 2).toFixed(4)}`,
+  );
+  check('the centre is inside', sdSuperellipsoid(0, 0, 0, R, R, R, 2) < 0);
+  check('the centre does not divide by zero', Number.isFinite(sdSuperellipsoid(0, 0, 0, R, R, R, 1.4)));
+
+  // The whole point of the exponent: below 2 the shape pulls in between the
+  // axes, above 2 it pushes out towards the corners.
+  const reach = (e) => {
+    const t = Math.pow(1 / 3, 1 / e) * R;
+    return t * Math.sqrt(3);
+  };
+  check('below 2 the diagonal pulls in', reach(1) < R * 0.7);
+  check('at 2 the diagonal equals the axis', near(reach(2), R, 1e-9));
+  check('above 2 the diagonal pushes out', reach(4) > R * 1.2);
+  check(
+    'the default exponent is a shape a rounded box cannot make',
+    findModule('superellipsoid').params.find((p) => p.key === 'e').def < 2,
+  );
+}
+
+console.log('sdf: shell');
+{
+  const R = 50;
+  const wall = 6;
+  const tree = [
+    { kind: 'sphere', enabled: true, params: { ...defaultParams(findModule('sphere')), op: 'union', r: R } },
+    { kind: 'shell', enabled: true, params: { ...defaultModifierParams(shellModifier), t: wall } },
+  ];
+  const prepared = prepareFeatures(tree);
+  const at = (x, y, z) => evaluatePoint(prepared, x, y, z);
+
+  check('one modifier is registered', MODIFIER_MODULES.length === 1);
+  check('it is found by key', findModifier('shell') === shellModifier);
+  check('a shell is not a shape module', findModule('shell') === undefined);
+
+  check('the outer surface is exactly where it was', near(at(R, 0, 0), 0, 1e-9));
+  check('the wall is solid', at(R - wall / 2, 0, 0) < 0);
+  check('the inner surface is one wall in', near(at(R - wall, 0, 0), 0, 1e-9));
+  check('the cavity is empty', at(R - wall - 10, 0, 0) > 0);
+  check('the centre is empty', at(0, 0, 0) > 0);
+  check('outside is still outside', at(R + 10, 0, 0) > 0);
+
+  // The abs(d) - t/2 form would have moved the outer surface inward by t/2.
+  check(
+    'shelling does not shrink the silhouette',
+    at(R - 0.5, 0, 0) < 0 && at(R + 0.5, 0, 0) > 0,
+  );
+
+  const bounds = modelBounds(tree);
+  check('a shell sets no bounds of its own', near(bounds.max[0], R, 1e-9));
+
+  const emptyTree = [{ kind: 'shell', enabled: true, params: defaultModifierParams(shellModifier) }];
+  const emptyPrepared = prepareFeatures(emptyTree);
+  check(
+    'a shell above an empty tree makes no wall out of nothing',
+    evaluatePoint(emptyPrepared, 0, 0, 0) >= EMPTY,
+  );
+
+  const disabled = prepareFeatures([tree[0], { ...tree[1], enabled: false }]);
+  check('a disabled shell does nothing', evaluatePoint(disabled, 0, 0, 0) < 0);
+
+  check(
+    'a shell is never picked, having no surface of its own',
+    nearestFeatureIndex(tree, R, 0, 0) === 0,
+  );
+}
+
+console.log('sdf: shell caps');
+{
+  const R = 50;
+  const wall = 6;
+  const withCap = (extra) => {
+    const tree = [
+      { kind: 'sphere', enabled: true, params: { ...defaultParams(findModule('sphere')), op: 'union', r: R } },
+      {
+        kind: 'shell',
+        enabled: true,
+        params: { ...defaultModifierParams(shellModifier), t: wall, ...extra },
+      },
+    ];
+    const prepared = prepareFeatures(tree);
+    return (x, y, z) => evaluatePoint(prepared, x, y, z);
+  };
+
+  const capped = withCap({ capTop: 1, capTopZ: 20 });
+  check('below the cap the shape is still hollow', capped(0, 0, 0) > 0);
+  check('above the cap it is solid', capped(0, 0, 30) < 0);
+  check('and the outer surface is untouched', near(capped(0, 0, R), 0, 1e-9));
+
+  const footed = withCap({ capBottom: 1, capBottomZ: -20 });
+  check('above the foot it is hollow', footed(0, 0, 0) > 0);
+  check('below the foot it is solid', footed(0, 0, -30) < 0);
+
+  const both = withCap({ capTop: 1, capTopZ: 20, capBottom: 1, capBottomZ: -20 });
+  check('with both caps the cavity is a band', both(0, 0, 0) > 0 && both(0, 0, 30) < 0 && both(0, 0, -30) < 0);
+
+  // A switch on z would leave a jump in the field; an intersection does not.
+  const before = capped(0, 0, 19.9);
+  const after = capped(0, 0, 20.1);
+  check(
+    'the field is continuous across the cap plane',
+    Math.abs(before - after) < 0.5,
+    `${before.toFixed(3)} then ${after.toFixed(3)}`,
+  );
 }
 
 console.log('');

@@ -9,6 +9,8 @@ export function FeatureTree() {
   const selectedId = useKerros((s) => s.selectedId);
   const addShape = useKerros((s) => s.addShape);
   const addRod = useKerros((s) => s.addRod);
+  const addShell = useKerros((s) => s.addShell);
+  const addPattern = useKerros((s) => s.addPattern);
   const removeFeature = useKerros((s) => s.removeFeature);
   const moveFeature = useKerros((s) => s.moveFeature);
   const toggleFeature = useKerros((s) => s.toggleFeature);
@@ -52,13 +54,17 @@ export function FeatureTree() {
                   <span className="row-name">{f.name}</span>
                   <span className="row-sub">
                     {f.stage === 'RIG'
-                      ? `${f.params.size ?? 'M5'} · z ${Number(f.params.zStart) || 0}–${
-                          Number(f.params.zEnd) || 0
-                        }`
-                      : i === 0
-                        ? 'base solid'
-                        : OP_LABELS[op]}
-                    {f.stage === 'RIG' || known ? '' : ' · unknown module'}
+                      ? `${f.params.size ?? 'M5'} · ${Number(f.params.length) || 0} mm`
+                      : f.stage === 'CARVE'
+                        ? `hollow · ${Number(f.params.t) || 0} mm wall`
+                        : f.stage === 'PATTERN'
+                          ? `${f.params.patternKind ?? 'hex'} · Ø${
+                              (Number(f.params.radius) || 0) * 2
+                            } at ${Number(f.params.pitch) || 0} mm`
+                          : i === 0
+                          ? 'base solid'
+                          : OP_LABELS[op]}
+                    {f.stage === 'SHAPE' && !known ? ' · unknown module' : ''}
                   </span>
                 </span>
                 <span className="row-actions">
@@ -124,8 +130,16 @@ export function FeatureTree() {
             Add
           </button>
         </div>
-        <button type="button" className="btn btn-wide" onClick={addRod}>
-          Add rod
+        <div className="add-row">
+          <button type="button" className="btn" onClick={addShell}>
+            Add shell
+          </button>
+          <button type="button" className="btn" onClick={addRod}>
+            Add rod
+          </button>
+        </div>
+        <button type="button" className="btn btn-wide" onClick={addPattern}>
+          Add wall pattern
         </button>
         <span className="foot-note">
           Order is evaluation order — drag a subtract below what it cuts into.

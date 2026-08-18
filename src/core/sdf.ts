@@ -176,13 +176,20 @@ export function sdEllipsoid(
 }
 
 /**
- * Superellipsoid (squircle family) via the p-norm, exponent e.
- * e = 2 is an ellipsoid, higher e squares it off.
+ * Superellipsoid via the p-norm, exponent e.
  *
- * APPROXIMATE distance: the p-norm is not a true Euclidean distance, so the
- * field is compressed away from the surface. Blends against it will look
- * slightly tighter than the blend radius suggests. Good enough for shaping,
- * documented so nobody debugs it twice.
+ *   e < 1   pinched, star-like — the interesting end for organic forms
+ *   e = 1   octahedron
+ *   e = 2   ellipsoid
+ *   e = 4   a rounded box, near enough that the two are hard to tell apart
+ *   e > 8   effectively a box
+ *
+ * The p-norm is not a Euclidean distance, so the raw value is useless as a
+ * field: it is compressed or stretched depending on direction, which throws
+ * off every blend and every kerf offset that reads it. Dividing by the
+ * gradient magnitude gives the first-order distance estimate, which is exact
+ * at the surface and close to it nearby — which is all a blend or a slice ever
+ * looks at.
  */
 export function sdSuperellipsoid(
   x: number,
@@ -194,12 +201,24 @@ export function sdSuperellipsoid(
   e: number,
 ): number {
   const p = Math.max(e, 0.2);
-  const n =
-    Math.pow(Math.abs(x / rx), p) +
-    Math.pow(Math.abs(y / ry), p) +
-    Math.pow(Math.abs(z / rz), p);
-  const scale = Math.min(rx, Math.min(ry, rz));
-  return (Math.pow(n, 1 / p) - 1) * scale;
+  const ax = Math.abs(x) / rx;
+  const ay = Math.abs(y) / ry;
+  const az = Math.abs(z) / rz;
+
+  const value = Math.pow(ax, p) + Math.pow(ay, p) + Math.pow(az, p) - 1;
+
+  // Gradient of the implicit function, in world units.
+  const gx = (p * Math.pow(ax, p - 1)) / rx;
+  const gy = (p * Math.pow(ay, p - 1)) / ry;
+  const gz = (p * Math.pow(az, p - 1)) / rz;
+  const grad = Math.sqrt(gx * gx + gy * gy + gz * gz);
+
+  if (!Number.isFinite(grad) || grad < 1e-9) {
+    // Only at the centre, where the gradient vanishes.
+    return -Math.min(rx, Math.min(ry, rz));
+  }
+
+  return value / grad;
 }
 
 /* ------------------------------------------------------------------ *
@@ -319,7 +338,10 @@ export const SHAPE_MODULES: ShapeModule[] = [
       mm('rx', 'Radius X', 50, 0.5, 500),
       mm('ry', 'Radius Y', 50, 0.5, 500),
       mm('rz', 'Radius Z', 50, 0.5, 500),
-      { key: 'e', label: 'Exponent', def: 4, min: 0.5, max: 12, step: 0.1 },
+      // Default below 2 on purpose. At 4 a superellipsoid is a rounded box and
+      // adds nothing the rounded box module does not already do; the shapes
+      // worth having are the pinched ones under 2.
+      { key: 'e', label: 'Exponent', def: 1.4, min: 0.3, max: 12, step: 0.1 },
     ],
     sdf: (x, y, z, p) =>
       sdSuperellipsoid(
@@ -329,7 +351,7 @@ export const SHAPE_MODULES: ShapeModule[] = [
         num(p, 'rx', 50),
         num(p, 'ry', 50),
         num(p, 'rz', 50),
-        num(p, 'e', 4),
+        num(p, 'e', 1.4),
       ),
     bounds: (p) => {
       const rx = num(p, 'rx', 50);
@@ -342,6 +364,73 @@ export const SHAPE_MODULES: ShapeModule[] = [
 
 export function findModule(key: string): ShapeModule | undefined {
   return SHAPE_MODULES.find((m) => m.key === key);
+}
+
+/* ------------------------------------------------------------------ *
+ * Modifiers
+ *
+ * A modifier is not a solid. It takes the distance the tree has produced so
+ * far and returns a new one, so it changes the whole form rather than adding
+ * to it. Shell is the first; more will follow at the CARVE stage.
+ * ------------------------------------------------------------------ */
+
+export interface ModifierModule {
+  key: string;
+  name: string;
+  params: ParamSpec[];
+  /** `d` is the accumulated distance at the world point x, y, z. */
+  apply: (d: number, x: number, y: number, z: number, p: Params) => number;
+}
+
+/**
+ * Hollow the solid, leaving a wall.
+ *
+ * Written as `max(d, -inner)` with `inner = d + thickness`, not as the usual
+ * `abs(d) - thickness/2`. The difference matters: the abs form moves the outer
+ * surface inward by half the wall, quietly shrinking the shape you designed.
+ * This form leaves the outer surface exactly where it was and takes the wall
+ * off the inside, which is what a lamp wants — the silhouette is the design.
+ *
+ * The cavity can be stopped at a height at each end, which leaves a solid cap
+ * or a solid foot. That is a proper intersection against a half-space rather
+ * than a switch on z, so the field stays continuous and slices through the
+ * transition come out clean.
+ */
+export const shellModifier: ModifierModule = {
+  key: 'shell',
+  name: 'Shell',
+  params: [
+    mm('t', 'Wall', 6, 0.2, 100, 0.1),
+    mm('capTopZ', 'Solid above', 0, -400, 400),
+    mm('capBottomZ', 'Solid below', 0, -400, 400),
+  ],
+  apply: (d, _x, _y, z, p) => {
+    const thickness = Math.max(num(p, 't', 6), 0.01);
+    let inner = d + thickness;
+
+    // The cavity exists only between the two caps, when they are switched on.
+    if (num(p, 'capTop', 0) > 0) inner = Math.max(inner, z - num(p, 'capTopZ', 0));
+    if (num(p, 'capBottom', 0) > 0) inner = Math.max(inner, num(p, 'capBottomZ', 0) - z);
+
+    return Math.max(d, -inner);
+  },
+};
+
+export const MODIFIER_MODULES: ModifierModule[] = [shellModifier];
+
+export function findModifier(key: string): ModifierModule | undefined {
+  return MODIFIER_MODULES.find((m) => m.key === key);
+}
+
+/** Default parameters for a newly added modifier. */
+export function defaultModifierParams(mod: ModifierModule): Params {
+  const p: Params = {};
+  for (const spec of mod.params) p[spec.key] = spec.def;
+  if (mod.key === 'shell') {
+    p.capTop = 0;
+    p.capBottom = 0;
+  }
+  return p;
 }
 
 /**
@@ -430,6 +519,11 @@ export interface EvalFeature {
   params: Params;
 }
 
+/** One evaluation step: either a solid to combine, or a modifier to apply. */
+export type PreparedStep =
+  | ({ type: 'shape' } & Prepared)
+  | { type: 'modifier'; index: number; mod: ModifierModule; params: Params };
+
 export interface Prepared {
   /** Index into the feature array this was prepared from. */
   index: number;
@@ -449,11 +543,18 @@ export interface Prepared {
  * Resolve features into an evaluation-ready form: module looked up, rotation
  * inverted once, disabled and unknown rows dropped.
  */
-export function prepareFeatures(features: EvalFeature[]): Prepared[] {
-  const out: Prepared[] = [];
+export function prepareFeatures(features: EvalFeature[]): PreparedStep[] {
+  const out: PreparedStep[] = [];
   for (let index = 0; index < features.length; index++) {
     const f = features[index];
     if (!f.enabled) continue;
+
+    const modifier = findModifier(f.kind);
+    if (modifier) {
+      out.push({ type: 'modifier', index, mod: modifier, params: f.params });
+      continue;
+    }
+
     const mod = findModule(f.kind);
     if (!mod) continue;
 
@@ -463,6 +564,7 @@ export function prepareFeatures(features: EvalFeature[]): Prepared[] {
     const m = rotationMatrix(rx, ry, rz);
 
     out.push({
+      type: 'shape',
       index,
       mod,
       params: f.params,
@@ -494,10 +596,19 @@ export function toLocal(f: Prepared, x: number, y: number, z: number): [number, 
 }
 
 /** Distance of the whole tree at one world point. */
-export function evaluatePoint(prepared: Prepared[], x: number, y: number, z: number): number {
+export function evaluatePoint(prepared: PreparedStep[], x: number, y: number, z: number): number {
   let d = EMPTY;
   for (let i = 0; i < prepared.length; i++) {
-    const f = prepared[i];
+    const step = prepared[i];
+
+    if (step.type === 'modifier') {
+      // Nothing to hollow yet: a shell above an empty tree must not invent a
+      // wall out of the sentinel distance.
+      if (d < EMPTY) d = step.mod.apply(d, x, y, z, step.params);
+      continue;
+    }
+
+    const f = step;
     const wx = x - f.tx;
     const wy = y - f.ty;
     const wz = z - f.tz;
@@ -529,6 +640,8 @@ export function modelBounds(
   let maxZ = -Infinity;
 
   for (const f of prepared) {
+    // Modifiers add no material, so they set no bounds.
+    if (f.type !== 'shape') continue;
     if (!opIsAdditive(f.op)) continue;
     found = true;
     const b = f.mod.bounds(f.params);
@@ -589,7 +702,7 @@ export function evaluateGrid(features: EvalFeature[], res: number): SdfGrid {
   const BLEND_PAD_FACTOR = 0.35;
   let maxBlend = 0;
   for (const f of prepared) {
-    if (opUsesBlend(f.op) && f.k > maxBlend) maxBlend = f.k;
+    if (f.type === 'shape' && opUsesBlend(f.op) && f.k > maxBlend) maxBlend = f.k;
   }
   const pad = 3 * step + maxBlend * BLEND_PAD_FACTOR;
 
@@ -638,6 +751,8 @@ export function nearestFeatureIndex(
   let bestDistance = Infinity;
 
   for (const f of prepared) {
+    // A modifier has no surface of its own, so nothing can point at it.
+    if (f.type !== 'shape') continue;
     const [lx, ly, lz] = toLocal(f, x, y, z);
     const d = Math.abs(f.mod.sdf(lx, ly, lz, f.params));
     if (d < bestDistance) {

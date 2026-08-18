@@ -7,7 +7,13 @@ import type {
   StackSettings,
 } from './types';
 import { DEFAULT_MACHINE, DEFAULT_MATERIAL, DEFAULT_STACK } from './profiles';
-import { defaultParams, findModule, modelBounds } from './sdf';
+import {
+  defaultModifierParams,
+  defaultParams,
+  findModule,
+  modelBounds,
+  shellModifier,
+} from './sdf';
 import { ROD_CLEARANCE } from './rig';
 import type { RodSpec } from './rig';
 import type { PartPlacement } from './nest';
@@ -129,6 +135,8 @@ interface KerrosState {
 
   addShape: (moduleKey: string) => void;
   addRod: () => void;
+  addShell: () => void;
+  addPattern: () => void;
   /** Stretch a rod to span the whole model. */
   fitRodToModel: (id: string) => void;
   removeFeature: (id: string) => void;
@@ -180,6 +188,16 @@ interface KerrosState {
 }
 
 const SHAPE: Stage = 'SHAPE';
+
+/**
+ * Features that take part in the distance field.
+ *
+ * SHAPE contributes solids, CARVE modifies the result. RIG does neither: rods
+ * are drilled after slicing and never touch the field.
+ */
+export function isFieldFeature(feature: Feature): boolean {
+  return feature.stage === 'SHAPE' || feature.stage === 'CARVE';
+}
 
 export const useKerros = create<KerrosState>((set, get) => ({
   features: [],
@@ -241,6 +259,81 @@ export const useKerros = create<KerrosState>((set, get) => ({
         features: [...s.features, feature],
         nextFeatureNumber: s.nextFeatureNumber + 1,
         selectedId: id,
+      };
+    }),
+
+  /**
+   * A shell hollows everything above it in the tree, so it belongs at the end
+   * of the shapes. Adding one puts it there, and the caps default to the
+   * model's own top and bottom so switching one on does something sensible
+   * straight away.
+   */
+  addShell: () =>
+    set((s) => {
+      const bounds = modelBounds(s.features.filter((f) => f.stage === 'SHAPE'));
+      const id = `f${s.nextFeatureNumber}`;
+      const params = defaultModifierParams(shellModifier);
+      if (bounds) {
+        params.capTopZ = Math.round(bounds.max[2] * 10) / 10;
+        params.capBottomZ = Math.round(bounds.min[2] * 10) / 10;
+      }
+
+      // Shells go after the last shape and before any rig feature: rods are
+      // drilled after slicing and take no part in the field, but keeping the
+      // tree in stage order is what makes it readable.
+      const lastShape = s.features.reduce(
+        (at, f, i) => (f.stage === 'SHAPE' || f.stage === 'CARVE' ? i + 1 : at),
+        0,
+      );
+      const next = s.features.slice();
+      next.splice(lastShape, 0, {
+        id,
+        kind: 'shell',
+        stage: 'CARVE' as Stage,
+        name: 'Shell',
+        enabled: true,
+        params,
+      });
+
+      return {
+        features: next,
+        nextFeatureNumber: s.nextFeatureNumber + 1,
+        selectedId: id,
+        panel: 'inspector' as const,
+      };
+    }),
+
+  /**
+   * A pattern perforates the wall of every slice. It is not part of the field,
+   * so where it sits in the tree does not change the form — but it goes after
+   * the shapes and the shell so the tree still reads top to bottom.
+   */
+  addPattern: () =>
+    set((s) => {
+      const id = `f${s.nextFeatureNumber}`;
+      const count = s.features.filter((f) => f.stage === 'PATTERN').length + 1;
+      return {
+        features: [
+          ...s.features,
+          {
+            id,
+            kind: 'pattern',
+            stage: 'PATTERN' as Stage,
+            name: `Pattern ${count}`,
+            enabled: true,
+            params: {
+              patternKind: 'hex',
+              radius: 2,
+              pitch: 8,
+              minBridge: 1.5,
+              density: 1,
+              rotatePerLayer: 1,
+            },
+          },
+        ],
+        nextFeatureNumber: s.nextFeatureNumber + 1,
+        selectedId: id,
+        panel: 'inspector' as const,
       };
     }),
 
@@ -509,4 +602,48 @@ export function rodsFromFeatures(features: Feature[]): RodSpec[] {
     });
   }
   return rods;
+}
+
+/**
+ * Does this feature have a position the gizmo can move?
+ *
+ * Shapes and rods do. Shells and patterns do not: a shell hollows whatever is
+ * above it in the tree and a pattern perforates every slice, so neither has a
+ * place on the bed. Attaching a gizmo to one wrote transform parameters that
+ * nothing read, which looked like a broken drag.
+ */
+export function hasTransform(feature: Feature): boolean {
+  return feature.stage === 'RIG' || findModule(feature.kind) !== undefined;
+}
+
+/** Pattern settings of a feature, in the shape the generator wants. */
+export function patternOptionsOf(
+  feature: Feature,
+  kerf: number,
+  seed: number,
+): {
+  kind: 'grid' | 'hex' | 'scatter' | 'radial';
+  radius: number;
+  pitch: number;
+  minBridge: number;
+  density: number;
+  kerf: number;
+  seed: number;
+  rotatePerLayer: boolean;
+} {
+  const kind = typeof feature.params.patternKind === 'string' ? feature.params.patternKind : 'hex';
+  return {
+    kind: (['grid', 'hex', 'scatter', 'radial'].includes(kind) ? kind : 'hex') as
+      | 'grid'
+      | 'hex'
+      | 'scatter'
+      | 'radial',
+    radius: Number(feature.params.radius) || 2,
+    pitch: Number(feature.params.pitch) || 8,
+    minBridge: Number(feature.params.minBridge) || 1.5,
+    density: Number(feature.params.density) || 0,
+    kerf,
+    seed,
+    rotatePerLayer: Number(feature.params.rotatePerLayer) > 0,
+  };
 }

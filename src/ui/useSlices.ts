@@ -1,9 +1,15 @@
 import { useEffect, useState } from 'react';
-import { rodsFromFeatures, useKerros } from '../core/store';
+import {
+  isFieldFeature,
+  patternOptionsOf,
+  rodsFromFeatures,
+  useKerros,
+} from '../core/store';
 import { evaluatePoint, modelBounds, prepareFeatures } from '../core/sdf';
 import { minFeatureGap, sliceModel } from '../core/slice';
 import type { GapReport, SliceSet } from '../core/slice';
 import { applyRods } from '../core/rig';
+import { generatePattern } from '../core/pattern';
 
 /** Editing settles before a re-slice, which is far heavier than a preview. */
 const SLICE_DEBOUNCE_MS = 250;
@@ -35,6 +41,7 @@ export function useSlices(enabled: boolean): SliceResult {
   const tolerance = useKerros((s) => s.sliceTolerance);
   const smoothing = useKerros((s) => s.sliceSmoothing);
   const minFeature = useKerros((s) => s.minFeature);
+  const seed = useKerros((s) => s.seed);
 
   const [result, setResult] = useState<SliceResult>(IDLE);
 
@@ -47,7 +54,7 @@ export function useSlices(enabled: boolean): SliceResult {
     setResult((prev) => ({ ...prev, pending: true }));
 
     const timer = window.setTimeout(() => {
-      const shapes = features.filter((f) => f.stage === 'SHAPE');
+      const shapes = features.filter(isFieldFeature);
       const bounds = modelBounds(shapes);
 
       if (!bounds) {
@@ -67,7 +74,37 @@ export function useSlices(enabled: boolean): SliceResult {
       // Rods drill after slicing: they take no part in the field, they only
       // add holes to the layers their span reaches.
       const drilled = applyRods(sliced.slices, rodsFromFeatures(features), kerf);
-      const set: SliceSet = { ...sliced, slices: drilled };
+
+      // Patterns perforate after the rods, so a pattern hole never crowds a
+      // rod hole. Each pattern sees the ones before it for the same reason.
+      const patterns = features.filter((f) => f.stage === 'PATTERN' && f.enabled);
+      const perforated =
+        patterns.length === 0
+          ? drilled
+          : drilled.map((slice) => {
+              const circles = slice.circles.slice();
+              for (const feature of patterns) {
+                const holes = generatePattern(
+                  {
+                    z: slice.z,
+                    bounds: {
+                      minX: bounds.min[0],
+                      minY: bounds.min[1],
+                      maxX: bounds.max[0],
+                      maxY: bounds.max[1],
+                    },
+                    existing: circles,
+                    sample: (x, y, z) => evaluatePoint(prepared, x, y, z),
+                    layer: slice.index,
+                  },
+                  patternOptionsOf(feature, kerf, seed),
+                );
+                circles.push(...holes);
+              }
+              return { ...slice, circles };
+            });
+
+      const set: SliceSet = { ...sliced, slices: perforated };
 
       // The check threshold is whichever is larger: what the maker asked for,
       // or two kerfs, below which the material burns through regardless.
@@ -88,6 +125,7 @@ export function useSlices(enabled: boolean): SliceResult {
     tolerance,
     smoothing,
     minFeature,
+    seed,
   ]);
 
   return result;

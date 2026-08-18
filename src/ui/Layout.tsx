@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM, useKerros } from '../core/store';
+import { SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM, hasTransform, useKerros } from '../core/store';
 import type { DisplayMode, GizmoMode, ViewName, WorkspaceMode } from '../core/store';
 import { KERROS_VERSION } from '../version';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -47,7 +47,10 @@ export function Layout() {
   const setView = useKerros((s) => s.setView);
   const machine = useKerros((s) => s.machine);
   const material = useKerros((s) => s.material);
-  const selectedId = useKerros((s) => s.selectedId);
+  const movable = useKerros((s) => {
+    const feature = s.features.find((f) => f.id === s.selectedId);
+    return feature !== undefined && hasTransform(feature);
+  });
   const gizmoMode = useKerros((s) => s.gizmoMode);
   const setGizmoMode = useKerros((s) => s.setGizmoMode);
   const snapEnabled = useKerros((s) => s.snapEnabled);
@@ -169,7 +172,7 @@ export function Layout() {
               key={m.key}
               type="button"
               title={m.hint}
-              disabled={!selectedId || mode !== 'model'}
+              disabled={!movable || mode !== 'model'}
               className={`view-btn${gizmoMode === m.key ? ' is-active' : ''}`}
               onClick={() => setGizmoMode(m.key)}
             >
@@ -179,7 +182,7 @@ export function Layout() {
           <button
             type="button"
             title={`Snap to ${SNAP_TRANSLATE_MM} mm and ${SNAP_ROTATE_DEG}°`}
-            disabled={!selectedId || mode !== 'model'}
+            disabled={!movable || mode !== 'model'}
             className={`view-btn${snapEnabled ? ' is-active' : ''}`}
             onClick={() => setSnapEnabled(!snapEnabled)}
           >

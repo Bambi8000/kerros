@@ -150,11 +150,13 @@ export function SheetView({ sheets, pending }: Props) {
       const height = wrap.clientHeight;
       if (width === 0 || height === 0) return;
 
+      // Only the drawing buffer is sized here. The element's layout size comes
+      // from CSS: giving the canvas a pixel width makes it an intrinsic size
+      // the grid has to honour, and since that width is measured back off the
+      // grid the two grow each other until the layout falls apart.
       const dpr = Math.min(window.devicePixelRatio, 2);
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) return;

@@ -11,7 +11,7 @@ import { buildGeometry } from '../core/mesh';
 import { circleFitsInPart, groupContours } from '../core/slice';
 import type { SliceSet } from '../core/slice';
 import { rodDiameter, rodSpan } from '../core/rig';
-import { rodSpanOf, rodsFromFeatures } from '../core/store';
+import { hasTransform, isFieldFeature, rodSpanOf, rodsFromFeatures } from '../core/store';
 import type { Feature } from '../core/types';
 
 /**
@@ -361,7 +361,7 @@ export function Viewport({ slices }: ViewportProps) {
       }
 
       const p = hits[0].point;
-      const shapes = current.filter((f) => f.stage === 'SHAPE');
+      const shapes = current.filter(isFieldFeature);
       const index = nearestFeatureIndex(shapes, p.x, p.y, p.z);
       selectFeature(index >= 0 ? shapes[index].id : null);
     };
@@ -518,6 +518,14 @@ export function Viewport({ slices }: ViewportProps) {
 
     const feature = useKerros.getState().features.find((f) => f.id === selectedId);
     if (!feature) {
+      gizmo.detach();
+      return;
+    }
+
+    // A shell or a pattern has no position: it acts on the whole form. Giving
+    // it a gizmo let a drag write transform parameters nothing reads, which
+    // looked exactly like a broken drag.
+    if (!hasTransform(feature)) {
       gizmo.detach();
       return;
     }
@@ -712,7 +720,7 @@ export function Viewport({ slices }: ViewportProps) {
 
       if (useKerros.getState().mode === 'stack') return;
 
-      const shapes = features.filter((f) => f.stage === 'SHAPE');
+      const shapes = features.filter(isFieldFeature);
       const started = performance.now();
       const grid = evaluateGrid(shapes, previewRes);
       const mesh = surfaceNets(grid);
