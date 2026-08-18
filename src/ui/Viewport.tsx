@@ -642,11 +642,13 @@ export function Viewport({ slices }: ViewportProps) {
 
       const feature = state.features.find((f) => f.id === id);
       if (feature && !hasRotation(feature)) {
-        state.setTransform(id, {
-          px: tidy(proxy.position.x),
-          py: tidy(proxy.position.y),
-          pz: tidy(proxy.position.z),
-        });
+        // World in, and the store converts for anything attached to a shape.
+        state.setOriginWorld(
+          id,
+          tidy(proxy.position.x),
+          tidy(proxy.position.y),
+          tidy(proxy.position.z),
+        );
         return;
       }
 
@@ -736,7 +738,7 @@ export function Viewport({ slices }: ViewportProps) {
 
     applyTransform(proxy, feature.params);
     if (!hasRotation(feature)) {
-      const [ox, oy, oz] = transformOriginOf(feature);
+      const [ox, oy, oz] = transformOriginOf(useKerros.getState().features, feature);
       proxy.position.set(ox, oy, oz);
       proxy.rotation.set(0, 0, 0);
     }
@@ -760,7 +762,7 @@ export function Viewport({ slices }: ViewportProps) {
     if (!feature) return;
     if (!hasRotation(feature)) {
       if (!draggingRef.current && proxyRef.current) {
-        const [ox, oy, oz] = transformOriginOf(feature);
+        const [ox, oy, oz] = transformOriginOf(useKerros.getState().features, feature);
         proxyRef.current.position.set(ox, oy, oz);
         proxyRef.current.rotation.set(0, 0, 0);
       }

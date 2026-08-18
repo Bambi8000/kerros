@@ -296,6 +296,8 @@ function WindowInspector({ feature }: { feature: Feature }) {
   const renameFeature = useKerros((s) => s.renameFeature);
   const stockKerf = useKerros((s) => s.material.kerf);
   const centreOnModel = useKerros((s) => s.centreOnModel);
+  const features = useKerros((s) => s.features);
+  const setWindowParent = useKerros((s) => s.setWindowParent);
 
   const mode = text(feature.params, 'mode', 'perLayer');
   const perLayer = mode === 'perLayer';
@@ -306,6 +308,10 @@ function WindowInspector({ feature }: { feature: Feature }) {
   const share = 360 / Math.max(Math.round(count), 1);
   const clamped = Math.min(width, share * 0.9, 178);
   const chance = num(feature.params, 'chance', 0.3);
+  const attachTo = text(feature.params, 'attachTo', '');
+  const hosts = attachableShapes(features);
+  const host = hosts.find((f) => f.id === attachTo);
+  const orphaned = attachTo !== '' && host === undefined;
 
   return (
     <>
@@ -321,6 +327,35 @@ function WindowInspector({ feature }: { feature: Feature }) {
             />
           </span>
         </label>
+        <label className="field">
+          <span className="field-label">Attached to</span>
+          <span className="field-input">
+            <select
+              value={orphaned ? '' : attachTo}
+              onChange={(e) => setWindowParent(feature.id, e.target.value)}
+            >
+              <option value="">Nothing — stays where it is</option>
+              {hosts.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </span>
+        </label>
+        {orphaned ? (
+          <div className="warn">
+            The shape this followed is gone, so the window is back on its own.
+            Pick another, or leave it detached.
+          </div>
+        ) : (
+          <div className="derived">
+            {host
+              ? `Follows ${host.name}: moving it, or turning it about Z, takes the windows along. Detach to leave them where they are.`
+              : 'Detached. The windows stay put when a shape moves, which is what you want for an eccentric opening.'}
+            {host ? ' Only Z rotation is inherited — a wedge tipped out of the stack would not match the layer planes.' : ''}
+          </div>
+        )}
         <label className="field">
           <span className="field-label">Mode</span>
           <span className="field-input">

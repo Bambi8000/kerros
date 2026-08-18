@@ -19,7 +19,9 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
     return `pocket · ${Number(f.params.width) || 0}×${Number(f.params.depth) || 0} mm`;
   }
   if (f.kind === 'window') {
-    return `${Number(f.params.count) || 0} windows · ${Number(f.params.width) || 0}°`;
+    const attached = typeof f.params.attachTo === 'string' && f.params.attachTo !== '';
+    const mode = f.params.mode === 'band' ? 'band' : 'per layer';
+    return `${mode}${attached ? ' · attached' : ''}`;
   }
   if (f.stage === 'RIG') {
     return `${f.params.size ?? 'M5'} · ${Number(f.params.length) || 0} mm`;

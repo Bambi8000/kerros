@@ -21,10 +21,10 @@ import {
   shellModifier,
 } from './sdf';
 import type { Frame } from './sdf';
-import { stockField } from './window';
+import { WINDOW_WORLD, resolveWindow, stockField, windowToLocal, windowToWorld } from './window';
 import { FIXTURE_LABELS, SOCKET_PRESETS } from './fixture';
 import type { FixtureKind, FixtureSpec } from './fixture';
-import type { LayerPlan, WindowSpec } from './window';
+import type { LayerPlan, WindowFrame, WindowSpec } from './window';
 import { ROD_CLEARANCE } from './rig';
 import type { RodSpec } from './rig';
 import type { PartPlacement } from './nest';
@@ -192,6 +192,10 @@ interface KerrosState {
   addStroke: (id: string, stroke: SculptStroke) => void;
   /** Re-attach a sculpt to another shape, carrying its strokes across. */
   setSculptParent: (id: string, parentId: string) => void;
+  /** Attach or detach a window, carrying its placement across. */
+  setWindowParent: (id: string, parentId: string) => void;
+  /** Move a feature by its world origin, converting for anything attached. */
+  setOriginWorld: (id: string, x: number, y: number, z: number) => void;
   undoStroke: (id: string) => void;
   clearStrokes: (id: string) => void;
   setProjectName: (name: string) => void;
@@ -232,6 +236,25 @@ const SHAPE: Stage = 'SHAPE';
 /** Tenths of a millimetre: stroke points do not need sixteen decimal places. */
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+/**
+ * The frame a window follows: translation and Z rotation only.
+ *
+ * A window is a vertical wedge and its layers come from world Z, so inheriting
+ * a parent's X or Y rotation would tip it out of the stack. See `WindowFrame`.
+ */
+export function windowFrameFor(features: Feature[], window: Feature): WindowFrame {
+  const target = typeof window.params.attachTo === 'string' ? window.params.attachTo : '';
+  if (target === '') return WINDOW_WORLD;
+  const parent = features.find((f) => f.id === target);
+  if (!parent) return WINDOW_WORLD;
+  return {
+    x: Number(parent.params.px) || 0,
+    y: Number(parent.params.py) || 0,
+    z: Number(parent.params.pz) || 0,
+    rz: Number(parent.params.rz) || 0,
+  };
 }
 
 /** The frame a sculpt feature's strokes live in. */
@@ -374,10 +397,25 @@ export const useKerros = create<KerrosState>((set, get) => ({
       const count = s.features.filter((f) => f.kind === 'window').length + 1;
       const z = bounds ? (bounds.min[2] + bounds.max[2]) / 2 : 50;
       const length = bounds ? (bounds.max[2] - bounds.min[2]) * 0.6 : 60;
+      // Attached to the last shape by default, so moving the form takes the
+      // windows with it. Detachable, because an eccentric window that stays put
+      // while the form moves is sometimes exactly what is wanted.
+      const host = [...s.features]
+        .reverse()
+        .find((f) => f.enabled && findModule(f.kind) !== undefined);
       // Centred on the form, not on the world axis: a window is its own volume
       // and does not follow the shape the way a shell does.
       const axisX = bounds ? (bounds.min[0] + bounds.max[0]) / 2 : 0;
       const axisY = bounds ? (bounds.min[1] + bounds.max[1]) / 2 : 0;
+      const hostFrame: WindowFrame = host
+        ? {
+            x: Number(host.params.px) || 0,
+            y: Number(host.params.py) || 0,
+            z: Number(host.params.pz) || 0,
+            rz: Number(host.params.rz) || 0,
+          }
+        : WINDOW_WORLD;
+      const localAxis = windowToLocal({ x: axisX, y: axisY, z, angle: 0 }, hostFrame);
 
       return {
         features: [
@@ -389,11 +427,12 @@ export const useKerros = create<KerrosState>((set, get) => ({
             name: `Window ${count}`,
             enabled: true,
             params: {
+              attachTo: host ? host.id : '',
               // Per layer by default: a window that happens to a sheet reads as
               // a lamp, where a slot down the whole side reads as a mistake.
               mode: 'perLayer',
-              px: Math.round(axisX * 10) / 10,
-              py: Math.round(axisY * 10) / 10,
+              px: round1(localAxis.x),
+              py: round1(localAxis.y),
               chance: 0.3,
               minCount: 1,
               maxCount: 2,
@@ -401,9 +440,9 @@ export const useKerros = create<KerrosState>((set, get) => ({
               maxWidth: 60,
               count: 4,
               width: 40,
-              angle: 0,
               twist: 0,
-              pz: Math.round(z * 10) / 10,
+              pz: round1(localAxis.z),
+              angle: round1(localAxis.angle),
               length: Math.round(length * 10) / 10,
               fit: 0.4,
               windowKerf: s.material.kerf,
@@ -709,6 +748,95 @@ export const useKerros = create<KerrosState>((set, get) => ({
       };
     }),
 
+  setWindowParent: (id, parentId) =>
+    set((s) => {
+      const window = s.features.find((f) => f.id === id);
+      if (!window) return s;
+
+      const from = windowFrameFor(s.features, window);
+      const parent = s.features.find((f) => f.id === parentId);
+      const to: WindowFrame =
+        parentId === '' || !parent
+          ? WINDOW_WORLD
+          : {
+              x: Number(parent.params.px) || 0,
+              y: Number(parent.params.py) || 0,
+              z: Number(parent.params.pz) || 0,
+              rz: Number(parent.params.rz) || 0,
+            };
+
+      // Out of the old frame and into the new one, so attaching or detaching
+      // moves the reference and leaves the window where it looks.
+      const world = windowToWorld(
+        {
+          x: Number(window.params.px) || 0,
+          y: Number(window.params.py) || 0,
+          z: Number(window.params.pz) || 0,
+          angle: Number(window.params.angle) || 0,
+        },
+        from,
+      );
+      const local = windowToLocal(world, to);
+
+      return {
+        features: s.features.map((f) =>
+          f.id === id
+            ? {
+                ...f,
+                params: {
+                  ...f.params,
+                  attachTo: parentId,
+                  px: round1(local.x),
+                  py: round1(local.y),
+                  pz: round1(local.z),
+                  angle: round1(local.angle),
+                },
+              }
+            : f,
+        ),
+      };
+    }),
+
+  setOriginWorld: (id, x, y, z) =>
+    set((s) => {
+      const feature = s.features.find((f) => f.id === id);
+      if (!feature) return s;
+
+      // An attached window stores its placement in the parent's frame, so a
+      // gizmo drag — which is always in world terms — has to come back through
+      // that frame before it is written.
+      if (feature.kind === 'window') {
+        const frame = windowFrameFor(s.features, feature);
+        const local = windowToLocal(
+          { x, y, z, angle: Number(feature.params.angle) || 0 },
+          frame,
+        );
+        return {
+          features: s.features.map((f) =>
+            f.id === id
+              ? {
+                  ...f,
+                  params: {
+                    ...f.params,
+                    px: round1(local.x),
+                    py: round1(local.y),
+                    pz: round1(local.z),
+                  },
+                }
+              : f,
+          ),
+        };
+      }
+
+      return {
+        features: s.features.map((f) =>
+          f.id === id
+            ? { ...f, params: { ...f.params, px: round1(x), py: round1(y), pz: round1(z) } }
+            : f,
+        ),
+      };
+    }),
+
   setSculptParent: (id, parentId) =>
     set((s) => {
       const sculpt = s.features.find((f) => f.id === id);
@@ -979,9 +1107,20 @@ export function hasRotation(feature: Feature): boolean {
 }
 
 /** Where a feature's gizmo should stand, in world mm. */
-export function transformOriginOf(feature: Feature): [number, number, number] {
+export function transformOriginOf(
+  features: Feature[],
+  feature: Feature,
+): [number, number, number] {
   const x = Number(feature.params.px) || 0;
   const y = Number(feature.params.py) || 0;
+
+  if (feature.kind === 'window') {
+    const world = windowToWorld(
+      { x, y, z: Number(feature.params.pz) || 0, angle: 0 },
+      windowFrameFor(features, feature),
+    );
+    return [world.x, world.y, world.z];
+  }
 
   if (feature.stage === 'RIG') {
     const [low, high] = rodSpanOf(feature.params);
@@ -1063,7 +1202,12 @@ export function windowsFromFeatures(
       kerf: Math.max(Number(f.params.windowKerf) ?? fallbackKerf, 0),
     });
   }
-  return out;
+  // Placements are stored in the parent's frame; resolve them into world terms
+  // here so the sector and the layer planes are measured in the same space.
+  return out.map((spec) => {
+    const feature = features.find((f) => f.id === spec.id);
+    return feature ? resolveWindow(spec, windowFrameFor(features, feature)) : spec;
+  });
 }
 
 /**

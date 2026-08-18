@@ -379,6 +379,38 @@ pieces of code agree about a wedge.
 `twist` spirals the windows up the stack, so no two layers line up — the same
 idea as turning the perforation lattice per layer, and the same reason.
 
+### A window can be attached, or left alone — M8.3
+
+Windows now follow a shape the way sculpt strokes do, with one deliberate
+restriction and one deliberate escape.
+
+**The restriction: translation and Z rotation only.** A window is a vertical
+wedge tied to the stack's axis, and per-layer mode picks its layers from world Z.
+Inheriting a parent's X or Y rotation would tip the wedge out of the stack and
+leave the layer planes cutting across it at an angle — meaningless for something
+sliced horizontally. Rotation about Z leaves every horizontal plane exactly where
+it was, so that is the part worth carrying. A validator checks that a Z rotation
+turns the wedges by exactly the frame angle while leaving **which** layers rolled
+windows, and how many and how wide, untouched.
+
+**The escape: attachment is optional.** `Nothing — stays where it is` detaches,
+and an eccentric opening that holds still while the form moves is a real thing to
+want. Attaching or detaching **carries the placement across** — out of the old
+frame and into the new — so changing the reference moves the reference and not
+the window.
+
+Placements are stored in the parent's frame and resolved into world terms at
+prepare time rather than by transforming the query point. That keeps
+`sectorDistance` untouched and, more to the point, keeps layer indexing in world
+Z where it belongs.
+
+`setOriginWorld` is the other half: a gizmo drag is always in world terms, so it
+goes through the frame on the way into an attached window's parameters. Rods and
+fixtures use the same call and are unaffected, having no attachment.
+
+Fixtures could be moved onto the same mechanism; they are the last thing that
+still stays behind when a form moves.
+
 ### A window has an axis — M8.2
 
 A shell follows the form when the form moves, because it acts on the accumulated

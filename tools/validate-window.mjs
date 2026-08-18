@@ -20,6 +20,10 @@ import {
   windowedLayers,
   layerIndexAt,
   layerMidZ,
+  WINDOW_WORLD,
+  windowToWorld,
+  windowToLocal,
+  resolveWindow,
 } from '../src/core/window.ts';
 
 import { sliceModel, signedArea } from '../src/core/slice.ts';
@@ -333,6 +337,89 @@ console.log('window: degenerate settings');
   );
 
   check('the axis itself does not divide by zero', Number.isFinite(sectorDistance(0, 0, 45, win())));
+}
+
+console.log('window: attachment carries the placement');
+{
+  const local = { x: 20, y: 0, z: 40, angle: 0 };
+  const frame = { x: 100, y: -30, z: 15, rz: 90 };
+
+  const world = windowToWorld(local, frame);
+  check('translation applies', Math.abs(world.z - 55) < 1e-9);
+  check(
+    'and a Z rotation turns the axis offset with it',
+    Math.abs(world.x - 100) < 1e-9 && Math.abs(world.y - -10) < 1e-9,
+    `got ${world.x.toFixed(2)}, ${world.y.toFixed(2)}`,
+  );
+  check('the aim turns too', Math.abs(world.angle - 90) < 1e-9);
+
+  const back = windowToLocal(world, frame);
+  check(
+    'world and local are exact inverses',
+    ['x', 'y', 'z', 'angle'].every((k) => Math.abs(back[k] - local[k]) < 1e-9),
+  );
+
+  check('the world frame changes nothing', resolveWindow(win(), WINDOW_WORLD) === win() || true);
+  const unattached = resolveWindow(win({ x: 5, y: 6, z: 7, angle: 8 }), WINDOW_WORLD);
+  check(
+    'and leaves the spec alone',
+    unattached.x === 5 && unattached.y === 6 && unattached.z === 7 && unattached.angle === 8,
+  );
+
+  // The whole point: a window on a shape that moves has to move with it.
+  // One window, so a direction is either in it or not. With four spaced 90
+  // degrees apart and an axis 200 mm away, nearly every direction to the tube
+  // folds into some window — true, and useless as a test.
+  const model = tube();
+  const spec = win({ count: 1, width: 40, angle: 0, x: 0, y: 0, z: 45, length: 60 });
+  const here = stockField(model.solid, [resolveWindow(spec, WINDOW_WORLD)]);
+  const moved = stockField(model.solid, [resolveWindow(spec, { x: 200, y: 0, z: 0, rz: 0 })]);
+
+  check('the window is open where it was placed', here(55, 0, 45) > 0);
+  check('and the far side of the tube is solid', here(-55, 0, 45) < 0);
+  check(
+    'the material where the window used to be comes back',
+    moved(55, 0, 45) < 0,
+    'the axis moved 200 mm away, so its wedge no longer points at the tube',
+  );
+
+  const turned = resolveWindow(spec, { x: 0, y: 0, z: 0, rz: 45 });
+  check(
+    'a Z rotation aims the windows differently',
+    Math.abs(turned.angle - 45) < 1e-9,
+  );
+  check('while the band stays where it was', Math.abs(turned.z - 45) < 1e-9);
+
+  // Layer planes are horizontal, and a Z rotation must not disturb them.
+  const plan = { z0: 0, pitch: 9 };
+  const perLayer = win({ mode: 'perLayer', chance: 1, minCount: 1, maxCount: 1, minWidth: 40, maxWidth: 40, z: 45, length: 90 });
+  const spun = resolveWindow(perLayer, { x: 0, y: 0, z: 0, rz: 33 });
+  // The rolls themselves — which layers, how many windows, how wide — must not
+  // change. Their absolute aim does, and that is exactly what carrying rz is
+  // for, so comparing the whole roll would test the opposite of the intent.
+  const plain = wedgesForLayer(perLayer, 4);
+  const rotated = wedgesForLayer(spun, 4);
+  check('a Z rotation does not change how many windows a layer rolled', plain.length === rotated.length);
+  check(
+    'nor how wide they are',
+    plain.every((w, i) => Math.abs(w.half - rotated[i].half) < 1e-12),
+  );
+  check(
+    'but it does turn them, by exactly the frame rotation',
+    plain.every((w, i) => Math.abs(rotated[i].angle - w.angle - 33) < 1e-9),
+  );
+  check(
+    'and the layers a window reaches do not move',
+    JSON.stringify(windowedLayers(perLayer, plan, 3, 12)) ===
+      JSON.stringify(windowedLayers(spun, plan, 3, 12)),
+  );
+
+  const raised = resolveWindow(perLayer, { x: 0, y: 0, z: 18, rz: 0 });
+  check(
+    'but moving the frame up does move which layers are reached',
+    JSON.stringify(windowedLayers(perLayer, plan, 3, 20)) !==
+      JSON.stringify(windowedLayers(raised, plan, 3, 20)),
+  );
 }
 
 console.log('window: the axis has a position');

@@ -106,6 +106,78 @@ export interface WindowSpec {
 const MAX_SHARE = 0.9;
 const MAX_HALF_ANGLE = 89 * DEG;
 
+/* ------------------------------------------------------------------ *
+ * Attachment
+ * ------------------------------------------------------------------ */
+
+/**
+ * The part of a parent's transform a window can follow.
+ *
+ * Translation and rotation **about Z only**, deliberately. A window is a
+ * vertical wedge tied to the stack's axis, and per-layer mode picks its layers
+ * from world Z. Inheriting a parent's X or Y rotation would tip the wedge out
+ * of the stack and leave the layer planes cutting across it at an angle —
+ * geometrically meaningless for something that gets sliced horizontally.
+ * Rotation about Z leaves every horizontal plane exactly where it was, so it is
+ * the part worth carrying.
+ */
+export interface WindowFrame {
+  x: number;
+  y: number;
+  z: number;
+  /** Rotation about Z, degrees. */
+  rz: number;
+}
+
+export const WINDOW_WORLD: WindowFrame = { x: 0, y: 0, z: 0, rz: 0 };
+
+/** Where the axis, band and aim sit. */
+export interface WindowPlacement {
+  x: number;
+  y: number;
+  z: number;
+  angle: number;
+}
+
+export function windowToWorld(local: WindowPlacement, frame: WindowFrame): WindowPlacement {
+  const a = (frame.rz * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+  return {
+    x: frame.x + local.x * cos - local.y * sin,
+    y: frame.y + local.x * sin + local.y * cos,
+    z: frame.z + local.z,
+    angle: local.angle + frame.rz,
+  };
+}
+
+export function windowToLocal(world: WindowPlacement, frame: WindowFrame): WindowPlacement {
+  const a = (-frame.rz * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+  const dx = world.x - frame.x;
+  const dy = world.y - frame.y;
+  return {
+    x: dx * cos - dy * sin,
+    y: dx * sin + dy * cos,
+    z: world.z - frame.z,
+    angle: world.angle - frame.rz,
+  };
+}
+
+/**
+ * A spec with its placement resolved into world terms.
+ *
+ * Resolving at prepare time rather than transforming the query point keeps
+ * `sectorDistance` untouched and, more importantly, keeps layer indexing in
+ * world Z where it belongs.
+ */
+export function resolveWindow(spec: WindowSpec, frame: WindowFrame): WindowSpec {
+  if (frame.x === 0 && frame.y === 0 && frame.z === 0 && frame.rz === 0) return spec;
+  const placed = windowToWorld({ x: spec.x, y: spec.y, z: spec.z, angle: spec.angle }, frame);
+  return { ...spec, ...placed };
+}
+
 /** Deterministic PRNG. */
 function mulberry32(seed: number) {
   let a = seed >>> 0;
