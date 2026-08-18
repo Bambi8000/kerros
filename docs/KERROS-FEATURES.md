@@ -101,6 +101,98 @@ jump to the bottom and top. The stack view highlights the current layer in CUT
 red and can hide everything above it to see inside the shell — paging with the
 arrow keys then drives a live cutaway through the assembly.
 
+### Sculpt strokes — M6
+
+`sculpt` features in `src/core/sdf.ts`. A stroke is a **polyline with a radius**:
+the capsule chain the brush swept. Distance to it is distance to the polyline
+minus the radius, which is exact — no beading along the length, and a single
+point is simply a sphere.
+
+**The handoff's grid caveat disappears rather than being managed.** The plan was
+to bake strokes onto the voxel grid, with a recorded warning that replaying them
+at a different grid resolution gives different geometry, so the resolution had to
+be stored in the feature. Evaluating strokes analytically means there is no grid
+in the definition: the same stroke gives the same surface whether the preview
+samples at 32 or the slicer at 300. A validator meshes one sculpted form at two
+resolutions and checks the volumes agree within 2%.
+
+Strokes combine through the same six operations everything else uses, in the
+order they were made, and sit in the feature tree wherever the sculpt feature
+does — so sculpting a spout and then shelling the result hollows the spout too,
+without the shell knowing a stroke exists.
+
+Additive strokes **set bounds**. Without that, material pulled out past the base
+shape would be cut off by the sampling grid; with it, the grid follows the
+stroke.
+
+### Strokes are welded to a shape — M6.1
+
+Strokes are recorded in the coordinates of the shape they are **attached to**,
+not in world coordinates, and evaluation transforms the query point into that
+frame before measuring. Distances survive a rigid transform unchanged, so the
+field is identical — just carried along. Moving the shape moves the sculpting;
+**turning** it turns the sculpting too.
+
+This is the third time the same gap has shown up. A shell follows the form for
+free, because it acts on the accumulated field. A window did not, and got its own
+axis. Sculpt strokes did not either, and an axis would not have been enough —
+sculpting is glued to a surface, so it needs the whole frame. Attachment is the
+general answer, and windows and fixtures could be moved onto it later.
+
+`attachTo` names a feature in the same tree, defaulting to the last shape when a
+sculpt is created. Re-attaching **carries the strokes across**: they are lifted
+out of the old frame into the new one, so changing the reference moves the
+reference and not the geometry. An attachment that no longer exists falls back to
+world coordinates and says so, rather than throwing.
+
+Additive stroke bounds go through the frame as all eight corners of their local
+box, or a stroke on a moved shape gets clipped by the sampling grid — checked by
+a validator that counts boundary samples.
+
+### The index is the whole cost of doing it this way
+
+Evaluating strokes analytically means every sample could walk every stroke. The
+first attempt indexed each stroke's *segments* on their own grid and took **five
+seconds** for 120 strokes, because walking rings of cells in three dimensions is
+hundreds of map lookups per sample per stroke.
+
+The fix was to index **whole strokes** instead: one lookup finds the handful of
+strokes near a sample, and their few dozen segments are then scanned linearly,
+which is far cheaper than one ring walk. Skipping distant strokes is safe
+whatever their operation — unioning or subtracting something far away leaves the
+field exactly as it was — so the order of the strokes that matter is preserved.
+
+Measured after: 20 strokes 0.2 s, 200 strokes 0.8 s, 500 strokes 1.5 s at preview
+resolution 64. Heavy sculpting wants a lower preview resolution; slicing is
+unaffected in kind, only in time.
+
+### Painting
+
+Sculpting is a **mode**, because it needs the left mouse button. While it is on,
+left drag paints and **right drag orbits** — you sculpt one side, turn it, sculpt
+the other, without leaving the mode. Orbit is switched off outright for the
+length of a stroke so a slip cannot spin the model mid-line.
+
+Points are taken once the cursor has moved 35% of the brush radius, so a stroke
+is dense enough to be a tube and sparse enough to store. The field is **not**
+re-evaluated during the drag: the stroke draws as a plain line overlay and the
+surface updates on release. On a shape that takes a quarter of a second to
+sample, that is the difference between painting and waiting.
+
+The brush settings apply to the next stroke only. Strokes already made keep what
+they were made with, so changing the radius does not disturb what is there.
+`Undo last stroke` and `Clear all strokes` are in the inspector; a stroke is the
+unit of undo.
+
+### Strokes in the project file
+
+Strokes are bulk data, so they live on the feature as their own array rather than
+in `params`, which holds single values. The project file writes them as plain
+numbers — `"points": [0, 0, 40, 5, 2, 45]` — so it stays something a person can
+read and diff, and the parser stays as defensive as the rest: a stroke ending
+mid-coordinate is **trimmed and reported** rather than dropped, one with no
+radius is dropped and reported, and the good strokes around it survive.
+
 ### Direct manipulation — M1.5
 
 Shapes are selected by clicking them in the viewport and moved with a gizmo,

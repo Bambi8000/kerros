@@ -36,6 +36,17 @@ export const STAGE_NOTES: Record<Stage, string> = {
  * `params` stays loosely typed at the core level: each feature module owns
  * its own parameter schema, and the module registry (M1) is what narrows it.
  */
+/** One brush stroke: the capsule chain the brush swept. */
+export interface SculptStroke {
+  op: string;
+  /** Brush radius, mm. */
+  radius: number;
+  /** Blend radius for the smooth ops, mm. */
+  k: number;
+  /** Flat x, y, z triples along the stroke. */
+  points: number[];
+}
+
 export interface Feature {
   id: string;
   /** Module key, e.g. 'sphere', 'smoothUnion', 'rod'. */
@@ -44,6 +55,14 @@ export interface Feature {
   name: string;
   enabled: boolean;
   params: Record<string, number | string | boolean>;
+  /**
+   * Sculpt strokes, on sculpt features only.
+   *
+   * Kept out of `params` because params hold single values, and a stroke list is
+   * bulk data — the project file writes it as its own array so the file stays
+   * something a person can read and diff.
+   */
+  strokes?: SculptStroke[];
 }
 
 export interface MachineProfile {

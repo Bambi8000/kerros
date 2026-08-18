@@ -296,6 +296,12 @@ select {
   border-color: var(--k-text-faint);
 }
 
+/* A toggle that is on, e.g. the sculpt button while a brush is live. */
+.btn.is-active {
+  border-color: var(--k-cut);
+  color: var(--k-text);
+}
+
 /* ---------- feature tree ---------- */
 
 .tree-empty {

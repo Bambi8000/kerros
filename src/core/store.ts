@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   Feature,
+  SculptStroke,
   MachineProfile,
   MaterialProfile,
   Stage,
@@ -12,10 +13,14 @@ import {
   defaultParams,
   evaluatePoint,
   findModule,
+  frameOf,
+  frameToLocal,
+  frameToWorld,
   modelBounds,
   prepareFeatures,
   shellModifier,
 } from './sdf';
+import type { Frame } from './sdf';
 import { stockField } from './window';
 import { FIXTURE_LABELS, SOCKET_PRESETS } from './fixture';
 import type { FixtureKind, FixtureSpec } from './fixture';
@@ -38,6 +43,10 @@ export type FluteDirection = 'none' | 'horizontal' | 'vertical';
 
 /** Which panel the right rail is showing. */
 export type Panel = 'inspector' | 'profiles';
+
+/** Brush operations offered while sculpting. A blend belongs to the smooth ones. */
+export const BRUSH_OPS = ['union', 'smoothUnion', 'subtract', 'smoothSubtract'] as const;
+export type BrushOp = (typeof BRUSH_OPS)[number];
 
 /** Samples along the longest XY axis when slicing. */
 export const SLICE_RESOLUTIONS = [120, 200, 300, 420];
@@ -86,6 +95,12 @@ interface KerrosState {
    * change then happen together instead of racing in two effects.
    */
   panel: Panel;
+
+  /** Sculpting takes the left mouse button, so it is a mode you switch on. */
+  sculptMode: boolean;
+  brushOp: BrushOp;
+  brushRadius: number;
+  brushBlend: number;
   previewRes: number;
   displayMode: DisplayMode;
   gizmoMode: GizmoMode;
@@ -164,6 +179,21 @@ interface KerrosState {
   setView: (view: ViewName) => void;
   setMode: (mode: WorkspaceMode) => void;
   setPanel: (panel: Panel) => void;
+  setSculptMode: (on: boolean) => void;
+  setBrushOp: (op: BrushOp) => void;
+  setBrushRadius: (mm: number) => void;
+  setBrushBlend: (mm: number) => void;
+  /**
+   * The sculpt feature strokes should go to, creating one if there is none.
+   * Returns its id, because the viewport needs it the moment a stroke starts.
+   */
+  ensureSculpt: () => string;
+  /** `stroke` arrives in world coordinates; it is stored in the parent's frame. */
+  addStroke: (id: string, stroke: SculptStroke) => void;
+  /** Re-attach a sculpt to another shape, carrying its strokes across. */
+  setSculptParent: (id: string, parentId: string) => void;
+  undoStroke: (id: string) => void;
+  clearStrokes: (id: string) => void;
   setProjectName: (name: string) => void;
   /** Replace everything a project file describes. */
   applyProject: (data: ProjectData, nextFeatureNumber: number) => void;
@@ -199,6 +229,19 @@ interface KerrosState {
 
 const SHAPE: Stage = 'SHAPE';
 
+/** Tenths of a millimetre: stroke points do not need sixteen decimal places. */
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
+/** The frame a sculpt feature's strokes live in. */
+function frameFor(features: Feature[], sculpt: Feature): Frame {
+  const target = typeof sculpt.params.attachTo === 'string' ? sculpt.params.attachTo : '';
+  if (target === '') return frameOf({});
+  const parent = features.find((f) => f.id === target);
+  return frameOf(parent ? parent.params : {});
+}
+
 /**
  * Features that take part in the distance field.
  *
@@ -223,6 +266,11 @@ export const useKerros = create<KerrosState>((set, get) => ({
   view: 'persp',
   mode: 'model',
   panel: 'inspector',
+
+  sculptMode: false,
+  brushOp: 'smoothUnion',
+  brushRadius: 8,
+  brushBlend: 6,
   previewRes: 64,
   displayMode: 'solid',
   gizmoMode: 'translate',
@@ -594,6 +642,120 @@ export const useKerros = create<KerrosState>((set, get) => ({
   setView: (view) => set({ view }),
   setMode: (mode) => set({ mode }),
   setPanel: (panel) => set({ panel }),
+  setSculptMode: (sculptMode) => set({ sculptMode }),
+  setBrushOp: (brushOp) => set({ brushOp }),
+  setBrushRadius: (brushRadius) => set({ brushRadius: Math.max(brushRadius, 0.2) }),
+  setBrushBlend: (brushBlend) => set({ brushBlend: Math.max(brushBlend, 0) }),
+
+  ensureSculpt: () => {
+    const s = get();
+
+    // The selected sculpt feature if there is one, otherwise the last: strokes
+    // should land where the person is looking, not always at the end.
+    const chosen =
+      s.features.find((f) => f.id === s.selectedId && f.kind === 'sculpt') ??
+      [...s.features].reverse().find((f) => f.kind === 'sculpt');
+    if (chosen) return chosen.id;
+
+    // Attached to the last shape by default. Strokes then live in that shape's
+    // coordinates, so moving or turning it carries the sculpting along instead
+    // of leaving it behind in world space.
+    const host = [...s.features]
+      .reverse()
+      .find((f) => f.enabled && findModule(f.kind) !== undefined);
+
+    const id = `f${s.nextFeatureNumber}`;
+    set({
+      features: [
+        ...s.features,
+        {
+          id,
+          kind: 'sculpt',
+          stage: 'SHAPE' as Stage,
+          name: 'Sculpt',
+          enabled: true,
+          params: { attachTo: host ? host.id : '' },
+          strokes: [],
+        },
+      ],
+      nextFeatureNumber: s.nextFeatureNumber + 1,
+      selectedId: id,
+      panel: 'inspector' as const,
+    });
+    return id;
+  },
+
+  addStroke: (id, stroke) =>
+    set((s) => {
+      const sculpt = s.features.find((f) => f.id === id);
+      if (!sculpt) return s;
+
+      const frame = frameFor(s.features, sculpt);
+      const points: number[] = [];
+      for (let i = 0; i < stroke.points.length; i += 3) {
+        const [lx, ly, lz] = frameToLocal(
+          frame,
+          stroke.points[i],
+          stroke.points[i + 1],
+          stroke.points[i + 2],
+        );
+        points.push(round1(lx), round1(ly), round1(lz));
+      }
+
+      return {
+        features: s.features.map((f) =>
+          f.id === id ? { ...f, strokes: [...(f.strokes ?? []), { ...stroke, points }] } : f,
+        ),
+      };
+    }),
+
+  setSculptParent: (id, parentId) =>
+    set((s) => {
+      const sculpt = s.features.find((f) => f.id === id);
+      if (!sculpt) return s;
+
+      // Carry the strokes across: out of the old frame into the new one, so
+      // re-attaching moves the reference rather than the geometry.
+      const from = frameFor(s.features, sculpt);
+      const to = parentId === '' ? frameOf({}) : frameOf(
+        s.features.find((f) => f.id === parentId)?.params ?? {},
+      );
+
+      const strokes = (sculpt.strokes ?? []).map((stroke) => {
+        const points: number[] = [];
+        for (let i = 0; i < stroke.points.length; i += 3) {
+          const [wx, wy, wz] = frameToWorld(
+            from,
+            stroke.points[i],
+            stroke.points[i + 1],
+            stroke.points[i + 2],
+          );
+          const [lx, ly, lz] = frameToLocal(to, wx, wy, wz);
+          points.push(round1(lx), round1(ly), round1(lz));
+        }
+        return { ...stroke, points };
+      });
+
+      return {
+        features: s.features.map((f) =>
+          f.id === id
+            ? { ...f, params: { ...f.params, attachTo: parentId }, strokes }
+            : f,
+        ),
+      };
+    }),
+
+  undoStroke: (id) =>
+    set((s) => ({
+      features: s.features.map((f) =>
+        f.id === id ? { ...f, strokes: (f.strokes ?? []).slice(0, -1) } : f,
+      ),
+    })),
+
+  clearStrokes: (id) =>
+    set((s) => ({
+      features: s.features.map((f) => (f.id === id ? { ...f, strokes: [] } : f)),
+    })),
   setProjectName: (projectName) => set({ projectName }),
   setPreviewRes: (previewRes) => set({ previewRes }),
   setDisplayMode: (displayMode) => set({ displayMode }),
@@ -649,6 +811,9 @@ export const useKerros = create<KerrosState>((set, get) => ({
         name: f.name,
         enabled: f.enabled,
         params: { ...f.params },
+        ...(f.strokes && f.strokes.length > 0
+          ? { strokes: f.strokes.map((k) => ({ ...k, points: [...k.points] })) }
+          : {}),
       })),
       slicing: {
         sliceRes: s.sliceRes,
@@ -689,6 +854,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
         name: f.name,
         enabled: f.enabled,
         params: { ...f.params },
+        ...(f.strokes ? { strokes: f.strokes.map((k) => ({ ...k, points: [...k.points] })) } : {}),
       })),
       nextFeatureNumber,
       sliceRes: data.slicing.sliceRes,
@@ -762,6 +928,7 @@ export function rodsFromFeatures(features: Feature[]): RodSpec[] {
  * nothing read, which looked like a broken drag.
  */
 export function hasTransform(feature: Feature): boolean {
+  if (feature.kind === 'sculpt') return false;
   return (
     feature.stage === 'RIG' ||
     feature.kind === 'window' ||
@@ -934,4 +1101,9 @@ export function composeField(
     thickness,
     bounds,
   };
+}
+
+/** Shapes a sculpt feature can be attached to, in tree order. */
+export function attachableShapes(features: Feature[]): Feature[] {
+  return features.filter((f) => findModule(f.kind) !== undefined);
 }

@@ -54,6 +54,18 @@ const sample = {
       params: { op: 'subtract', h: 300, r: 22, pz: 65 },
     },
     {
+      id: 'f4',
+      kind: 'sculpt',
+      stage: 'SHAPE',
+      name: 'Sculpt',
+      enabled: true,
+      params: {},
+      strokes: [
+        { op: 'smoothUnion', radius: 8, k: 6, points: [0, 0, 40, 5, 2, 45, 11, 4, 51] },
+        { op: 'subtract', radius: 4, k: 0, points: [20, 0, 30] },
+      ],
+    },
+    {
       id: 'f3',
       kind: 'rod',
       stage: 'RIG',
@@ -103,7 +115,10 @@ console.log('project: round trip');
     !('mode' in file) && !('currentLayer' in file) && !('selectedPartId' in file),
   );
   check('hand placements survive', parsed.data.layout.partPlacements['slice-3-0'].rot === 37.5);
-  check('the rod feature survives with its params', parsed.data.features[2].params.length === 130);
+  check(
+    'the rod feature survives with its params',
+    parsed.data.features.find((f) => f.kind === 'rod').params.length === 130,
+  );
 }
 
 console.log('project: filenames');
@@ -187,6 +202,53 @@ console.log('project: broken contents survive');
   check('the drop is reported', messy.warnings.some((w) => w.includes('usable position')));
 }
 
+console.log('project: sculpt strokes');
+{
+  const parsed = parseProject(serializeProject(sample, '0.10.0', 'now'));
+  const sculpt = parsed.data.features.find((f) => f.kind === 'sculpt');
+  check('a sculpt feature survives', sculpt !== undefined);
+  check('with both strokes', sculpt.strokes.length === 2);
+  check('and their points intact', sculpt.strokes[0].points.length === 9);
+  check('a single-point stroke survives', sculpt.strokes[1].points.length === 3);
+  check('features without strokes do not gain an empty array', 
+    parsed.data.features.filter((f) => f.kind !== 'sculpt').every((f) => f.strokes === undefined));
+
+  const text = serializeProject(sample, '0.10.0', 'now');
+  check('the file lists points as numbers, not a blob', /"points": \[/.test(text));
+
+  const broken = parseProject(
+    JSON.stringify({
+      format: PROJECT_FORMAT,
+      formatVersion: 1,
+      features: [
+        {
+          id: 'f1',
+          kind: 'sculpt',
+          stage: 'SHAPE',
+          name: 'S',
+          enabled: true,
+          params: {},
+          strokes: [
+            { op: 'union', radius: 5, k: 0, points: [0, 0, 0, 1, 1] },
+            { op: 'union', radius: 0, k: 0, points: [0, 0, 0] },
+            { op: 'union', points: [5, 5, 5] },
+            { op: 'union', radius: 5, k: 0, points: [1, 2] },
+            { op: 'union', radius: 5, k: 0, points: [9, 9, 9, 10, 10, 10] },
+          ],
+        },
+      ],
+    }),
+  );
+  check('it opens', broken.ok);
+  const kept = broken.data.features[0].strokes;
+  check('a stroke ending mid-point is trimmed, not dropped', kept.some((k) => k.points.length === 3));
+  check('and the trim is reported', broken.warnings.some((w) => w.includes('mid-point')));
+  check('a stroke with no radius is dropped', kept.every((k) => k.radius > 0));
+  check('and that is reported', broken.warnings.some((w) => w.includes('no radius')));
+  check('a stroke with under one point is dropped', broken.warnings.some((w) => w.includes('no usable points')));
+  check('the good stroke survives all of it', kept.some((k) => k.points.length === 6));
+}
+
 console.log('project: feature numbering');
 {
   check('an empty tree starts at one', highestFeatureNumber([]) + 1 === 1);
@@ -200,7 +262,7 @@ console.log('project: feature numbering');
   );
 
   const parsed = parseProject(serializeProject(sample, '0.5.5', 'now'));
-  check('a loaded project reports the next free number', parsed.nextFeatureNumber === 4);
+  check('a loaded project reports the next free number', parsed.nextFeatureNumber === 5);
 }
 
 console.log('');

@@ -1,4 +1,5 @@
-import { rodSpanOf, shellWallOf, useKerros } from '../core/store';
+import { BRUSH_OPS, attachableShapes, rodSpanOf, shellWallOf, useKerros } from '../core/store';
+import type { BrushOp } from '../core/store';
 import {
   BLEND_PARAM,
   OPS,
@@ -119,6 +120,171 @@ function RodInspector({ feature }: { feature: Feature }) {
           so the gizmo moves it in all three axes. Spans z {zStart.toFixed(1)} to{' '}
           {zEnd.toFixed(1)} mm. Only layers whose mid-plane falls inside that
           span get a hole, so a rod can stop partway up the stack.
+        </div>
+      </div>
+    </>
+  );
+}
+
+const BRUSH_LABELS: Record<BrushOp, string> = {
+  union: 'Add',
+  smoothUnion: 'Add, blended',
+  subtract: 'Carve',
+  smoothSubtract: 'Carve, blended',
+};
+
+function SculptInspector({ feature }: { feature: Feature }) {
+  const renameFeature = useKerros((s) => s.renameFeature);
+  const features = useKerros((s) => s.features);
+  const setSculptParent = useKerros((s) => s.setSculptParent);
+  const sculptMode = useKerros((s) => s.sculptMode);
+  const setSculptMode = useKerros((s) => s.setSculptMode);
+  const brushOp = useKerros((s) => s.brushOp);
+  const setBrushOp = useKerros((s) => s.setBrushOp);
+  const brushRadius = useKerros((s) => s.brushRadius);
+  const setBrushRadius = useKerros((s) => s.setBrushRadius);
+  const brushBlend = useKerros((s) => s.brushBlend);
+  const setBrushBlend = useKerros((s) => s.setBrushBlend);
+  const undoStroke = useKerros((s) => s.undoStroke);
+  const clearStrokes = useKerros((s) => s.clearStrokes);
+  const mode = useKerros((s) => s.mode);
+
+  const strokes = feature.strokes ?? [];
+  const points = strokes.reduce((sum, k) => sum + k.points.length / 3, 0);
+  const blended = brushOp.startsWith('smooth');
+  const attachTo = text(feature.params, 'attachTo', '');
+  const hosts = attachableShapes(features);
+  const host = hosts.find((f) => f.id === attachTo);
+  const orphaned = attachTo !== '' && host === undefined;
+
+  return (
+    <>
+      <div className="group">
+        <div className="group-head">Sculpt</div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <span className="field-input">
+            <input
+              type="text"
+              value={feature.name}
+              onChange={(e) => renameFeature(feature.id, e.target.value)}
+            />
+          </span>
+        </label>
+        <label className="field">
+          <span className="field-label">Attached to</span>
+          <span className="field-input">
+            <select
+              value={orphaned ? '' : attachTo}
+              onChange={(e) => setSculptParent(feature.id, e.target.value)}
+            >
+              <option value="">Nothing — world coordinates</option>
+              {hosts.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </span>
+        </label>
+        {orphaned ? (
+          <div className="warn">
+            The shape this was attached to is gone, so the strokes are back in
+            world coordinates. Pick another to weld them to it.
+          </div>
+        ) : (
+          <div className="derived">
+            {host
+              ? `Strokes are stored in ${host.name}'s coordinates, so moving or turning it carries the sculpting along.`
+              : 'Strokes are in world coordinates and will stay put when a shape moves. Attach them to a shape to weld them to it.'}
+          </div>
+        )}
+        <button
+          type="button"
+          className={`btn btn-wide${sculptMode ? ' is-active' : ''}`}
+          disabled={mode !== 'model'}
+          onClick={() => setSculptMode(!sculptMode)}
+        >
+          {sculptMode ? 'Stop sculpting' : 'Start sculpting'}
+        </button>
+        {mode !== 'model' ? (
+          <div className="derived">Sculpting happens in the Model view.</div>
+        ) : (
+          <div className="derived">
+            Left drag paints on the surface, right drag orbits. There has to be
+            something to paint on: add a shape first, then sculpt it.
+          </div>
+        )}
+      </div>
+
+      <div className="group">
+        <div className="group-head">Brush</div>
+        <label className="field">
+          <span className="field-label">Action</span>
+          <span className="field-input">
+            <select value={brushOp} onChange={(e) => setBrushOp(e.target.value as BrushOp)}>
+              {BRUSH_OPS.map((op) => (
+                <option key={op} value={op}>
+                  {BRUSH_LABELS[op]}
+                </option>
+              ))}
+            </select>
+          </span>
+        </label>
+        <NumberField
+          label="Radius"
+          value={brushRadius}
+          unit="mm"
+          step={0.5}
+          min={0.2}
+          max={100}
+          onChange={setBrushRadius}
+        />
+        {blended ? (
+          <NumberField
+            label="Blend"
+            value={brushBlend}
+            unit="mm"
+            step={0.5}
+            min={0}
+            max={80}
+            onChange={setBrushBlend}
+          />
+        ) : null}
+        <div className="derived">
+          The brush settings apply to the next stroke. Strokes already made keep
+          the settings they were made with, which is why changing the radius does
+          not disturb what is already there.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">Strokes</div>
+        <div className="derived derived-strong">
+          {strokes.length} {strokes.length === 1 ? 'stroke' : 'strokes'}
+          <span className="derived-sub">{points} points</span>
+        </div>
+        <button
+          type="button"
+          className="btn btn-wide"
+          disabled={strokes.length === 0}
+          onClick={() => undoStroke(feature.id)}
+        >
+          Undo last stroke
+        </button>
+        <button
+          type="button"
+          className="btn btn-wide"
+          disabled={strokes.length === 0}
+          onClick={() => clearStrokes(feature.id)}
+        >
+          Clear all strokes
+        </button>
+        <div className="derived">
+          A stroke is a capsule chain evaluated straight into the field, not
+          baked onto a grid. So the shape is the same whatever resolution samples
+          it — the preview at 32 and the slicer at 300 agree — and the project
+          file stores a list of points rather than a volume.
         </div>
       </div>
     </>
@@ -1018,6 +1184,7 @@ export function Inspector({ patternCounts, fixtureMisses, sliced }: InspectorPro
   }
 
   if (feature.stage === 'RIG') return <RodInspector feature={feature} />;
+  if (feature.kind === 'sculpt') return <SculptInspector feature={feature} />;
   if (feature.kind.startsWith('fixture:')) {
     return <FixtureInspector feature={feature} misses={fixtureMisses[feature.id]} />;
   }

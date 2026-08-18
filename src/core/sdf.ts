@@ -468,6 +468,248 @@ export function defaultParams(mod: ShapeModule): Params {
 }
 
 /* ------------------------------------------------------------------ *
+ * Sculpt strokes
+ *
+ * A stroke is a polyline with a radius: the swept capsule chain the brush
+ * traced. Distance to it is the distance to the polyline minus the radius,
+ * which is exact.
+ *
+ * The handoff planned to bake strokes onto the voxel grid, and warned that
+ * replaying them at a different grid resolution would give different geometry,
+ * so the resolution had to be recorded in the feature. Evaluating them
+ * analytically removes the problem rather than managing it: there is no grid in
+ * the definition, so the same stroke gives the same surface whether the preview
+ * samples at 32 or the slicer at 300. What it costs is speed — every sample
+ * would walk every stroke — and that is what the index below is for.
+ * ------------------------------------------------------------------ */
+
+export interface SculptStroke {
+  op: string;
+  /** Brush radius in mm. */
+  radius: number;
+  /** Blend radius for the smooth ops, mm. */
+  k: number;
+  /** Flat x, y, z triples along the stroke. */
+  points: number[];
+}
+
+interface PreparedStroke {
+  op: Op;
+  radius: number;
+  k: number;
+  /** Flat x1,y1,z1,x2,y2,z2 per segment. */
+  segments: number[];
+  min: [number, number, number];
+  max: [number, number, number];
+  /**
+   * How far this stroke can still affect the field. Past it the answer cannot
+   * change any union, subtraction or blend, so the stroke is skipped entirely.
+   */
+  reach: number;
+}
+
+/**
+ * Broad phase over strokes, not over segments.
+ *
+ * The first version indexed each stroke's segments on their own grid, and it
+ * cost five seconds for a hundred and twenty strokes: walking rings of cells in
+ * three dimensions is hundreds of map lookups per sample, per stroke. One grid
+ * over whole strokes turns that into a single lookup, after which the handful of
+ * nearby strokes are scanned segment by segment — a stroke is a few dozen
+ * segments, and a linear scan of those is far cheaper than one ring walk.
+ *
+ * Skipping distant strokes is safe whatever their operation: unioning or
+ * subtracting something far away leaves the field exactly as it was, so the
+ * order of the strokes that do matter is preserved.
+ */
+interface StrokeBroadPhase {
+  cell: number;
+  buckets: Map<string, number[]>;
+}
+
+function segmentPointDistance(
+  px: number,
+  py: number,
+  pz: number,
+  ax: number,
+  ay: number,
+  az: number,
+  bx: number,
+  by: number,
+  bz: number,
+): number {
+  const vx = bx - ax;
+  const vy = by - ay;
+  const vz = bz - az;
+  const lengthSquared = vx * vx + vy * vy + vz * vz;
+  if (lengthSquared === 0) return len3(px - ax, py - ay, pz - az);
+  let t = ((px - ax) * vx + (py - ay) * vy + (pz - az) * vz) / lengthSquared;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return len3(px - (ax + t * vx), py - (ay + t * vy), pz - (az + t * vz));
+}
+
+function prepareStroke(stroke: SculptStroke): PreparedStroke {
+  const count = Math.floor(stroke.points.length / 3);
+  const segments: number[] = [];
+
+  if (count === 1) {
+    // A tap rather than a drag: a zero-length segment is a sphere.
+    const [x, y, z] = [stroke.points[0], stroke.points[1], stroke.points[2]];
+    segments.push(x, y, z, x, y, z);
+  } else {
+    for (let i = 0; i < count - 1; i++) {
+      segments.push(
+        stroke.points[i * 3],
+        stroke.points[i * 3 + 1],
+        stroke.points[i * 3 + 2],
+        stroke.points[(i + 1) * 3],
+        stroke.points[(i + 1) * 3 + 1],
+        stroke.points[(i + 1) * 3 + 2],
+      );
+    }
+  }
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (let i = 0; i < segments.length; i += 3) {
+    minX = Math.min(minX, segments[i]);
+    maxX = Math.max(maxX, segments[i]);
+    minY = Math.min(minY, segments[i + 1]);
+    maxY = Math.max(maxY, segments[i + 1]);
+    minZ = Math.min(minZ, segments[i + 2]);
+    maxZ = Math.max(maxZ, segments[i + 2]);
+  }
+
+  const op = (OPS as readonly string[]).includes(stroke.op) ? (stroke.op as Op) : 'union';
+  const k = Math.max(stroke.k, 0);
+
+  return {
+    op,
+    radius: stroke.radius,
+    k,
+    segments,
+    min: [minX, minY, minZ],
+    max: [maxX, maxY, maxZ],
+    reach: stroke.radius + k + 1,
+  };
+}
+
+function buildBroadPhase(strokes: PreparedStroke[]): StrokeBroadPhase {
+  let widest = 8;
+  for (const stroke of strokes) widest = Math.max(widest, stroke.reach * 2);
+
+  const cell = widest;
+  const buckets = new Map<string, number[]>();
+
+  strokes.forEach((stroke, id) => {
+    const lo = [
+      stroke.min[0] - stroke.reach,
+      stroke.min[1] - stroke.reach,
+      stroke.min[2] - stroke.reach,
+    ];
+    const hi = [
+      stroke.max[0] + stroke.reach,
+      stroke.max[1] + stroke.reach,
+      stroke.max[2] + stroke.reach,
+    ];
+
+    for (let cx = Math.floor(lo[0] / cell); cx <= Math.floor(hi[0] / cell); cx++) {
+      for (let cy = Math.floor(lo[1] / cell); cy <= Math.floor(hi[1] / cell); cy++) {
+        for (let cz = Math.floor(lo[2] / cell); cz <= Math.floor(hi[2] / cell); cz++) {
+          const key = `${cx}:${cy}:${cz}`;
+          const bucket = buckets.get(key);
+          if (bucket) bucket.push(id);
+          else buckets.set(key, [id]);
+        }
+      }
+    }
+  });
+
+  return { cell, buckets };
+}
+
+/** Distance to a stroke's surface, positive outside, bounded by its reach. */
+function strokeDistance(stroke: PreparedStroke, x: number, y: number, z: number): number {
+  const far = stroke.reach;
+
+  const dx = Math.max(stroke.min[0] - x, x - stroke.max[0], 0);
+  const dy = Math.max(stroke.min[1] - y, y - stroke.max[1], 0);
+  const dz = Math.max(stroke.min[2] - z, z - stroke.max[2], 0);
+  const outside = dx * dx + dy * dy + dz * dz;
+  const limit = far + stroke.radius;
+  if (outside > limit * limit) return far;
+
+  let best = limit;
+  const segments = stroke.segments;
+  for (let s = 0; s < segments.length; s += 6) {
+    const d = segmentPointDistance(
+      x,
+      y,
+      z,
+      segments[s],
+      segments[s + 1],
+      segments[s + 2],
+      segments[s + 3],
+      segments[s + 4],
+      segments[s + 5],
+    );
+    if (d < best) best = d;
+  }
+
+  const surface = best - stroke.radius;
+  return surface > far ? far : surface;
+}
+
+/**
+ * The frame a sculpt feature's strokes are recorded in.
+ *
+ * `attachTo` names a feature in the same tree. When it is missing, disabled or
+ * unresolvable the strokes fall back to world coordinates, which is what a
+ * sculpt made before attachment existed will do.
+ */
+export function sculptFrame(features: EvalFeature[], sculpt: EvalFeature): Frame {
+  const target = text(sculpt.params, 'attachTo', '');
+  if (target === '') return IDENTITY_FRAME;
+  const parent = features.find((f) => f.id === target);
+  if (!parent) return IDENTITY_FRAME;
+  return frameOf(parent.params);
+}
+
+/** World bounds of a stroke's swept volume. */
+export function strokeBounds(
+  stroke: SculptStroke,
+): { min: [number, number, number]; max: [number, number, number] } | null {
+  const count = Math.floor(stroke.points.length / 3);
+  if (count === 0) return null;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+
+  for (let i = 0; i < count; i++) {
+    minX = Math.min(minX, stroke.points[i * 3]);
+    maxX = Math.max(maxX, stroke.points[i * 3]);
+    minY = Math.min(minY, stroke.points[i * 3 + 1]);
+    maxY = Math.max(maxY, stroke.points[i * 3 + 1]);
+    minZ = Math.min(minZ, stroke.points[i * 3 + 2]);
+    maxZ = Math.max(maxZ, stroke.points[i * 3 + 2]);
+  }
+
+  const r = stroke.radius;
+  return {
+    min: [minX - r, minY - r, minZ - r],
+    max: [maxX + r, maxY + r, maxZ + r],
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * Transforms
  * ------------------------------------------------------------------ */
 
@@ -499,6 +741,83 @@ export function rotationMatrix(rxDeg: number, ryDeg: number, rzDeg: number): num
 }
 
 /* ------------------------------------------------------------------ *
+ * Frames
+ *
+ * A rigid frame taken from a feature's transform parameters, used to express
+ * one feature's geometry in another's coordinates. Distances survive a rigid
+ * transform unchanged, so a field evaluated in a local frame is the same field.
+ * ------------------------------------------------------------------ */
+
+export interface Frame {
+  tx: number;
+  ty: number;
+  tz: number;
+  /** World to local: the transpose of the rotation. */
+  inv: number[];
+  identity: boolean;
+}
+
+export const IDENTITY_FRAME: Frame = {
+  tx: 0,
+  ty: 0,
+  tz: 0,
+  inv: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  identity: true,
+};
+
+export function frameOf(params: Params): Frame {
+  const rx = num(params, 'rx', 0);
+  const ry = num(params, 'ry', 0);
+  const rz = num(params, 'rz', 0);
+  const tx = num(params, 'px', 0);
+  const ty = num(params, 'py', 0);
+  const tz = num(params, 'pz', 0);
+
+  const m = rotationMatrix(rx, ry, rz);
+  return {
+    tx,
+    ty,
+    tz,
+    inv: [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]],
+    identity: rx === 0 && ry === 0 && rz === 0 && tx === 0 && ty === 0 && tz === 0,
+  };
+}
+
+export function frameToLocal(
+  frame: Frame,
+  x: number,
+  y: number,
+  z: number,
+): [number, number, number] {
+  const wx = x - frame.tx;
+  const wy = y - frame.ty;
+  const wz = z - frame.tz;
+  if (frame.identity) return [wx, wy, wz];
+  const m = frame.inv;
+  return [
+    m[0] * wx + m[1] * wy + m[2] * wz,
+    m[3] * wx + m[4] * wy + m[5] * wz,
+    m[6] * wx + m[7] * wy + m[8] * wz,
+  ];
+}
+
+export function frameToWorld(
+  frame: Frame,
+  x: number,
+  y: number,
+  z: number,
+): [number, number, number] {
+  if (frame.identity) return [x + frame.tx, y + frame.ty, z + frame.tz];
+  // inv is the transpose of R, so reading it column-wise applies R.
+  const m = frame.inv;
+  return [
+    m[0] * x + m[3] * y + m[6] * z + frame.tx,
+    m[1] * x + m[4] * y + m[7] * z + frame.ty,
+    m[2] * x + m[5] * y + m[8] * z + frame.tz,
+  ];
+}
+
+/* ------------------------------------------------------------------ *
  * Grid evaluation
  * ------------------------------------------------------------------ */
 
@@ -514,15 +833,31 @@ export interface SdfGrid {
 
 /** The minimum a feature needs to expose to be evaluated. */
 export interface EvalFeature {
+  /** Needed so a sculpt feature can name the shape it is attached to. */
+  id?: string;
   kind: string;
   enabled: boolean;
   params: Params;
+  /** Sculpt features carry their strokes here rather than in params. */
+  strokes?: SculptStroke[];
 }
 
 /** One evaluation step: either a solid to combine, or a modifier to apply. */
 export type PreparedStep =
   | ({ type: 'shape' } & Prepared)
-  | { type: 'modifier'; index: number; mod: ModifierModule; params: Params };
+  | { type: 'modifier'; index: number; mod: ModifierModule; params: Params }
+  | {
+      type: 'sculpt';
+      index: number;
+      strokes: PreparedStroke[];
+      broad: StrokeBroadPhase;
+      /**
+       * The frame the strokes are stored in — the shape they are attached to.
+       * Moving or turning that shape carries the sculpting with it, which is
+       * the whole reason strokes are not kept in world coordinates.
+       */
+      frame: Frame;
+    };
 
 export interface Prepared {
   /** Index into the feature array this was prepared from. */
@@ -548,6 +883,24 @@ export function prepareFeatures(features: EvalFeature[]): PreparedStep[] {
   for (let index = 0; index < features.length; index++) {
     const f = features[index];
     if (!f.enabled) continue;
+
+    if (f.kind === 'sculpt') {
+      const strokes: PreparedStroke[] = [];
+      for (const stroke of f.strokes ?? []) {
+        if (stroke.points.length < 3 || stroke.radius <= 0) continue;
+        strokes.push(prepareStroke(stroke));
+      }
+      if (strokes.length > 0) {
+        out.push({
+          type: 'sculpt',
+          index,
+          strokes,
+          broad: buildBroadPhase(strokes),
+          frame: sculptFrame(features, f),
+        });
+      }
+      continue;
+    }
 
     const modifier = findModifier(f.kind);
     if (modifier) {
@@ -601,6 +954,26 @@ export function evaluatePoint(prepared: PreparedStep[], x: number, y: number, z:
   for (let i = 0; i < prepared.length; i++) {
     const step = prepared[i];
 
+    if (step.type === 'sculpt') {
+      // Into the attached shape's frame, where the strokes were recorded.
+      const [lx, ly, lz] = step.frame.identity
+        ? [x - step.frame.tx, y - step.frame.ty, z - step.frame.tz]
+        : frameToLocal(step.frame, x, y, z);
+
+      const cell = step.broad.cell;
+      const nearby = step.broad.buckets.get(
+        `${Math.floor(lx / cell)}:${Math.floor(ly / cell)}:${Math.floor(lz / cell)}`,
+      );
+      if (nearby) {
+        // Already in stroke order: the bucket was filled by ascending id.
+        for (const id of nearby) {
+          const stroke = step.strokes[id];
+          d = opApply(stroke.op, d, strokeDistance(stroke, lx, ly, lz), stroke.k);
+        }
+      }
+      continue;
+    }
+
     if (step.type === 'modifier') {
       // Nothing to hollow yet: a shell above an empty tree must not invent a
       // wall out of the sentinel distance.
@@ -638,6 +1011,40 @@ export function modelBounds(
   let maxX = -Infinity;
   let maxY = -Infinity;
   let maxZ = -Infinity;
+
+  const grow = (lo: [number, number, number], hi: [number, number, number]) => {
+    found = true;
+    minX = Math.min(minX, lo[0]);
+    minY = Math.min(minY, lo[1]);
+    minZ = Math.min(minZ, lo[2]);
+    maxX = Math.max(maxX, hi[0]);
+    maxY = Math.max(maxY, hi[1]);
+    maxZ = Math.max(maxZ, hi[2]);
+  };
+
+  // Sculpt strokes that add material set bounds like any other solid: without
+  // this, a stroke pulled out past the base shape would be cut off by the grid.
+  for (const feature of features) {
+    if (feature.kind !== 'sculpt' || !feature.enabled) continue;
+    const frame = sculptFrame(features, feature);
+    for (const stroke of feature.strokes ?? []) {
+      if (!opIsAdditive(stroke.op as Op)) continue;
+      const box = strokeBounds(stroke);
+      if (!box) continue;
+
+      // Local bounds, so all eight corners go through the frame before they
+      // can be trusted as world bounds.
+      for (let c = 0; c < 8; c++) {
+        const corner = frameToWorld(
+          frame,
+          c & 1 ? box.max[0] : box.min[0],
+          c & 2 ? box.max[1] : box.min[1],
+          c & 4 ? box.max[2] : box.min[2],
+        );
+        grow(corner, corner);
+      }
+    }
+  }
 
   for (const f of prepared) {
     // Modifiers add no material, so they set no bounds.
@@ -755,6 +1162,11 @@ export function evaluateGrid(features: EvalFeature[], res: number): SdfGrid {
   let maxBlend = 0;
   for (const f of prepared) {
     if (f.type === 'shape' && opUsesBlend(f.op) && f.k > maxBlend) maxBlend = f.k;
+    if (f.type === 'sculpt') {
+      for (const stroke of f.strokes) {
+        if (opUsesBlend(stroke.op) && stroke.k > maxBlend) maxBlend = stroke.k;
+      }
+    }
   }
   const pad = 3 * step + maxBlend * BLEND_PAD_FACTOR;
 

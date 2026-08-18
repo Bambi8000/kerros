@@ -62,7 +62,12 @@ const COLORS = {
   rodSelected: 0xe04a2f,
   fixture: 0x4a9fd8,
   fixtureSelected: 0xe04a2f,
+  brush: 0xe04a2f,
+  stroke: 0xe0a02f,
 };
+
+/** A new point is taken once the cursor has moved this fraction of a radius. */
+const STROKE_SPACING = 0.35;
 
 interface ViewportProps {
   /** Slices to show in stack mode. Null while modelling or still computing. */
@@ -194,6 +199,8 @@ export function Viewport({ slices }: ViewportProps) {
   const features = useKerros((s) => s.features);
   const previewRes = useKerros((s) => s.previewRes);
   const displayMode = useKerros((s) => s.displayMode);
+  const sculptMode = useKerros((s) => s.sculptMode);
+  const brushRadius = useKerros((s) => s.brushRadius);
   const selectedId = useKerros((s) => s.selectedId);
   const gizmoMode = useKerros((s) => s.gizmoMode);
   const snapEnabled = useKerros((s) => s.snapEnabled);
@@ -209,6 +216,9 @@ export function Viewport({ slices }: ViewportProps) {
   const stackRef = useRef<THREE.Group | null>(null);
   const rodsRef = useRef<THREE.Group | null>(null);
   const fixturesRef = useRef<THREE.Group | null>(null);
+  const brushRef = useRef<THREE.Mesh | null>(null);
+  const strokeRef = useRef<THREE.Group | null>(null);
+  const paintRef = useRef<{ id: string; points: number[] } | null>(null);
   const selectionRef = useRef<THREE.Group | null>(null);
   const proxyRef = useRef<THREE.Object3D | null>(null);
   const cameraRef = useRef<THREE.Camera | null>(null);
@@ -275,6 +285,26 @@ export function Viewport({ slices }: ViewportProps) {
     scene.add(fixtures);
     fixturesRef.current = fixtures;
 
+    // Brush cursor and the stroke being laid down. Both are overlays: the field
+    // is only re-evaluated when the stroke is finished, so the drag stays
+    // responsive on a shape that takes a quarter of a second to sample.
+    const brush = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 20, 14),
+      new THREE.MeshBasicMaterial({
+        color: COLORS.brush,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.5,
+      }),
+    );
+    brush.visible = false;
+    scene.add(brush);
+    brushRef.current = brush;
+
+    const strokes = new THREE.Group();
+    scene.add(strokes);
+    strokeRef.current = strokes;
+
     const selection = new THREE.Group();
     scene.add(selection);
     selectionRef.current = selection;
@@ -333,12 +363,122 @@ export function Viewport({ slices }: ViewportProps) {
     let downX = 0;
     let downY = 0;
 
+    /** Where the ray meets the model, or null. */
+    const surfaceAt = (event: PointerEvent): THREE.Vector3 | null => {
+      const cam = cameraRef.current;
+      const target = modelRef.current;
+      if (!cam || !target) return null;
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, cam);
+      const hits = raycaster.intersectObjects(target.children, true);
+      return hits.length > 0 ? hits[0].point.clone() : null;
+    };
+
+    /** Redraw the stroke in progress as a plain line through its points. */
+    const showStroke = () => {
+      const group = strokeRef.current;
+      const paint = paintRef.current;
+      if (!group) return;
+      disposeChildren(group);
+      if (!paint || paint.points.length < 6) return;
+
+      const points: THREE.Vector3[] = [];
+      for (let i = 0; i < paint.points.length; i += 3) {
+        points.push(
+          new THREE.Vector3(paint.points[i], paint.points[i + 1], paint.points[i + 2]),
+        );
+      }
+      group.add(
+        new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(points),
+          new THREE.LineBasicMaterial({ color: COLORS.stroke }),
+        ),
+      );
+    };
+
     const onPointerDown = (event: PointerEvent) => {
       downX = event.clientX;
       downY = event.clientY;
+
+      const state = useKerros.getState();
+      if (!state.sculptMode || state.mode !== 'model' || event.button !== 0) return;
+
+      const hit = surfaceAt(event);
+      if (!hit) return;
+
+      // Orbit is on the right button while sculpting, and turned off outright
+      // for the length of a stroke so a slip cannot spin the model mid-line.
+      if (controlsRef.current) controlsRef.current.enabled = false;
+      paintRef.current = { id: state.ensureSculpt(), points: [hit.x, hit.y, hit.z] };
+      renderer.domElement.setPointerCapture(event.pointerId);
+      showStroke();
+    };
+
+    const onPointerMoveSculpt = (event: PointerEvent) => {
+      const state = useKerros.getState();
+      const brush = brushRef.current;
+
+      if (!state.sculptMode || state.mode !== 'model') {
+        if (brush) brush.visible = false;
+        return;
+      }
+
+      const hit = surfaceAt(event);
+
+      if (brush) {
+        brush.visible = hit !== null;
+        if (hit) {
+          brush.position.copy(hit);
+          brush.scale.setScalar(Math.max(state.brushRadius, 0.2));
+        }
+      }
+
+      const paint = paintRef.current;
+      if (!paint || !hit) return;
+
+      const n = paint.points.length;
+      const dx = hit.x - paint.points[n - 3];
+      const dy = hit.y - paint.points[n - 2];
+      const dz = hit.z - paint.points[n - 1];
+      const step = Math.max(state.brushRadius, 0.2) * STROKE_SPACING;
+      if (dx * dx + dy * dy + dz * dz < step * step) return;
+
+      paint.points.push(hit.x, hit.y, hit.z);
+      showStroke();
+    };
+
+    const finishStroke = (event: PointerEvent) => {
+      const paint = paintRef.current;
+      paintRef.current = null;
+      if (controlsRef.current) controlsRef.current.enabled = true;
+      if (renderer.domElement.hasPointerCapture(event.pointerId)) {
+        renderer.domElement.releasePointerCapture(event.pointerId);
+      }
+
+      const group = strokeRef.current;
+      if (group) disposeChildren(group);
+      if (!paint || paint.points.length < 3) return;
+
+      const state = useKerros.getState();
+      state.addStroke(paint.id, {
+        op: state.brushOp,
+        radius: state.brushRadius,
+        k: state.brushOp.startsWith('smooth') ? state.brushBlend : 0,
+        points: paint.points,
+      });
     };
 
     const onPointerUp = (event: PointerEvent) => {
+      if (paintRef.current) {
+        finishStroke(event);
+        return;
+      }
+
+      // While sculpting the left button belongs to the brush, never to picking.
+      if (useKerros.getState().sculptMode) return;
+
       // An orbit drag or a gizmo drag is not a selection click.
       if (Math.abs(event.clientX - downX) > CLICK_SLOP_PX) return;
       if (Math.abs(event.clientY - downY) > CLICK_SLOP_PX) return;
@@ -389,7 +529,12 @@ export function Viewport({ slices }: ViewportProps) {
     };
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointermove', onPointerMoveSculpt);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('pointercancel', onPointerUp);
+    renderer.domElement.addEventListener('pointerleave', () => {
+      if (brushRef.current) brushRef.current.visible = false;
+    });
 
     /* -------------------- keyboard -------------------- */
 
@@ -414,13 +559,19 @@ export function Viewport({ slices }: ViewportProps) {
       cancelAnimationFrame(frame);
       observer.disconnect();
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointermove', onPointerMoveSculpt);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('pointercancel', onPointerUp);
       window.removeEventListener('keydown', onKeyDown);
       disposeChildren(bed);
       disposeChildren(model);
       disposeChildren(stack);
       disposeChildren(rods);
       disposeChildren(fixtures);
+      disposeChildren(strokes);
+      brush.geometry.dispose();
+      (brush.material as THREE.Material).dispose();
+      scene.remove(brush);
       disposeChildren(selection);
       grid.geometry.dispose();
       (grid.material as THREE.Material).dispose();
@@ -439,6 +590,8 @@ export function Viewport({ slices }: ViewportProps) {
       stackRef.current = null;
       rodsRef.current = null;
       fixturesRef.current = null;
+      brushRef.current = null;
+      strokeRef.current = null;
       selectionRef.current = null;
       proxyRef.current = null;
     };
@@ -524,6 +677,22 @@ export function Viewport({ slices }: ViewportProps) {
       cameraRef.current = null;
     };
   }, [view]);
+
+  /*
+   * While sculpting, the left button paints and the right one orbits.
+   *
+   * Swapping the buttons rather than making sculpting modal-and-blocking means
+   * the model can still be turned mid-session, which matters: you sculpt one
+   * side, turn it, sculpt the other.
+   */
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    controls.mouseButtons = sculptMode
+      ? { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }
+      : { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+    if (!sculptMode && brushRef.current) brushRef.current.visible = false;
+  }, [sculptMode, view, mode]);
 
   // Gizmo mode and snapping.
   useEffect(() => {
@@ -729,6 +898,7 @@ export function Viewport({ slices }: ViewportProps) {
     if (modelRef.current) modelRef.current.visible = mode !== 'stack';
     if (stackRef.current) stackRef.current.visible = mode === 'stack';
     if (fixturesRef.current) fixturesRef.current.visible = mode === 'model';
+    if (brushRef.current && mode !== 'model') brushRef.current.visible = false;
     if (selectionRef.current) selectionRef.current.visible = mode === 'model';
     if (mode !== 'model') gizmoRef.current?.detach();
   }, [mode]);
@@ -877,7 +1047,9 @@ export function Viewport({ slices }: ViewportProps) {
         <span className="hud-note">
           {mode === 'stack'
             ? 'Exploded stack at real layer pitch'
-            : `Click a shape to select · M move · R rotate · Esc deselect${
+            : sculptMode
+              ? `Sculpting · left drag paints, right drag orbits · brush ${brushRadius} mm`
+              : `Click a shape to select · M move · R rotate · Esc deselect${
                 displayMode === 'solid' ? '' : ` · ${displayMode}`
               }${
                 fixtureCount > 0

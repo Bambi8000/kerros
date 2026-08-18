@@ -51,6 +51,9 @@ export function Layout() {
     const feature = s.features.find((f) => f.id === s.selectedId);
     return feature !== undefined && hasTransform(feature);
   });
+  const sculptMode = useKerros((s) => s.sculptMode);
+  const setSculptMode = useKerros((s) => s.setSculptMode);
+  const ensureSculpt = useKerros((s) => s.ensureSculpt);
   const gizmoMode = useKerros((s) => s.gizmoMode);
   const setGizmoMode = useKerros((s) => s.setGizmoMode);
   const snapEnabled = useKerros((s) => s.snapEnabled);
@@ -167,6 +170,21 @@ export function Layout() {
               {d.label}
             </button>
           ))}
+        </div>
+
+        <div className="toolbar" aria-label="Sculpt">
+          <button
+            type="button"
+            title="Paint on the surface: left drag paints, right drag orbits"
+            disabled={mode !== 'model'}
+            className={`view-btn${sculptMode && mode === 'model' ? ' is-active' : ''}`}
+            onClick={() => {
+              if (!sculptMode) ensureSculpt();
+              setSculptMode(!sculptMode);
+            }}
+          >
+            Sculpt
+          </button>
         </div>
 
         <div className="toolbar" aria-label="Transform tool">

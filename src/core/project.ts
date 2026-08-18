@@ -21,6 +21,13 @@ export const PROJECT_FORMAT_VERSION = 1;
 
 export type ParamValue = number | string | boolean;
 
+export interface ProjectStroke {
+  op: string;
+  radius: number;
+  k: number;
+  points: number[];
+}
+
 export interface ProjectFeature {
   id: string;
   kind: string;
@@ -28,6 +35,8 @@ export interface ProjectFeature {
   name: string;
   enabled: boolean;
   params: Record<string, ParamValue>;
+  /** Sculpt features only. Omitted entirely when there are none. */
+  strokes?: ProjectStroke[];
 }
 
 export interface ProjectPlacement {
@@ -187,7 +196,7 @@ function parseFeature(
     else warnings.push(`Feature ${index + 1} parameter "${key}" was not a value and was dropped.`);
   }
 
-  return {
+  const feature: ProjectFeature = {
     id: asString(row.id, `f${index + 1}`),
     kind,
     stage: STAGES.includes(stage) ? stage : 'SHAPE',
@@ -195,6 +204,43 @@ function parseFeature(
     enabled: asBoolean(row.enabled, true),
     params,
   };
+
+  if (Array.isArray(row.strokes)) {
+    const strokes: ProjectStroke[] = [];
+    row.strokes.forEach((raw2, at) => {
+      const stroke = asRecord(raw2);
+      const points = Array.isArray(stroke.points)
+        ? stroke.points.filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
+        : [];
+
+      // Points come in threes. A trailing fragment means the file was truncated
+      // or hand-edited, and half a coordinate is not a place.
+      const usable = points.length - (points.length % 3);
+      if (usable < 3) {
+        warnings.push(`Feature ${index + 1} stroke ${at + 1} had no usable points and was dropped.`);
+        return;
+      }
+      if (usable !== points.length) {
+        warnings.push(`Feature ${index + 1} stroke ${at + 1} ended mid-point; the fragment was trimmed.`);
+      }
+
+      const radius = asNumber(stroke.radius, 0);
+      if (!(radius > 0)) {
+        warnings.push(`Feature ${index + 1} stroke ${at + 1} had no radius and was dropped.`);
+        return;
+      }
+
+      strokes.push({
+        op: asString(stroke.op, 'union'),
+        radius,
+        k: Math.max(asNumber(stroke.k, 0), 0),
+        points: points.slice(0, usable),
+      });
+    });
+    if (strokes.length > 0) feature.strokes = strokes;
+  }
+
+  return feature;
 }
 
 function parsePlacements(
