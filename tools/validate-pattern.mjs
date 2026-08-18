@@ -18,7 +18,10 @@ import {
   holeFits,
   patternCutRadius,
   measuredBridge,
+  EdgeIndex,
 } from '../src/core/pattern.ts';
+
+import { sliceModel } from '../src/core/slice.ts';
 
 import {
   prepareFeatures,
@@ -61,9 +64,27 @@ function tube(wall = 10) {
   };
 }
 
-function inputFor(model, layer = 5, existing = []) {
+/** Rings for a slice at z, taken through the real slicer. */
+function contoursAt(model, z) {
+  const set = sliceModel(model.sample, model.bounds, {
+    thickness: 1,
+    spacerHeight: 0,
+    resolution: 220,
+    tolerance: 0.05,
+    smoothing: 1,
+    kerf: 0,
+  });
+  let best = set.slices[0];
+  for (const slice of set.slices) {
+    if (Math.abs(slice.z - z) < Math.abs(best.z - z)) best = slice;
+  }
+  return best.contours.map((c) => ({ points: c.points }));
+}
+
+function inputFor(model, layer = 5, existing = [], z = 45) {
   return {
-    z: 45,
+    z,
+    contours: contoursAt(model, z),
     bounds: {
       minX: model.bounds.min[0],
       minY: model.bounds.min[1],
@@ -259,12 +280,14 @@ console.log('pattern: density and degenerate settings');
     crammed.length > 0 && measuredBridge(crammed, input, baseOptions.kerf) >= baseOptions.minBridge - 1e-9,
   );
 
-  const solid = (x, y, z) => -1000;
+  const square = [];
+  for (const [x, y] of [[-50, -50], [50, -50], [50, 50], [-50, 50]]) square.push(x, y);
   const openField = {
     z: 0,
+    contours: [{ points: square }],
     bounds: { minX: -50, minY: -50, maxX: 50, maxY: 50 },
     existing: [],
-    sample: solid,
+    sample: () => -1000,
     layer: 1,
   };
   const filled = generatePattern(openField, baseOptions);
@@ -273,6 +296,92 @@ console.log('pattern: density and degenerate settings');
     'and the bridge holds there too',
     measuredBridge(filled, openField, baseOptions.kerf) >= baseOptions.minBridge - 1e-9,
   );
+}
+
+console.log('pattern: clearance is measured in the plane');
+{
+  // A slice near the top of a sphere is a solid disc: flat, with plenty of
+  // room in plane, but with the sphere's surface only a millimetre above it.
+  // Measuring depth from the 3D field emptied the middle of such a slice in an
+  // irregular blotch; measuring in plane fills it properly.
+  const sphere = findModule('sphere');
+  const tree = [
+    { kind: 'sphere', enabled: true, params: { ...defaultParams(sphere), op: 'union', r: 60, pz: 60 } },
+  ];
+  const prepared = prepareFeatures(tree);
+  const model = { sample: (x, y, z) => evaluatePoint(prepared, x, y, z), bounds: modelBounds(tree) };
+
+  const capZ = 112;
+  const input = inputFor(model, 3, [], capZ);
+  const radius = Math.hypot(
+    input.contours[0].points[0],
+    input.contours[0].points[1],
+  );
+  check('the test slice is a solid disc', input.contours.length === 1 && radius > 20);
+
+  const centreDepth3D = -model.sample(0, 0, capZ);
+  check(
+    'the 3D field badly under-reports the room at the centre',
+    centreDepth3D < radius * 0.5,
+    `field says ${centreDepth3D.toFixed(1)} mm, the edge is ${radius.toFixed(1)} mm away in plane`,
+  );
+
+  const options = { ...baseOptions, radius: 0.7, minBridge: 1.1, pitch: 6 };
+  check('yet a hole fits at the centre in plane', holeFits(0, 0, input, options, []));
+
+  const circles = generatePattern(input, options);
+  const area = Math.PI * radius * radius;
+  const expected = area / (options.pitch * options.pitch * Math.sqrt(3) / 2);
+  check(
+    'and the disc fills at roughly lattice density',
+    circles.length > expected * 0.7,
+    `${circles.length} holes, a full lattice would be about ${Math.round(expected)}`,
+  );
+
+  // Nothing may sit outside the material, whatever the field said.
+  const outside = circles.filter((c) => Math.hypot(c.x, c.y) > radius - options.radius);
+  check('no hole breaks the rim', outside.length === 0, `${outside.length} over the edge`);
+}
+
+console.log('pattern: band limit');
+{
+  const sphere = findModule('sphere');
+  const tree = [
+    { kind: 'sphere', enabled: true, params: { ...defaultParams(sphere), op: 'union', r: 60, pz: 60 } },
+  ];
+  const prepared = prepareFeatures(tree);
+  const model = { sample: (x, y, z) => evaluatePoint(prepared, x, y, z), bounds: modelBounds(tree) };
+  const input = inputFor(model, 3, [], 60);
+  const options = { ...baseOptions, radius: 0.7, minBridge: 1.1, pitch: 6 };
+
+  const everywhere = generatePattern(input, options);
+  const banded = generatePattern(input, { ...options, band: 12 });
+
+  check('a band places fewer holes than the whole part', banded.length < everywhere.length);
+  check('but still places some', banded.length > 10, `${banded.length} holes`);
+
+  const edges = new EdgeIndex(input.contours, 8);
+  const strays = banded.filter((c) => edges.distance(c.x, c.y, 1e6) > 12 + 1e-6);
+  check('and every one of them is inside the band', strays.length === 0, `${strays.length} outside`);
+
+  const middle = banded.filter((c) => Math.hypot(c.x, c.y) < 30);
+  check('the middle of the part is left alone', middle.length === 0);
+}
+
+console.log('pattern: edge index');
+{
+  const square = [];
+  for (const [x, y] of [[-20, -20], [20, -20], [20, 20], [-20, 20]]) square.push(x, y);
+  const index = new EdgeIndex([{ points: square }], 5);
+
+  check('the centre is 20 mm from every edge', Math.abs(index.distance(0, 0, 1e6) - 20) < 1e-9);
+  check('a point near an edge measures to it', Math.abs(index.distance(19, 0, 1e6) - 1) < 1e-9);
+  check('a corner measures to the corner', Math.abs(index.distance(20, 20, 1e6)) < 1e-9);
+  check(
+    'the limit caps the answer rather than searching for ever',
+    index.distance(0, 0, 3) === 3,
+  );
+  check('outside points measure too', Math.abs(index.distance(25, 0, 1e6) - 5) < 1e-9);
 }
 
 console.log('');

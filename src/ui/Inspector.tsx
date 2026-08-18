@@ -1,4 +1,4 @@
-import { rodSpanOf, useKerros } from '../core/store';
+import { rodSpanOf, shellWallOf, useKerros } from '../core/store';
 import {
   BLEND_PARAM,
   OPS,
@@ -213,10 +213,17 @@ function ShellInspector({ feature }: { feature: Feature }) {
   );
 }
 
-function PatternInspector({ feature }: { feature: Feature }) {
+interface PatternProps {
+  feature: Feature;
+  placed: number | undefined;
+  sliced: boolean;
+}
+
+function PatternInspector({ feature, placed, sliced }: PatternProps) {
   const setParam = useKerros((s) => s.setParam);
   const renameFeature = useKerros((s) => s.renameFeature);
   const kerf = useKerros((s) => s.material.kerf);
+  const wall = useKerros((s) => shellWallOf(s.features));
 
   const kind = text(feature.params, 'patternKind', 'hex') as PatternKind;
   const radius = num(feature.params, 'radius', 2);
@@ -228,7 +235,7 @@ function PatternInspector({ feature }: { feature: Feature }) {
   return (
     <>
       <div className="group">
-        <div className="group-head">Wall pattern</div>
+        <div className="group-head">Perforation</div>
         <label className="field">
           <span className="field-label">Name</span>
           <span className="field-input">
@@ -254,11 +261,35 @@ function PatternInspector({ feature }: { feature: Feature }) {
             </select>
           </span>
         </label>
+        {!sliced ? (
+          <div className="warn">
+            Patterns are cut per slice, so they do not appear in the Model
+            preview at all. Open Slice, Stack or Sheet to see them.
+          </div>
+        ) : placed === 0 ? (
+          <div className="warn">
+            No holes placed. This pattern needs {wallNeeded.toFixed(1)} mm of
+            wall and{' '}
+            {wall > 0
+              ? `the shell gives ${wall.toFixed(1)} mm`
+              : 'there is no shell in the tree, so there is no wall to perforate'}
+            . Make the holes smaller, the bridge narrower, or the wall thicker.
+          </div>
+        ) : (
+          <div className="derived derived-strong">
+            {placed} holes
+            <span className="derived-sub">
+              across the stack · visible in Slice, Stack and Sheet, never in the
+              Model preview
+            </span>
+          </div>
+        )}
         <div className="derived">
-          Perforates the wall of every slice, not the solid. A hole carved
+          Perforates each slice as a flat part, not the solid. A hole carved
           through the form becomes a different shape on every layer it crosses,
           and the layer where it is half a millimetre wide is the one that falls
-          apart on the bed.
+          apart on the bed. Clearance is measured in the plane of the slice,
+          which is where you would measure it with calipers.
         </div>
       </div>
 
@@ -290,6 +321,20 @@ function PatternInspector({ feature }: { feature: Feature }) {
           max={1}
           onChange={(v) => setParam(feature.id, 'density', v)}
         />
+        <NumberField
+          label="Band"
+          value={num(feature.params, 'band', 0)}
+          unit="mm"
+          step={1}
+          min={0}
+          max={200}
+          onChange={(v) => setParam(feature.id, 'band', v)}
+        />
+        <div className="derived">
+          Band keeps the holes within that distance of an edge. 0 fills the
+          whole part — which a shelled slice already is, being a narrow ring,
+          but a solid cap or foot is not.
+        </div>
         <div className="derived">
           Cut at Ø{Math.max(radius * 2 - kerf, 0.1).toFixed(2)} mm so the
           finished hole is Ø{(radius * 2).toFixed(2)} mm.
@@ -320,9 +365,11 @@ function PatternInspector({ feature }: { feature: Feature }) {
         </label>
         <div className="derived">
           No hole is placed unless this much material is left to the wall face,
-          to a rod hole and to every other hole. A wall thinner than{' '}
-          {wallNeeded.toFixed(1)} mm will simply not be perforated, which is the
-          honest answer rather than holes that break out of it.
+          to a rod hole and to every other hole. Needs{' '}
+          {wallNeeded.toFixed(1)} mm of wall
+          {wall > 0 ? `; the shell gives ${wall.toFixed(1)} mm` : ''}. A thinner
+          wall is simply not perforated, which is the honest answer rather than
+          holes that break out of it.
         </div>
       </div>
     </>
@@ -431,7 +478,14 @@ function ShapeInspector({ feature }: { feature: Feature }) {
   );
 }
 
-export function Inspector() {
+interface InspectorProps {
+  /** Holes each pattern feature placed, from the last slicing run. */
+  patternCounts: Record<string, number>;
+  /** Whether slicing has run at all — it does not while modelling. */
+  sliced: boolean;
+}
+
+export function Inspector({ patternCounts, sliced }: InspectorProps) {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
 
@@ -447,6 +501,14 @@ export function Inspector() {
 
   if (feature.stage === 'RIG') return <RodInspector feature={feature} />;
   if (feature.stage === 'CARVE') return <ShellInspector feature={feature} />;
-  if (feature.stage === 'PATTERN') return <PatternInspector feature={feature} />;
+  if (feature.stage === 'PATTERN') {
+    return (
+      <PatternInspector
+        feature={feature}
+        placed={patternCounts[feature.id]}
+        sliced={sliced}
+      />
+    );
+  }
   return <ShapeInspector feature={feature} />;
 }

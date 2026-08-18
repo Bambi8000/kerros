@@ -16,13 +16,15 @@ const SLICE_DEBOUNCE_MS = 250;
 
 export interface SliceResult {
   set: SliceSet | null;
+  /** Holes each pattern feature actually placed, keyed by feature id. */
+  patternCounts: Record<string, number>;
   /** One report per slice, aligned by index. */
   reports: GapReport[];
   ms: number;
   pending: boolean;
 }
 
-const IDLE: SliceResult = { set: null, reports: [], ms: 0, pending: false };
+const IDLE: SliceResult = { set: null, patternCounts: {}, reports: [], ms: 0, pending: false };
 
 /**
  * Slice the current feature tree, drill the rods, and check the result.
@@ -78,6 +80,11 @@ export function useSlices(enabled: boolean): SliceResult {
       // Patterns perforate after the rods, so a pattern hole never crowds a
       // rod hole. Each pattern sees the ones before it for the same reason.
       const patterns = features.filter((f) => f.stage === 'PATTERN' && f.enabled);
+      // Counted as they are placed: a pattern that fits nowhere must say so
+      // rather than leave the maker looking for holes that were never made.
+      const patternCounts: Record<string, number> = {};
+      for (const feature of patterns) patternCounts[feature.id] = 0;
+
       const perforated =
         patterns.length === 0
           ? drilled
@@ -87,6 +94,9 @@ export function useSlices(enabled: boolean): SliceResult {
                 const holes = generatePattern(
                   {
                     z: slice.z,
+                    // Clearance is measured against the slice's own rings, in
+                    // plane. The field only supplies the inside/outside sign.
+                    contours: slice.contours.map((c) => ({ points: c.points })),
                     bounds: {
                       minX: bounds.min[0],
                       minY: bounds.min[1],
@@ -99,6 +109,7 @@ export function useSlices(enabled: boolean): SliceResult {
                   },
                   patternOptionsOf(feature, kerf, seed),
                 );
+                patternCounts[feature.id] += holes.length;
                 circles.push(...holes);
               }
               return { ...slice, circles };
@@ -111,7 +122,13 @@ export function useSlices(enabled: boolean): SliceResult {
       const threshold = Math.max(minFeature, kerf * 2);
       const reports = set.slices.map((slice) => minFeatureGap(slice, threshold));
 
-      setResult({ set, reports, ms: performance.now() - started, pending: false });
+      setResult({
+        set,
+        patternCounts,
+        reports,
+        ms: performance.now() - started,
+        pending: false,
+      });
     }, SLICE_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);

@@ -393,15 +393,38 @@ layer where it happens to be half a millimetre wide is the one that falls apart
 on the bed. Placing holes per slice means every hole is checked against the
 material it is actually cut from.
 
-### The region needs no polygon offsetting
+### It is a perforation tool for flat parts
 
-The handoff describes the pattern region as the band between the outer and inner
-contours, inset by a margin — which sounds like a job for polygon offsetting.
-It is not. The distance field already knows how far any point is from the
-boundary, so a hole of radius r is accepted wherever the material is at least
-`r + minBridge` deep. Exact, no library, and automatically right on sloped
-walls, where the field reports the true shortest distance to the surface rather
-than the in-plane one.
+Worth being plain about, because the name says "wall": this perforates the
+**material of each slice**, wherever there is room, and a slice is a flat part.
+On a shelled layer that material is a narrow ring, so the holes land in the
+wall. On a solid layer — a cap, a foot, a layer where the form has narrowed past
+the wall thickness — the material is the whole disc, and the holes fill it. The
+`band` parameter limits them to a given distance from an edge when that is not
+what you want.
+
+### Clearance is measured in the plane — M7.2
+
+The region needs no polygon offsetting, but it does need the **right distance**.
+The first version asked the 3D field how deep the material was, and that is
+wrong in a way that shows up immediately on a curved lamp.
+
+Near the top of a sphere the nearest surface to a point in the middle of a slice
+is **above** it, not out at the edge. The field reports 8 mm of depth where the
+flat part has 30 mm of room in plane. Holes then vanish from the middle of a
+perfectly solid slice in an irregular blotch — reported from a screenshot of
+exactly that, a disc with a sparse scatter where a hex lattice was asked for.
+
+So the sign comes from the field, which knows which side of the surface a point
+is on, and the **magnitude comes from the slice's own contours**, measured with
+`EdgeIndex` — segments bucketed on a uniform grid, searched outwards a ring of
+cells at a time, every query bounded by the clearance actually being asked
+about. The slice is a flat piece of board: the only bridge that matters is the
+one you could measure on it with calipers.
+
+A real lamp — 14 layers, 12.7 mm wall, Ø1.4 mm holes at 6 mm pitch — perforates
+in 54 ms and places 1312 holes where the old code placed a few hundred in
+patches.
 
 ### One acceptance test, four generators
 
@@ -427,6 +450,27 @@ it — checked with a 2.5 mm wall and a 4 mm hole.
 Patterns are generated **after** rods, and each pattern sees the ones before it,
 so nothing ever crowds anything. Holes are kerf-compensated the same way rod
 holes are: cut radius = radius − kerf/2.
+
+### Defaults have to be able to work — M7.1
+
+The first release shipped fixed defaults: a 2 mm hole with a 1.5 mm bridge,
+which needs 7 mm of wall. The default shell wall is 6 mm. So adding a shell and
+then a pattern, both at their defaults, correctly placed **nothing at all** —
+and said nothing about it.
+
+Two fixes, and the second matters more:
+
+- `addPattern` now sizes the holes to the wall it will cut them in, reading the
+  last enabled shell in the tree. Across walls from 3 mm to 20 mm the derived
+  hole, bridge and pitch always fit with room to spare.
+- The pattern inspector reports **how many holes were actually placed**. Zero
+  is called out with the wall it needs and the wall it has. And because
+  patterns are per-slice and never appear in the Model preview, the inspector
+  says that too rather than leaving someone rotating a solid looking for holes.
+
+This is the third time silence has read as a bug — spacers with no rods, a
+pattern with no room, a gizmo that wrote parameters nothing reads. A check that
+refuses to do something has to say what it refused and why.
 
 ### Per-layer variation
 

@@ -312,6 +312,28 @@ export const useKerros = create<KerrosState>((set, get) => ({
     set((s) => {
       const id = `f${s.nextFeatureNumber}`;
       const count = s.features.filter((f) => f.stage === 'PATTERN').length + 1;
+
+      // Size the holes to the wall they will be cut in. Fixed defaults meant a
+      // 2 mm hole with a 1.5 mm bridge needing 7 mm of wall, which the 6 mm
+      // default shell could not give — so the pattern placed nothing, silently.
+      const shell = [...s.features]
+        .reverse()
+        .find((f) => f.kind === 'shell' && f.enabled);
+      const wall = shell ? Math.max(Number(shell.params.t) || 0, 0.5) : 0;
+
+      const fitted =
+        wall > 0
+          ? (() => {
+              const minBridge = Math.max(1, wall * 0.18);
+              const radius = Math.max(0.5, ((wall - 2 * minBridge) / 2) * 0.9);
+              return {
+                radius: Math.round(radius * 10) / 10,
+                minBridge: Math.round(minBridge * 10) / 10,
+                pitch: Math.round((radius * 2 + minBridge) * 1.6 * 10) / 10,
+              };
+            })()
+          : { radius: 2, minBridge: 1.5, pitch: 8 };
+
       return {
         features: [
           ...s.features,
@@ -323,10 +345,11 @@ export const useKerros = create<KerrosState>((set, get) => ({
             enabled: true,
             params: {
               patternKind: 'hex',
-              radius: 2,
-              pitch: 8,
-              minBridge: 1.5,
+              radius: fitted.radius,
+              pitch: fitted.pitch,
+              minBridge: fitted.minBridge,
               density: 1,
+              band: 0,
               rotatePerLayer: 1,
             },
           },
@@ -630,6 +653,7 @@ export function patternOptionsOf(
   kerf: number;
   seed: number;
   rotatePerLayer: boolean;
+  band: number;
 } {
   const kind = typeof feature.params.patternKind === 'string' ? feature.params.patternKind : 'hex';
   return {
@@ -638,6 +662,7 @@ export function patternOptionsOf(
       | 'hex'
       | 'scatter'
       | 'radial',
+    band: Math.max(Number(feature.params.band) || 0, 0),
     radius: Number(feature.params.radius) || 2,
     pitch: Number(feature.params.pitch) || 8,
     minBridge: Number(feature.params.minBridge) || 1.5,
@@ -646,4 +671,10 @@ export function patternOptionsOf(
     seed,
     rotatePerLayer: Number(feature.params.rotatePerLayer) > 0,
   };
+}
+
+/** Wall thickness of the last enabled shell in a tree, or 0 when there is none. */
+export function shellWallOf(features: Feature[]): number {
+  const shell = [...features].reverse().find((f) => f.kind === 'shell' && f.enabled);
+  return shell ? Math.max(Number(shell.params.t) || 0, 0) : 0;
 }

@@ -9,11 +9,16 @@
  * against the material it is actually cut from.
  *
  * The region a hole may occupy is not computed by offsetting polygons. The
- * distance field already knows how far any point is from the boundary, so a
- * hole of radius r is accepted where the material is at least r plus the bridge
- * width deep. That is exact, needs no offsetting library, and is automatically
- * correct on sloped walls, where the field reports the shortest distance to the
- * surface rather than the in-plane one.
+ * clearance to the edge is measured **in the plane of the slice**, against the
+ * slice's own contours, and the inside/outside sign comes from the field.
+ *
+ * Using the 3D field for the distance as well — which the first version did —
+ * is wrong, and visibly so. Near the top of a curved form the nearest surface
+ * to a point in the middle of a slice is above or below it, not out at the
+ * edge, so the field reports a millimetre of depth where the flat part has
+ * fifty. Holes then vanish from the middle of a perfectly solid slice in an
+ * irregular blotch. The slice is a flat piece of 3 mm board: the only bridge
+ * that matters is the one you could measure on it with calipers.
  *
  * DELIBERATE CONSTRAINT: no imports. Node validators load this as the real
  * module.
@@ -39,6 +44,13 @@ export interface PatternCircle {
 
 export interface PatternOptions {
   kind: PatternKind;
+  /**
+   * Perforate only within this distance of an edge, mm. 0 fills the whole
+   * part. A shelled slice is already a narrow band, but a solid slice — a cap,
+   * a foot, a layer where the form has narrowed past the wall thickness —
+   * fills edge to edge without it.
+   */
+  band?: number;
   /** Finished hole radius, mm. The cut path is half a kerf smaller. */
   radius: number;
   /** Centre-to-centre spacing, mm. */
@@ -63,9 +75,19 @@ export interface Existing {
   r: number;
 }
 
+/** A ring of the slice, flat [x0, y0, x1, y1, ...]. */
+export interface Ring {
+  points: number[];
+}
+
 export interface PatternInput {
   /** Plane the slice was taken on. */
   z: number;
+  /**
+   * The slice's own contours, outer and holes alike. Clearance is measured
+   * against these, in the plane, because that is the material being cut.
+   */
+  contours: Ring[];
   /** Where to look, in mm. */
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
   /** Holes already placed, e.g. rod clearances. */
@@ -74,6 +96,105 @@ export interface PatternInput {
   sample: (x: number, y: number, z: number) => number;
   /** Layer number, so each layer can differ reproducibly. */
   layer: number;
+}
+
+/* ------------------------------------------------------------------ *
+ * In-plane distance
+ * ------------------------------------------------------------------ */
+
+interface Segment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/**
+ * Nearest-edge lookup for one slice.
+ *
+ * Segments are bucketed on a uniform grid and the search walks outwards a ring
+ * of cells at a time, stopping as soon as no closer segment is possible. Every
+ * query is bounded by `limit`, because the callers only ever ask "is there at
+ * least this much room", never "exactly how far".
+ */
+export class EdgeIndex {
+  private readonly cell: number;
+  private readonly buckets = new Map<string, Segment[]>();
+
+  constructor(contours: Ring[], cell: number) {
+    this.cell = Math.max(cell, 0.5);
+
+    for (const ring of contours) {
+      const n = ring.points.length / 2;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        const seg: Segment = {
+          x1: ring.points[i * 2],
+          y1: ring.points[i * 2 + 1],
+          x2: ring.points[j * 2],
+          y2: ring.points[j * 2 + 1],
+        };
+        this.insert(seg);
+      }
+    }
+  }
+
+  private key(cx: number, cy: number) {
+    return `${cx}:${cy}`;
+  }
+
+  private insert(seg: Segment) {
+    const minX = Math.floor(Math.min(seg.x1, seg.x2) / this.cell);
+    const maxX = Math.floor(Math.max(seg.x1, seg.x2) / this.cell);
+    const minY = Math.floor(Math.min(seg.y1, seg.y2) / this.cell);
+    const maxY = Math.floor(Math.max(seg.y1, seg.y2) / this.cell);
+
+    for (let cx = minX; cx <= maxX; cx++) {
+      for (let cy = minY; cy <= maxY; cy++) {
+        const k = this.key(cx, cy);
+        const bucket = this.buckets.get(k);
+        if (bucket) bucket.push(seg);
+        else this.buckets.set(k, [seg]);
+      }
+    }
+  }
+
+  /** Distance to the nearest edge, or `limit` when nothing is closer. */
+  distance(x: number, y: number, limit: number): number {
+    let best = limit;
+    const cx = Math.floor(x / this.cell);
+    const cy = Math.floor(y / this.cell);
+    const maxRing = Math.ceil(limit / this.cell) + 1;
+
+    for (let ring = 0; ring <= maxRing; ring++) {
+      // Anything in a further ring is at least this far away already.
+      if ((ring - 1) * this.cell > best) break;
+
+      for (let dx = -ring; dx <= ring; dx++) {
+        for (let dy = -ring; dy <= ring; dy++) {
+          if (ring > 0 && Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
+          const bucket = this.buckets.get(this.key(cx + dx, cy + dy));
+          if (!bucket) continue;
+          for (const seg of bucket) {
+            const d = pointToSegment(x, y, seg);
+            if (d < best) best = d;
+          }
+        }
+      }
+    }
+
+    return best;
+  }
+}
+
+function pointToSegment(px: number, py: number, seg: Segment): number {
+  const vx = seg.x2 - seg.x1;
+  const vy = seg.y2 - seg.y1;
+  const lengthSquared = vx * vx + vy * vy;
+  if (lengthSquared === 0) return Math.hypot(px - seg.x1, py - seg.y1);
+  let t = ((px - seg.x1) * vx + (py - seg.y1) * vy) / lengthSquared;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(px - (seg.x1 + t * vx), py - (seg.y1 + t * vy));
 }
 
 /** Deterministic PRNG. */
@@ -107,10 +228,23 @@ export function holeFits(
   input: PatternInput,
   options: PatternOptions,
   placed: PatternCircle[],
+  edges?: EdgeIndex,
 ): boolean {
   const { radius, minBridge, kerf } = options;
-  const depth = -input.sample(x, y, input.z);
-  if (!(depth >= radius + minBridge)) return false;
+  const need = radius + minBridge;
+
+  // Sign from the field, magnitude from the contours: the field knows which
+  // side of the surface a point is on, the contours know how far the edge is
+  // in the plane that will actually be cut.
+  if (input.sample(x, y, input.z) >= 0) return false;
+
+  const band = options.band ?? 0;
+  const limit = band > 0 ? Math.max(need, band) + 1 : need;
+  const index = edges ?? new EdgeIndex(input.contours, Math.max(need, 2));
+  const edge = index.distance(x, y, limit);
+
+  if (!(edge >= need)) return false;
+  if (band > 0 && edge > band) return false;
 
   for (const hole of input.existing) {
     // Cut radii come back one half kerf larger once cut.
@@ -157,13 +291,20 @@ export function generatePattern(
   const cutR = patternCutRadius(radius, options.kerf);
   const placed: PatternCircle[] = [];
 
+  // Built once per slice rather than once per candidate.
+  const band = options.band ?? 0;
+  const edges = new EdgeIndex(
+    input.contours,
+    Math.max(radius + minBridge, band > 0 ? band : 0, 2),
+  );
+
   const tryPlace = (lx: number, ly: number) => {
     // Lattice coordinates are rotated about the centre, not the origin, so a
     // turned pattern stays centred on the part.
     const x = centreX + lx * cos - ly * sin;
     const y = centreY + lx * sin + ly * cos;
     if (density < 1 && random() > density) return;
-    if (!holeFits(x, y, input, options, placed)) return;
+    if (!holeFits(x, y, input, options, placed, edges)) return;
     placed.push({ x, y, r: cutR, label: 'pattern' });
   };
 
@@ -200,7 +341,7 @@ export function generatePattern(
       const lx = (random() * 2 - 1) * reach;
       const ly = (random() * 2 - 1) * reach;
       // Density is applied through the attempt count here, not per candidate.
-      if (!holeFits(centreX + lx, centreY + ly, input, options, placed)) continue;
+      if (!holeFits(centreX + lx, centreY + ly, input, options, placed, edges)) continue;
       if (placed.length > 0 && random() > density) continue;
       placed.push({ x: centreX + lx, y: centreY + ly, r: cutR, label: 'pattern' });
     }
@@ -222,12 +363,13 @@ export function measuredBridge(
   kerf: number,
 ): number {
   let worst = Infinity;
+  const edges = new EdgeIndex(input.contours, 4);
 
   for (let i = 0; i < circles.length; i++) {
     const a = circles[i];
     const finishedA = a.r + kerf / 2;
 
-    const depth = -input.sample(a.x, a.y, input.z) - finishedA;
+    const depth = edges.distance(a.x, a.y, 1e6) - finishedA;
     if (depth < worst) worst = depth;
 
     for (const hole of input.existing) {

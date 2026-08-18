@@ -139,7 +139,7 @@ export function FeatureTree() {
           </button>
         </div>
         <button type="button" className="btn btn-wide" onClick={addPattern}>
-          Add wall pattern
+          Add perforation
         </button>
         <span className="foot-note">
           Order is evaluation order — drag a subtract below what it cuts into.

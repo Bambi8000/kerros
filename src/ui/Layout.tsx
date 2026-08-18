@@ -69,6 +69,7 @@ export function Layout() {
   const {
     set: slices,
     reports: sliceReports,
+    patternCounts,
     ms: sliceMs,
     pending: slicePending,
   } = useSlices(mode !== 'model');
@@ -248,7 +249,7 @@ export function Layout() {
               mode === 'sheet' ? (
                 <PartInspector sheets={sheets} />
               ) : (
-                <Inspector />
+                <Inspector patternCounts={patternCounts} sliced={slices !== null} />
               )
             ) : (
               <ProfilePanel slices={slices} reports={sliceReports} sheets={sheets} />
