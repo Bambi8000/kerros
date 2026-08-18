@@ -635,6 +635,23 @@ select {
   color: var(--k-warn);
 }
 
+.slice-note {
+  color: var(--k-text-dim);
+}
+
+.slice-bar .btn {
+  white-space: nowrap;
+}
+
+.slice-canvas-drag canvas {
+  cursor: grab;
+  touch-action: none;
+}
+
+.slice-canvas-drag canvas:active {
+  cursor: grabbing;
+}
+
 .field-check {
   gap: 8px;
 }

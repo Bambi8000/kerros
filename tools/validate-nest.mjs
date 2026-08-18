@@ -1,0 +1,690 @@
+#!/usr/bin/env node
+/**
+ * validate-nest.mjs
+ *
+ * Covers what M4 adds, against the real modules: the stroke font, spacer ring
+ * planning, label placement on parts with holes, and shelf nesting.
+ *
+ *   node tools/validate-nest.mjs
+ */
+
+import {
+  GLYPH_ADVANCE,
+  GLYPH_HEIGHT,
+  GLYPH_WIDTH,
+  textStrokes,
+  textWidth,
+  supportedCharacters,
+} from '../src/core/font.ts';
+
+import {
+  boundsOf,
+  findLabelSpot,
+  nestParts,
+  countParts,
+  applyPlacements,
+  findOverlaps,
+  analyseSheet,
+  clampPlacement,
+  partAt,
+  placedBox,
+} from '../src/core/nest.ts';
+
+import {
+  ringsPerGap,
+  spacerHeightAchieved,
+  spacerPlans,
+  circlePoints,
+  rodCutRadius,
+} from '../src/core/rig.ts';
+
+let failures = 0;
+
+function check(name, condition, detail = '') {
+  if (condition) {
+    console.log(`  ok    ${name}`);
+  } else {
+    failures++;
+    console.log(`  FAIL  ${name}${detail ? ' — ' + detail : ''}`);
+  }
+}
+
+const near = (a, b, tol) => Math.abs(a - b) <= tol;
+
+function ring(cx, cy, r, n = 200) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    pts.push(cx + r * Math.cos(a), cy + r * Math.sin(a));
+  }
+  return pts;
+}
+
+function rect(x, y, w, h) {
+  return [x, y, x + w, y, x + w, y + h, x, y + h];
+}
+
+console.log('font: glyph coverage and metrics');
+{
+  const chars = supportedCharacters();
+  check('all ten digits are present', '0123456789'.split('').every((c) => chars.includes(c)));
+  check('the full uppercase alphabet is present', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').every((c) => chars.includes(c)));
+
+  const every = chars.filter((c) => c !== ' ');
+  let emptyGlyphs = [];
+  let outOfBox = [];
+  for (const c of every) {
+    const strokes = textStrokes(c, 0, 0, GLYPH_HEIGHT);
+    if (strokes.length === 0) emptyGlyphs.push(c);
+    for (const stroke of strokes) {
+      for (let i = 0; i < stroke.length; i += 2) {
+        if (
+          stroke[i] < -1e-9 ||
+          stroke[i] > GLYPH_WIDTH + 1e-9 ||
+          stroke[i + 1] < -1e-9 ||
+          stroke[i + 1] > GLYPH_HEIGHT + 1e-9
+        ) {
+          outOfBox.push(c);
+        }
+      }
+    }
+  }
+  check('no glyph is blank', emptyGlyphs.length === 0, emptyGlyphs.join(''));
+  check('no glyph leaves its cell', outOfBox.length === 0, Array.from(new Set(outOfBox)).join(''));
+
+  check('a space draws nothing', textStrokes(' ', 0, 0, 5).length === 0);
+  check('an unknown character falls back rather than vanishing', textStrokes('\u00a7', 0, 0, 5).length > 0);
+  check('lowercase renders as uppercase', textStrokes('l', 0, 0, 5).length === textStrokes('L', 0, 0, 5).length);
+
+  check('every stroke has at least two points', textStrokes('KERROS 2026', 0, 0, 4).every((s) => s.length >= 4));
+}
+
+console.log('font: layout');
+{
+  const height = 4;
+  const scale = height / GLYPH_HEIGHT;
+
+  check('a single glyph is one cell wide', near(textWidth('8', height), GLYPH_WIDTH * scale, 1e-12));
+  check(
+    'three glyphs span two advances plus a cell',
+    near(textWidth('L07', height), (2 * GLYPH_ADVANCE + GLYPH_WIDTH) * scale, 1e-12),
+  );
+  check('an empty string has no width', textWidth('', height) === 0);
+
+  const strokes = textStrokes('L07', 10, 20, height);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const stroke of strokes) {
+    for (let i = 0; i < stroke.length; i += 2) {
+      minX = Math.min(minX, stroke[i]);
+      maxX = Math.max(maxX, stroke[i]);
+      minY = Math.min(minY, stroke[i + 1]);
+      maxY = Math.max(maxY, stroke[i + 1]);
+    }
+  }
+  check('text starts at the anchor', near(minX, 10, 1e-9) && near(minY, 20, 1e-9));
+  check('text is the height it says', near(maxY - minY, height, 1e-9));
+  check(
+    'rendered width matches the measured width',
+    near(maxX - minX, textWidth('L07', height), 1e-9),
+    `${(maxX - minX).toFixed(4)} vs ${textWidth('L07', height).toFixed(4)}`,
+  );
+  check(
+    'scaling is linear',
+    near(textWidth('LAYER 12', 8), 2 * textWidth('LAYER 12', 4), 1e-9),
+  );
+}
+
+console.log('spacers: ring counting');
+{
+  const base = { thickness: 3, spacerHeight: 6, kerf: 0.2, ringWidth: 4 };
+  check('a 6 mm gap in 3 mm material needs two rings', ringsPerGap(base) === 2);
+  check('the achieved gap is exactly two sheets', near(spacerHeightAchieved(base), 6, 1e-12));
+
+  const awkward = { ...base, spacerHeight: 6.5 };
+  check('an awkward height rounds to a whole number of rings', ringsPerGap(awkward) === 2);
+  check(
+    'and reports the gap you will actually get, not the one you asked for',
+    near(spacerHeightAchieved(awkward), 6, 1e-12),
+  );
+
+  check('a tight stack needs no rings', ringsPerGap({ ...base, spacerHeight: 0 }) === 0);
+  check('a gap thinner than the material still needs one ring', ringsPerGap({ ...base, spacerHeight: 1 }) === 1);
+
+  const rods = [
+    { id: 'a', label: 'Rod 1', size: 'M5', x: 40, y: 0, zStart: 0, zEnd: 100, diameter: 0 },
+    { id: 'b', label: 'Rod 2', size: 'M8', x: -40, y: 0, zStart: 0, zEnd: 20, diameter: 0 },
+    { id: 'c', label: 'Rod 3', size: 'M5', x: 0, y: 40, zStart: 500, zEnd: 600, diameter: 0 },
+  ];
+  const slices = [0, 10, 20, 30, 40].map((z) => ({ z, circles: [] }));
+
+  const plans = spacerPlans(rods, slices, base);
+  check('rods that reach the stack get plans', plans.length === 2, `${plans.length} plans`);
+
+  const full = plans.find((p) => p.rodId === 'a');
+  check('a rod through five layers has four gaps', full.gaps === 4);
+  check('four gaps at two rings each is eight rings', full.total === 8);
+  check(
+    'the bore matches the clearance hole on the slices',
+    near(full.innerR, rodCutRadius(5.3, 0.2), 1e-12),
+  );
+  check(
+    'the outside is the ring width past the rod, plus half a kerf',
+    near(full.outerR, 5.3 / 2 + 4 + 0.1, 1e-12),
+  );
+  check('the bore is smaller than the outside', full.innerR < full.outerR);
+
+  const short = plans.find((p) => p.rodId === 'b');
+  check('a rod through three layers has two gaps', short.gaps === 2);
+  check('a rod that misses the stack gets no plan', !plans.some((p) => p.rodId === 'c'));
+
+  const single = spacerPlans(
+    [{ ...rods[0], zStart: 0, zEnd: 0 }],
+    slices,
+    base,
+  );
+  check('a rod reaching one layer needs no spacers', single.length === 0);
+  check('tight stacking generates no spacers at all', spacerPlans(rods, slices, { ...base, spacerHeight: 0 }).length === 0);
+}
+
+console.log('spacers: circle points');
+{
+  const pts = circlePoints(0, 0, 10);
+  check('a circle closes with enough segments', pts.length / 2 >= 24);
+  let maxError = 0;
+  for (let i = 0; i < pts.length; i += 2) {
+    maxError = Math.max(maxError, Math.abs(Math.hypot(pts[i], pts[i + 1]) - 10));
+  }
+  check('vertices sit on the circle', maxError < 1e-9);
+
+  // Chord sag must stay under the tolerance, which is what segment count is for.
+  const n = pts.length / 2;
+  const sag = 10 * (1 - Math.cos(Math.PI / n));
+  check('chord sag is within tolerance', sag <= 0.02 + 1e-9, `${sag.toFixed(5)} mm`);
+  check('a tiny radius does not explode the segment count', circlePoints(0, 0, 0.01).length / 2 < 200);
+}
+
+console.log('nest: label placement');
+{
+  const annulus = {
+    id: 'p1',
+    label: 'L07',
+    kind: 'slice',
+    outer: ring(0, 0, 60),
+    holes: [ring(0, 0, 35)],
+    circles: [],
+  };
+
+  const spot = findLabelSpot(annulus, 12, 4);
+  check('a label finds the ring band', spot !== null);
+  if (spot) {
+    const r = Math.hypot(spot[0] + 6, spot[1] + 2);
+    check('and it is not in the central hole', r > 35, `radius ${r.toFixed(1)} mm`);
+    check('and not off the outside either', r < 60);
+  }
+
+  const tightRing = {
+    id: 'p2',
+    label: 'L08',
+    kind: 'slice',
+    outer: ring(0, 0, 40),
+    holes: [ring(0, 0, 39)],
+    circles: [],
+  };
+  check('a 1 mm band has nowhere for a 4 mm label', findLabelSpot(tightRing, 12, 4) === null);
+
+  const withRodHole = {
+    id: 'p3',
+    label: 'L09',
+    kind: 'slice',
+    outer: ring(0, 0, 40),
+    holes: [],
+    circles: [{ x: 0, y: 0, r: 30 }],
+  };
+  const avoided = findLabelSpot(withRodHole, 10, 4);
+  check('a label avoids a circular hole', avoided !== null && Math.hypot(avoided[0] + 5, avoided[1] + 2) > 30);
+
+  const disc = { id: 'p4', label: '1', kind: 'slice', outer: ring(0, 0, 50), holes: [], circles: [] };
+  const centred = findLabelSpot(disc, 4, 4);
+  check('on a plain disc the label lands near the centre', centred !== null && Math.hypot(centred[0], centred[1]) < 12);
+}
+
+console.log('nest: bounds follow what is actually cut');
+{
+  const r = 7;
+  const ringPart = {
+    id: 's1',
+    label: 'M5',
+    kind: 'spacer',
+    outer: circlePoints(0, 0, r),
+    outerCircle: { x: 0, y: 0, r },
+    holes: [],
+    circles: [{ x: 0, y: 0, r: 2.5 }],
+  };
+
+  const box = boundsOf(ringPart);
+  check('a circular part is bounded by its circle', near(box.maxX - box.minX, 2 * r, 1e-12));
+
+  // The stand-in polygon is inscribed, so its bounding box is never larger
+  // than the circle's and in at least one axis is strictly smaller — vertices
+  // land on the circle, but the extremes between them fall short. Bounding by
+  // the polygon would let the exported CIRCLE overhang the sheet by that much.
+  const pts = ringPart.outer;
+  let pMinX = Infinity;
+  let pMaxX = -Infinity;
+  let pMinY = Infinity;
+  let pMaxY = -Infinity;
+  for (let i = 0; i < pts.length; i += 2) {
+    pMinX = Math.min(pMinX, pts[i]);
+    pMaxX = Math.max(pMaxX, pts[i]);
+    pMinY = Math.min(pMinY, pts[i + 1]);
+    pMaxY = Math.max(pMaxY, pts[i + 1]);
+  }
+  check(
+    'the polygon never reaches outside the circle',
+    pMinX >= -r - 1e-9 && pMaxX <= r + 1e-9 && pMinY >= -r - 1e-9 && pMaxY <= r + 1e-9,
+  );
+  check(
+    'and falls short of it in at least one axis',
+    pMaxX - pMinX < 2 * r - 1e-9 || pMaxY - pMinY < 2 * r - 1e-9,
+    `polygon ${(pMaxX - pMinX).toFixed(5)} x ${(pMaxY - pMinY).toFixed(5)}, circle ${(2 * r).toFixed(5)}`,
+  );
+
+  const nested = nestParts([ringPart], {
+    sheetWidth: 2 * r,
+    sheetHeight: 2 * r,
+    gap: 0,
+    labelHeight: 0,
+  });
+  check('a circular part exactly the size of the sheet still fits', nested.sheets.length === 1);
+  const placed = nested.sheets[0].parts[0];
+  check(
+    'and its true circle lands inside the sheet',
+    placed.outerCircle.x + placed.dx - r >= -1e-9 &&
+      placed.outerCircle.x + placed.dx + r <= 2 * r + 1e-9,
+  );
+}
+
+console.log('nest: shelf packing');
+{
+  const options = { sheetWidth: 720, sheetHeight: 400, gap: 4, labelHeight: 4 };
+
+  const parts = [];
+  for (let i = 0; i < 12; i++) {
+    parts.push({
+      id: `p${i}`,
+      label: `L${String(i + 1).padStart(2, '0')}`,
+      kind: 'slice',
+      outer: ring(0, 0, 60 - i * 2),
+      holes: [ring(0, 0, 30 - i)],
+      circles: [],
+      layer: i + 1,
+    });
+  }
+
+  const result = nestParts(parts, options);
+  check('everything is placed', result.unplaced.length === 0);
+  check('all parts are accounted for', countParts(result.sheets) === parts.length);
+  check('twelve small rings fit on one sheet', result.sheets.length === 1, `${result.sheets.length} sheets`);
+
+  const sheet = result.sheets[0];
+  for (const part of sheet.parts) {
+    const box = boundsOf(part);
+    const x0 = box.minX + part.dx;
+    const y0 = box.minY + part.dy;
+    const x1 = box.maxX + part.dx;
+    const y1 = box.maxY + part.dy;
+    check(
+      `${part.label} sits inside the sheet`,
+      x0 >= -1e-9 && y0 >= -1e-9 && x1 <= options.sheetWidth + 1e-9 && y1 <= options.sheetHeight + 1e-9,
+    );
+  }
+
+  // No two bounding boxes may overlap, allowing for the gap.
+  let overlaps = 0;
+  for (let i = 0; i < sheet.parts.length; i++) {
+    for (let j = i + 1; j < sheet.parts.length; j++) {
+      const a = sheet.parts[i];
+      const b = sheet.parts[j];
+      const ax0 = a.bbox.minX + a.dx;
+      const ax1 = a.bbox.maxX + a.dx;
+      const ay0 = a.bbox.minY + a.dy;
+      const ay1 = a.bbox.maxY + a.dy;
+      const bx0 = b.bbox.minX + b.dx;
+      const bx1 = b.bbox.maxX + b.dx;
+      const by0 = b.bbox.minY + b.dy;
+      const by1 = b.bbox.maxY + b.dy;
+      const separated =
+        ax1 <= bx0 + 1e-9 || bx1 <= ax0 + 1e-9 || ay1 <= by0 + 1e-9 || by1 <= ay0 + 1e-9;
+      if (!separated) overlaps++;
+    }
+  }
+  check('no two parts overlap', overlaps === 0, `${overlaps} overlapping pairs`);
+
+  check('every part got a label spot', sheet.parts.every((p) => p.labelAt !== null));
+  check('fill is reported and sane', sheet.fill > 0 && sheet.fill <= 1);
+
+  const many = [];
+  for (let i = 0; i < 60; i++) {
+    many.push({ id: `q${i}`, label: `${i}`, kind: 'slice', outer: ring(0, 0, 90), holes: [], circles: [] });
+  }
+  const spread = nestParts(many, options);
+  check('a big job spills onto several sheets', spread.sheets.length > 1, `${spread.sheets.length} sheets`);
+  check('and still places everything', spread.unplaced.length === 0 && countParts(spread.sheets) === 60);
+  check('sheets are numbered from one', spread.sheets.every((s, i) => s.index === i + 1));
+
+  const oversized = nestParts(
+    [{ id: 'huge', label: 'X', kind: 'slice', outer: rect(0, 0, 900, 100), holes: [], circles: [] }],
+    options,
+  );
+  check('a part too big for the bed is reported, not silently dropped', oversized.unplaced.length === 1);
+  check('and it does not create an empty sheet', oversized.sheets.length === 0);
+
+  const empty = nestParts([], options);
+  check('an empty job nests to nothing', empty.sheets.length === 0 && empty.unplaced.length === 0);
+
+  const runA = nestParts(parts, options);
+  const runB = nestParts(parts, options);
+  check(
+    'nesting is deterministic',
+    JSON.stringify(runA.sheets.map((s) => s.parts.map((p) => [p.id, p.dx, p.dy]))) ===
+      JSON.stringify(runB.sheets.map((s) => s.parts.map((p) => [p.id, p.dx, p.dy]))),
+  );
+
+  const noGap = nestParts(parts, { ...options, gap: 0 });
+  const wideGap = nestParts(parts, { ...options, gap: 40 });
+  check(
+    'a wider part gap uses at least as much room',
+    wideGap.sheets.length >= noGap.sheets.length,
+  );
+}
+
+console.log('nest: manual placement');
+{
+  const options = { sheetWidth: 400, sheetHeight: 300, gap: 4, labelHeight: 0 };
+  const parts = [0, 1, 2].map((i) => ({
+    id: `m${i}`,
+    label: `L${i}`,
+    kind: 'slice',
+    outer: ring(0, 0, 40),
+    holes: [],
+    circles: [],
+  }));
+
+  const auto = nestParts(parts, options);
+  check('three parts nest onto one sheet', auto.sheets.length === 1);
+
+  const untouched = applyPlacements(auto, {});
+  check('no placements leaves the layout alone', untouched === auto);
+
+  const moved = applyPlacements(auto, { m1: { sheet: 1, dx: 200, dy: 200 } });
+  const target = moved.sheets[0].parts.find((p) => p.id === 'm1');
+  check('a placed part moves where it was put', target.dx === 200 && target.dy === 200);
+  check('and is marked pinned', target.pinned === true);
+  check('its neighbours are not pinned', moved.sheets[0].parts.filter((p) => p.pinned).length === 1);
+  check('part count is unchanged', countParts(moved.sheets) === 3);
+
+  const twoSheets = nestParts(
+    [0, 1, 2, 3, 4, 5].map((i) => ({
+      id: `n${i}`,
+      label: `${i}`,
+      kind: 'slice',
+      outer: ring(0, 0, 90),
+      holes: [],
+      circles: [],
+    })),
+    options,
+  );
+  check('six large parts need more than one sheet', twoSheets.sheets.length > 1);
+
+  const shifted = applyPlacements(twoSheets, { n0: { sheet: 2, dx: 100, dy: 100 } });
+  check(
+    'a part can be moved to another sheet',
+    shifted.sheets[1].parts.some((p) => p.id === 'n0') &&
+      !shifted.sheets[0].parts.some((p) => p.id === 'n0'),
+  );
+  check('and nothing is lost in the move', countParts(shifted.sheets) === 6);
+
+  const clamped = applyPlacements(twoSheets, { n0: { sheet: 99, dx: 0, dy: 0 } });
+  check(
+    'a placement naming a sheet that does not exist is clamped, not dropped',
+    countParts(clamped.sheets) === 6 &&
+      clamped.sheets[clamped.sheets.length - 1].parts.some((p) => p.id === 'n0'),
+  );
+
+  check('fill is recomputed after moving parts', moved.sheets[0].fill > 0 && moved.sheets[0].fill <= 1);
+}
+
+console.log('nest: overlap detection');
+{
+  const options = { sheetWidth: 400, sheetHeight: 300, gap: 4, labelHeight: 0 };
+  const parts = [0, 1].map((i) => ({
+    id: `o${i}`,
+    label: `${i}`,
+    kind: 'slice',
+    outer: ring(0, 0, 40),
+    holes: [],
+    circles: [],
+  }));
+  const auto = nestParts(parts, options);
+  check('an automatic layout has no overlaps', findOverlaps(auto.sheets[0]).length === 0);
+
+  const stacked = applyPlacements(auto, {
+    o0: { sheet: 1, dx: 40, dy: 40 },
+    o1: { sheet: 1, dx: 45, dy: 40 },
+  });
+  const hits = findOverlaps(stacked.sheets[0]);
+  check('two parts placed on top of each other are flagged', hits.length === 2);
+  check('and both ids are named', hits.includes('o0') && hits.includes('o1'));
+
+  const apart = applyPlacements(auto, {
+    o0: { sheet: 1, dx: 40, dy: 40 },
+    o1: { sheet: 1, dx: 300, dy: 40 },
+  });
+  check('parts moved clear of each other are not flagged', findOverlaps(apart.sheets[0]).length === 0);
+
+  const touching = applyPlacements(auto, {
+    o0: { sheet: 1, dx: 40, dy: 40 },
+    o1: { sheet: 1, dx: 120, dy: 40 },
+  });
+  check('boxes that exactly touch are not an overlap', findOverlaps(touching.sheets[0]).length === 0);
+}
+
+console.log('nest: true-shape collision');
+{
+  const options = { sheetWidth: 400, sheetHeight: 300, gap: 4, labelHeight: 0 };
+
+  // An L-shaped part and a square nested into its notch. Exact geometry, so
+  // the measured gap is a number the test can assert on. This is the crescent
+  // case from a real sheet: the bounding boxes overlap completely, the material
+  // never touches, and nesting one into the other is good practice.
+  const ell = {
+    id: 'cA',
+    label: 'A',
+    kind: 'slice',
+    outer: [0, 0, 40, 0, 40, 10, 10, 10, 10, 40, 0, 40],
+    holes: [],
+    circles: [],
+  };
+  const block = {
+    id: 'cB',
+    label: 'B',
+    kind: 'slice',
+    outer: [0, 0, 26, 0, 26, 26, 0, 26],
+    holes: [],
+    circles: [],
+  };
+
+  const auto = nestParts([ell, block], options);
+
+  // The square sits in the L's notch with 2 mm all round.
+  const nestedIn = applyPlacements(auto, {
+    cA: { sheet: 1, dx: 100, dy: 100 },
+    cB: { sheet: 1, dx: 112, dy: 112 },
+  });
+  const sheet = nestedIn.sheets[0];
+
+  check(
+    'the bounding-box check flags the nested pair',
+    findOverlaps(sheet).length === 2,
+    'boxes overlap completely, which is exactly why the box check is not enough',
+  );
+
+  const report = analyseSheet(sheet, 0);
+  check(
+    'the true-shape check does not, because the material never touches',
+    report.colliding.length === 0,
+    `closest ${report.closest.toFixed(3)} mm`,
+  );
+  check(
+    'and it measures the real gap',
+    Math.abs(report.closest - 2) < 1e-6,
+    `got ${report.closest.toFixed(4)} mm, expected 2`,
+  );
+  check(
+    'a 4 mm clearance requirement flags the same pair as tight',
+    analyseSheet(sheet, 4).tight.length === 2,
+  );
+
+  const stacked = applyPlacements(auto, {
+    cA: { sheet: 1, dx: 100, dy: 100 },
+    cB: { sheet: 1, dx: 100, dy: 100 },
+  });
+  const crash = analyseSheet(stacked.sheets[0], 0);
+  check('two parts genuinely on top of each other collide', crash.colliding.length === 2);
+  check('a colliding pair reports zero distance', crash.pairs[0].distance === 0 && crash.pairs[0].colliding);
+
+  const clear = applyPlacements(auto, {
+    cA: { sheet: 1, dx: 60, dy: 150 },
+    cB: { sheet: 1, dx: 330, dy: 150 },
+  });
+  const fine = analyseSheet(clear.sheets[0], 4);
+  check('parts on opposite ends of the sheet are neither colliding nor tight', fine.colliding.length === 0 && fine.tight.length === 0);
+  check('and no pairs are worth reporting', fine.pairs.length === 0);
+
+  // Clearance: two discs 2 mm apart, with a 4 mm requirement.
+  const discs = [0, 1].map((i) => ({
+    id: `d${i}`,
+    label: `${i}`,
+    kind: 'slice',
+    outer: ring(0, 0, 20),
+    holes: [],
+    circles: [],
+  }));
+  const discAuto = nestParts(discs, options);
+  const near2 = applyPlacements(discAuto, {
+    d0: { sheet: 1, dx: 100, dy: 150 },
+    d1: { sheet: 1, dx: 142, dy: 150 },
+  });
+  const tightReport = analyseSheet(near2.sheets[0], 4);
+  check('discs 2 mm apart are not colliding', tightReport.colliding.length === 0);
+  check('but they are flagged as tight against a 4 mm clearance', tightReport.tight.length === 2);
+  check(
+    'and the measured gap is about 2 mm',
+    Math.abs(tightReport.closest - 2) < 0.2,
+    `got ${tightReport.closest.toFixed(3)} mm`,
+  );
+  check(
+    'with no clearance required they pass',
+    analyseSheet(near2.sheets[0], 0).tight.length === 0,
+  );
+
+  // A small part sitting inside a ring's hole is fine, not a collision.
+  const bigRing = {
+    id: 'ring',
+    label: 'R',
+    kind: 'slice',
+    outer: ring(0, 0, 60),
+    holes: [ring(0, 0, 40)],
+    circles: [],
+  };
+  const tiny = { id: 'tiny', label: 'T', kind: 'slice', outer: ring(0, 0, 15), holes: [], circles: [] };
+  const inWaste = applyPlacements(nestParts([bigRing, tiny], options), {
+    ring: { sheet: 1, dx: 150, dy: 150 },
+    tiny: { sheet: 1, dx: 150, dy: 150 },
+  });
+  const wasteReport = analyseSheet(inWaste.sheets[0], 0);
+  check(
+    'a small part inside a ring hole is not a collision',
+    wasteReport.colliding.length === 0,
+    `closest ${wasteReport.closest.toFixed(2)} mm`,
+  );
+
+  const onTop = applyPlacements(nestParts([bigRing, tiny], options), {
+    ring: { sheet: 1, dx: 150, dy: 150 },
+    tiny: { sheet: 1, dx: 150 + 50, dy: 150 },
+  });
+  check(
+    'but a small part sitting on the ring band is',
+    analyseSheet(onTop.sheets[0], 0).colliding.length === 2,
+  );
+}
+
+console.log('nest: clamping and hit testing');
+{
+  const options = { sheetWidth: 400, sheetHeight: 300, gap: 4, labelHeight: 0 };
+  const annulus = {
+    id: 'h1',
+    label: 'L1',
+    kind: 'slice',
+    outer: ring(0, 0, 60),
+    holes: [ring(0, 0, 35)],
+    circles: [],
+  };
+  const small = {
+    id: 'h2',
+    label: 'L2',
+    kind: 'slice',
+    outer: ring(0, 0, 10),
+    holes: [],
+    circles: [],
+  };
+
+  const auto = nestParts([annulus, small], options);
+  const part = auto.sheets[0].parts.find((p) => p.id === 'h1');
+
+  // dx is a translation, not a position: the ring's box starts at -60, so a
+  // translation below 60 would push its left edge off the sheet.
+  const [insideX, insideY] = clampPlacement(part, 70, 80, options.sheetWidth, options.sheetHeight);
+  check('a placement fully inside the sheet is left alone', insideX === 70 && insideY === 80);
+  const [tooSmallX] = clampPlacement(part, 10, 80, options.sheetWidth, options.sheetHeight);
+  check(
+    'a translation that would hang the part off the edge is pulled back',
+    tooSmallX === 60,
+    `got ${tooSmallX}`,
+  );
+
+  const [pushedX, pushedY] = clampPlacement(part, -500, -500, options.sheetWidth, options.sheetHeight);
+  const pushed = { ...part, dx: pushedX, dy: pushedY };
+  const box = placedBox(pushed);
+  check('dragging off the left edge clamps to it', box.minX >= -1e-9 && box.minY >= -1e-9);
+
+  const [farX, farY] = clampPlacement(part, 5000, 5000, options.sheetWidth, options.sheetHeight);
+  const far = placedBox({ ...part, dx: farX, dy: farY });
+  check(
+    'dragging off the far edge clamps to it',
+    far.maxX <= options.sheetWidth + 1e-9 && far.maxY <= options.sheetHeight + 1e-9,
+  );
+
+  const centred = applyPlacements(auto, {
+    h1: { sheet: 1, dx: 200, dy: 150 },
+    h2: { sheet: 1, dx: 200, dy: 150 },
+  });
+  const sheet = centred.sheets[0];
+
+  check('a click on the ring band hits the ring', partAt(sheet, 200 + 47, 150).id === 'h1');
+  check(
+    'a click in the middle hits the small part sitting in the waste, not the ring',
+    partAt(sheet, 200, 150).id === 'h2',
+  );
+  check('a click on empty sheet hits nothing', partAt(sheet, 5, 5) === null);
+}
+
+console.log('');
+if (failures > 0) {
+  console.error(`FAIL  ${failures} check(s) failed`);
+  process.exit(1);
+}
+console.log('OK    font, spacers and nesting');

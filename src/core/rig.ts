@@ -124,3 +124,101 @@ export function rodLayerCount(rod: RodSpec, slices: SliceLike[]): number {
   for (const slice of slices) if (rodSpansZ(rod, slice.z)) count++;
   return count;
 }
+
+/* ------------------------------------------------------------------ *
+ * Spacer rings
+ * ------------------------------------------------------------------ */
+
+export interface SpacerPlan {
+  rodId: string;
+  label: string;
+  /** Cut radius of the bore, kerf-compensated. */
+  innerR: number;
+  /** Cut radius of the outside, kerf-compensated. */
+  outerR: number;
+  /** Gaps this rod has to fill. */
+  gaps: number;
+  /** Rings stacked in each gap to reach the spacer height. */
+  ringsPerGap: number;
+  /** gaps x ringsPerGap. */
+  total: number;
+}
+
+export interface SpacerOptions {
+  /** Material thickness, mm — one ring is this tall. */
+  thickness: number;
+  /** Requested gap between sheets, mm. */
+  spacerHeight: number;
+  kerf: number;
+  /** Radial width of the ring, mm. */
+  ringWidth: number;
+}
+
+/**
+ * How many rings each gap needs.
+ *
+ * The handoff says one ring per gap, and that is wrong the moment the spacer
+ * height is not the material thickness: a 6 mm gap cut from 3 mm plexi needs
+ * two rings stacked, not one. Rings can only come in whole material
+ * thicknesses, so the achievable gap is `ringsPerGap x thickness` — which is
+ * why `spacerHeightAchieved` exists and why the UI warns when it does not
+ * match what was asked for. Getting this wrong means the stack does not go
+ * together with the parts you cut.
+ */
+export function ringsPerGap(options: SpacerOptions): number {
+  if (options.spacerHeight <= 0 || options.thickness <= 0) return 0;
+  return Math.max(1, Math.round(options.spacerHeight / options.thickness));
+}
+
+/** The gap you will actually get, given rings can only be whole sheets thick. */
+export function spacerHeightAchieved(options: SpacerOptions): number {
+  return ringsPerGap(options) * options.thickness;
+}
+
+/**
+ * Ring parts needed for every rod.
+ *
+ * A rod spanning n layers has n-1 gaps between them. A rod that reaches one
+ * layer or none needs no spacers at all.
+ */
+export function spacerPlans(
+  rods: RodSpec[],
+  slices: SliceLike[],
+  options: SpacerOptions,
+): SpacerPlan[] {
+  const perGap = ringsPerGap(options);
+  if (perGap === 0) return [];
+
+  const plans: SpacerPlan[] = [];
+  for (const rod of rods) {
+    const layers = rodLayerCount(rod, slices);
+    const gaps = Math.max(layers - 1, 0);
+    if (gaps === 0) continue;
+
+    const diameter = rodDiameter(rod);
+    plans.push({
+      rodId: rod.id,
+      label: rod.label,
+      innerR: rodCutRadius(diameter, options.kerf),
+      // The outside is an outer boundary, so it grows by half a kerf.
+      outerR: diameter / 2 + Math.max(options.ringWidth, 0.5) + options.kerf / 2,
+      gaps,
+      ringsPerGap: perGap,
+      total: gaps * perGap,
+    });
+  }
+  return plans;
+}
+
+/** A circle as a closed ring, fine enough that the chord error is invisible. */
+export function circlePoints(cx: number, cy: number, r: number, tolerance = 0.02): number[] {
+  const safe = Math.max(r, 0.05);
+  const ratio = Math.min(Math.max(1 - tolerance / safe, -1), 1);
+  const segments = Math.max(24, Math.ceil(Math.PI / Math.acos(ratio)));
+  const points: number[] = [];
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    points.push(cx + safe * Math.cos(a), cy + safe * Math.sin(a));
+  }
+  return points;
+}

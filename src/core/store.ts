@@ -10,6 +10,7 @@ import { DEFAULT_MACHINE, DEFAULT_MATERIAL, DEFAULT_STACK } from './profiles';
 import { defaultParams, findModule, modelBounds } from './sdf';
 import { ROD_CLEARANCE } from './rig';
 import type { RodSpec } from './rig';
+import type { PartPlacement } from './nest';
 
 export type ViewName = 'persp' | 'top' | 'front' | 'side';
 
@@ -17,7 +18,7 @@ export type ViewName = 'persp' | 'top' | 'front' | 'side';
 export const PREVIEW_RESOLUTIONS = [32, 48, 64, 96, 128];
 
 /** What the workspace is showing. */
-export type WorkspaceMode = 'model' | 'slice' | 'stack';
+export type WorkspaceMode = 'model' | 'slice' | 'stack' | 'sheet';
 
 /** Samples along the longest XY axis when slicing. */
 export const SLICE_RESOLUTIONS = [120, 200, 300, 420];
@@ -73,6 +74,23 @@ interface KerrosState {
    * are flagged in the inspector rather than quietly exported.
    */
   minFeature: number;
+  /** Space left between parts when nesting, mm. */
+  partGap: number;
+  /** Engraved label height, mm. 0 turns labelling off. */
+  labelHeight: number;
+  /** Radial width of a spacer ring, mm. */
+  ringWidth: number;
+  /** Generate spacer rings as cut parts. */
+  makeSpacers: boolean;
+  /** 1-based sheet shown in the sheet view. */
+  currentSheet: number;
+  /**
+   * Manual part placements, keyed by part id. Part ids are deterministic, so
+   * a pinned part stays put across re-slicing and re-nesting.
+   */
+  partPlacements: Record<string, PartPlacement>;
+  /** Part selected in the sheet view. Separate from the feature selection. */
+  selectedPartId: string | null;
   /**
    * Slice inspector: refit the view to each layer as you step through.
    * Off by default — a fixed scale is what shows the form narrowing.
@@ -108,6 +126,15 @@ interface KerrosState {
   setHideAbove: (hide: boolean) => void;
   setSliceFitToLayer: (fit: boolean) => void;
   setMinFeature: (mm: number) => void;
+  setPartGap: (mm: number) => void;
+  setLabelHeight: (mm: number) => void;
+  setRingWidth: (mm: number) => void;
+  setMakeSpacers: (on: boolean) => void;
+  setCurrentSheet: (sheet: number) => void;
+  selectPart: (id: string | null) => void;
+  setPartPlacement: (id: string, placement: PartPlacement) => void;
+  clearPartPlacement: (id: string) => void;
+  clearAllPlacements: () => void;
   setGizmoMode: (mode: GizmoMode) => void;
   setSnapEnabled: (enabled: boolean) => void;
   setSeed: (seed: number) => void;
@@ -138,6 +165,13 @@ export const useKerros = create<KerrosState>((set) => ({
   hideAbove: false,
   sliceFitToLayer: false,
   minFeature: 1,
+  partGap: 4,
+  labelHeight: 4,
+  ringWidth: 4,
+  makeSpacers: true,
+  currentSheet: 1,
+  partPlacements: {},
+  selectedPartId: null,
   seed: 1,
 
   addShape: (moduleKey) =>
@@ -280,6 +314,26 @@ export const useKerros = create<KerrosState>((set) => ({
   setHideAbove: (hideAbove) => set({ hideAbove }),
   setSliceFitToLayer: (sliceFitToLayer) => set({ sliceFitToLayer }),
   setMinFeature: (minFeature) => set({ minFeature: Math.max(minFeature, 0) }),
+  setPartGap: (partGap) => set({ partGap: Math.max(partGap, 0) }),
+  setLabelHeight: (labelHeight) => set({ labelHeight: Math.max(labelHeight, 0) }),
+  setRingWidth: (ringWidth) => set({ ringWidth: Math.max(ringWidth, 0.5) }),
+  setMakeSpacers: (makeSpacers) => set({ makeSpacers }),
+  setCurrentSheet: (currentSheet) => set({ currentSheet: Math.max(1, Math.round(currentSheet)) }),
+
+  selectPart: (selectedPartId) => set({ selectedPartId }),
+
+  setPartPlacement: (id, placement) =>
+    set((s) => ({ partPlacements: { ...s.partPlacements, [id]: placement } })),
+
+  clearPartPlacement: (id) =>
+    set((s) => {
+      if (!(id in s.partPlacements)) return s;
+      const next = { ...s.partPlacements };
+      delete next[id];
+      return { partPlacements: next };
+    }),
+
+  clearAllPlacements: () => set({ partPlacements: {} }),
   setGizmoMode: (gizmoMode) => set({ gizmoMode }),
   setSnapEnabled: (snapEnabled) => set({ snapEnabled }),
   setSeed: (seed) => set({ seed }),

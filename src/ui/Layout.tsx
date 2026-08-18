@@ -6,7 +6,9 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { FeatureTree } from './FeatureTree';
 import { Inspector } from './Inspector';
 import { ProfilePanel } from './ProfilePanel';
+import { SheetView } from './SheetView';
 import { SliceInspector } from './SliceInspector';
+import { useSheets } from './useSheets';
 import { Viewport } from './Viewport';
 import { useSlices } from './useSlices';
 
@@ -26,6 +28,7 @@ const MODE_TABS: { key: WorkspaceMode; label: string }[] = [
   { key: 'model', label: 'Model' },
   { key: 'slice', label: 'Slice' },
   { key: 'stack', label: 'Stack' },
+  { key: 'sheet', label: 'Sheet' },
 ];
 
 const DISPLAYS: { key: DisplayMode; label: string; hint: string }[] = [
@@ -63,6 +66,7 @@ export function Layout() {
     ms: sliceMs,
     pending: slicePending,
   } = useSlices(mode !== 'model');
+  const sheets = useSheets(slices);
   const layerCount = slices?.slices.length ?? 0;
 
   // Picking a feature is a request to edit it, so bring the inspector forward.
@@ -79,7 +83,7 @@ export function Layout() {
   // down the stack is the same gesture whether you are looking at a single
   // layer in 2D or at the whole assembly.
   useEffect(() => {
-    if (mode === 'model' || layerCount === 0) return;
+    if (mode === 'model' || mode === 'sheet' || layerCount === 0) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
       const el = document.activeElement;
@@ -138,8 +142,10 @@ export function Layout() {
             <button
               key={v.key}
               type="button"
-              disabled={mode === 'slice'}
-              className={`view-btn${view === v.key && mode !== 'slice' ? ' is-active' : ''}`}
+              disabled={mode === 'slice' || mode === 'sheet'}
+              className={`view-btn${
+                view === v.key && mode !== 'slice' && mode !== 'sheet' ? ' is-active' : ''
+              }`}
               onClick={() => setView(v.key)}
             >
               {v.label}
@@ -200,7 +206,15 @@ export function Layout() {
           <FeatureTree />
         </ErrorBoundary>
 
-        <ErrorBoundary label={mode === 'slice' ? 'Slice inspector' : 'Viewport'}>
+        <ErrorBoundary
+          label={
+            mode === 'slice'
+              ? 'Slice inspector'
+              : mode === 'sheet'
+                ? 'Sheet view'
+                : 'Viewport'
+          }
+        >
           {mode === 'slice' ? (
             <SliceInspector
               slices={slices}
@@ -208,6 +222,8 @@ export function Layout() {
               ms={sliceMs}
               pending={slicePending}
             />
+          ) : mode === 'sheet' ? (
+            <SheetView sheets={sheets} pending={slicePending} />
           ) : (
             <Viewport slices={slices} />
           )}
@@ -235,7 +251,7 @@ export function Layout() {
             {tab === 'inspector' ? (
               <Inspector />
             ) : (
-              <ProfilePanel slices={slices} reports={sliceReports} />
+              <ProfilePanel slices={slices} reports={sliceReports} sheets={sheets} />
             )}
           </ErrorBoundary>
         </section>

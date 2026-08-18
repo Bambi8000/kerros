@@ -185,6 +185,20 @@ span, which makes them clickable — they get first refusal on a raycast, since
 otherwise a rod inside the form could never be selected. Rotation is disabled
 for them, because rotating a rod about its own axis means nothing.
 
+### Spacer rings — M4
+
+`spacerPlans()` in `src/core/rig.ts`. Per rod: bore = the rod's clearance cut
+radius, outside = rod radius + ring width + half a kerf. A rod spanning n
+layers has n−1 gaps; a rod reaching one layer or none needs no spacers.
+
+**The handoff says one ring per gap, and that is wrong.** A ring can only be a
+whole sheet thick, so a 6 mm gap cut from 3 mm plexi needs **two** rings
+stacked, not one. `ringsPerGap()` computes the count and
+`spacerHeightAchieved()` reports the gap you will actually get. When the
+requested spacer height is not a multiple of the material thickness the
+profiles panel says so plainly, because the failure mode is a stack that will
+not close on the rods after everything is already cut.
+
 ### A rod hole has to fit
 
 `circleFitsInPart()` decides whether a clearance hole genuinely lands inside a
@@ -314,12 +328,140 @@ accident.
 
 ## PATTERN — planned (M7)
 
-## LAYOUT — planned (M4)
+## LAYOUT — **shipped** (M4)
 
-## EXPORT — **shipped in part** (M3)
+`src/core/nest.ts`, plus the stroke font in `src/core/font.ts`.
 
-`src/core/dxf.ts`. One layer per file now; nesting several layers onto a
-bed-sized sheet is M4.
+### Shelf packing
+
+First-fit decreasing-height on bounding boxes: parts sorted tallest first,
+placed left to right along a shelf, a new shelf opening above at the height of
+the tallest part below it. Not optimal, but deterministic, instant, and legible
+— you can look at the sheet and see why each part is where it is. Ties break on
+part id so the same job always nests identically. True-shape nesting, which
+would let a small part sit inside a large ring's waste, stays on the roadmap.
+
+**Parts are not rotated.** For lamp slices, which are mostly round, rotation
+buys nothing and costs determinism.
+
+Parts too large for the bed go into `unplaced` and are reported, never
+silently dropped. `maxSheets` (default 60) stops a runaway job.
+
+### Bounds follow what is actually cut
+
+`boundsOf()` uses a part's true circle when it has one, not the polygon
+standing in for it. Spacer rings are exported as exact `CIRCLE` entities but
+carry a polygonised outline for preview and label fitting; that polygon is
+**inscribed**, so it is up to the chord tolerance smaller than the circle.
+Bounding by the polygon let a ring overhang the sheet edge by 0.02 mm — found
+by an end-to-end run that measured the DXF extents against the usable area,
+and now pinned by a validator.
+
+### Label placement
+
+The centre of a lamp slice is usually a hole, so the obvious spot is wrong most
+of the time. `findLabelSpot()` scans candidate positions across the bounding
+box, tests all four corners and the centre of the text box against the outer
+ring, every hole and every circular hole, and picks the valid position nearest
+the part centre. If nothing fits, the height is reduced to 60% and retried —
+a small number on the part beats no number — and only then is the part left
+unlabelled and counted in the sheet readout.
+
+### Stroke font
+
+`src/core/font.ts`. **Engraved text goes out as polylines, never as the DXF
+TEXT entity**: laser front-ends treat TEXT inconsistently, and a layer number
+that renders as a filled outline on one machine and as nothing at all on
+another is worse than useless.
+
+Glyphs sit on a 3 × 5 cell with the origin at the baseline left, advance 4.
+Digits are drawn seven-segment style, which stays readable at 3 mm on scorched
+plywood where a stylised 6 or 9 does not. A–Z and a few symbols are stroked.
+Unknown characters render as a hyphen rather than vanishing, so a wrong label
+is visible instead of silent.
+
+### Sheet view
+
+A fourth workspace mode. The **whole bed is always in view**, never zoomed to
+the parts: nesting is about the bed, and a view that framed the parts would
+hide the free space, which is the thing you are judging. Cuts draw in CUT red,
+labels in ENGRAVE blue as the actual strokes that will be burned.
+
+### Manual placement — M4.1
+
+Automatic nesting is a starting point; the last stretch of a real sheet is
+always done by eye. Parts can be dragged in the sheet view, nudged with the
+arrow keys (1 mm, or 10 mm with Shift), and moved between sheets.
+
+A dragged part becomes **pinned**: `applyPlacements()` runs after the nester,
+so re-slicing or changing the part gap rearranges everything except what a
+person deliberately put somewhere. Placements are keyed by part id, and part
+ids are deterministic (`slice-7-0`, `spacer-r1-3`), so a pin survives a
+re-slice. A placement naming a sheet that no longer exists is clamped into
+range rather than dropped — shrinking a job must not silently lose parts.
+
+**Overlap is not prevented.** A person dragging a part has a reason, and the
+honest response is to show what happened rather than refuse the drag. The check
+is a warning, not a lock, and export writes exactly what is on the sheet.
+
+### What the collision check actually measures — M4.2
+
+`analyseSheet()` measures the **real geometry**: closest approach between
+outlines, segment to segment, plus a containment test for the case where one
+part sits wholly on another's material without any outline crossing.
+
+Bounding boxes cannot answer the question, and the first version of this check
+used them, which was wrong in the most common case. A crescent nested into
+another crescent's concavity shares a bounding box completely and cuts
+perfectly — that is good nesting, not an error. Meanwhile two discs whose boxes
+barely touch can still be half a millimetre apart and char into each other.
+The validator pins both cases: an L-shaped part with a square in its notch
+reports 2.00 mm and no collision, while the same pair stacked reports a
+collision.
+
+Three states, three treatments:
+
+- **Colliding** — the outlines meet or one part is on the other's material.
+  Amber outline, counted in the readout, warned about in the profiles panel.
+- **Tight** — no overlap, but closer than the part gap. Dimmed outline and the
+  measured distance in the readout. Worth a look only if the material chars
+  easily.
+- **Clear** — nothing said, but the closest approach on the sheet is always
+  shown, because that number is what tells you whether a hand-placed layout is
+  actually safe.
+
+A part sitting inside a ring's hole is explicitly **not** a collision: that is
+the free space true-shape nesting would use, reachable here by hand.
+
+Only pairs whose boxes overlap by more than the clearance are examined, and
+very dense outlines are thinned to 400 points, so the cost stays with the
+handful of pairs that could possibly be in trouble.
+
+`findOverlaps()` is still there and still bounding-box based, because that is
+the measure the automatic shelf nester works to and it explains why the
+algorithm placed things where it did. It is not a manufacturing check.
+
+Dragging is clamped so a part cannot hang off the bed, snapped to 0.5 mm, and
+`partAt()` prefers a hit on actual material over a mere bounding-box hit and
+the smallest part among those — so a small part sitting in a large ring's waste
+stays reachable. Backspace unpins the selected part; the profiles panel unpins
+everything at once.
+
+## EXPORT — **shipped** (M4)
+
+`src/core/dxf.ts` writes the file; `src/core/job.ts` composes what goes in it.
+
+One DXF per nested sheet, in sheet coordinates with the origin at the usable
+corner. `Export all sheets` fires them 350 ms apart, because browsers throttle
+a burst of downloads from a single gesture. A plain-text build manifest lists
+every layer with its z, part count, hole count and sheet, every spacer plan,
+and what is on each sheet — plain text because it gets printed and marked up
+with a pencil next to the pile of slices.
+
+`src/core/job.ts` is the wiring layer and the only module that imports across
+the others. It is deliberately thin: every algorithm it calls — contour
+grouping, hole fit, circle generation, label placement, nesting, the font, the
+DXF writer — is validated on its own.
 
 R12 (AC1009) because that is what the target laser accepts, and because it is
 small enough to write correctly by hand. Two consequences:

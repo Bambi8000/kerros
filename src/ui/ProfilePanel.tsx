@@ -1,18 +1,21 @@
 import { PREVIEW_RESOLUTIONS, SLICE_RESOLUTIONS, useKerros } from '../core/store';
 import { layerPitch } from '../core/types';
 import type { GapReport, SliceSet } from '../core/slice';
-import { LAYER_CUT, kerfTestDocument, writeDxfR12 } from '../core/dxf';
-import type { DxfDocument } from '../core/dxf';
+import { kerfTestDocument, writeDxfR12 } from '../core/dxf';
+import { manifestText, sheetToDxf } from '../core/job';
+import { KERROS_VERSION } from '../version';
 import { NumberField } from './NumberField';
 import { downloadText } from './download';
+import type { SheetResult } from './useSheets';
 
 interface Props {
   /** Latest slicing result, so this panel can report what came out. */
   slices: SliceSet | null;
   reports: GapReport[];
+  sheets: SheetResult;
 }
 
-export function ProfilePanel({ slices, reports }: Props) {
+export function ProfilePanel({ slices, reports, sheets }: Props) {
   const machine = useKerros((s) => s.machine);
   const material = useKerros((s) => s.material);
   const stack = useKerros((s) => s.stack);
@@ -37,30 +40,73 @@ export function ProfilePanel({ slices, reports }: Props) {
   const minFeature = useKerros((s) => s.minFeature);
   const setMinFeature = useKerros((s) => s.setMinFeature);
   const currentLayer = useKerros((s) => s.currentLayer);
+  const currentSheet = useKerros((s) => s.currentSheet);
+  const partGap = useKerros((s) => s.partGap);
+  const setPartGap = useKerros((s) => s.setPartGap);
+  const labelHeight = useKerros((s) => s.labelHeight);
+  const setLabelHeight = useKerros((s) => s.setLabelHeight);
+  const ringWidth = useKerros((s) => s.ringWidth);
+  const setRingWidth = useKerros((s) => s.setRingWidth);
+  const makeSpacers = useKerros((s) => s.makeSpacers);
+  const setMakeSpacers = useKerros((s) => s.setMakeSpacers);
+  const clearAllPlacements = useKerros((s) => s.clearAllPlacements);
+
+  const collidingSheets = Object.entries(sheets.reports)
+    .filter(([, report]) => report.colliding.length > 0)
+    .map(([index]) => index);
+  const tightSheets = Object.entries(sheets.reports)
+    .filter(([, report]) => report.tight.length > 0)
+    .map(([index]) => index);
+  const closestGap = Object.values(sheets.reports).reduce(
+    (min, report) => Math.min(min, report.closest),
+    Infinity,
+  );
 
   const total = slices?.slices.length ?? 0;
   const layerIndex = total > 0 ? Math.min(Math.max(currentLayer, 1), total) : 0;
-  const slice = layerIndex > 0 ? slices!.slices[layerIndex - 1] : null;
   const report = layerIndex > 0 ? reports[layerIndex - 1] : null;
   const flaggedLayers = reports.filter((r) => r.tooThin).length;
 
-  const exportLayer = () => {
-    if (!slice) return;
-    const doc: DxfDocument = {
-      polylines: slice.contours.map((contour) => ({
-        points: contour.points,
-        layer: LAYER_CUT,
-        closed: true,
-      })),
-      circles: slice.circles.map((circle) => ({
-        x: circle.x,
-        y: circle.y,
-        r: circle.r,
-        layer: LAYER_CUT,
-      })),
-    };
-    const number = String(slice.index).padStart(3, '0');
-    downloadText(`kerros-layer-${number}.dxf`, writeDxfR12(doc));
+  const sheetCount = sheets.sheets.length;
+  const sheetIndex = sheetCount > 0 ? Math.min(Math.max(currentSheet, 1), sheetCount) : 0;
+  const spacerTotal = sheets.spacers.reduce((sum, plan) => sum + plan.total, 0);
+  const spacerMismatch =
+    makeSpacers &&
+    stack.spacerHeight > 0 &&
+    Math.abs(sheets.spacerAchieved - stack.spacerHeight) > 1e-6;
+
+  const exportSheet = (which: number) => {
+    const target = sheets.sheets[which - 1];
+    if (!target) return;
+    const number = String(target.index).padStart(2, '0');
+    downloadText(`kerros-sheet-${number}.dxf`, writeDxfR12(sheetToDxf(target)));
+  };
+
+  const exportAllSheets = () => {
+    // Spaced out: browsers throttle a burst of downloads from one gesture.
+    sheets.sheets.forEach((target, i) => {
+      window.setTimeout(() => exportSheet(target.index), i * 350);
+    });
+  };
+
+  const exportManifest = () => {
+    if (!slices) return;
+    downloadText(
+      'kerros-manifest.txt',
+      manifestText({
+        set: slices,
+        sheets: sheets.sheets,
+        spacers: sheets.spacers,
+        machineName: machine.name,
+        materialName: material.name,
+        thickness: material.thickness,
+        kerf: material.kerf,
+        spacerHeight: stack.spacerHeight,
+        spacerAchieved: sheets.spacerAchieved,
+        version: KERROS_VERSION,
+      }),
+      'text/plain',
+    );
   };
 
   const exportKerfTest = () => {
@@ -304,23 +350,138 @@ export function ProfilePanel({ slices, reports }: Props) {
       </div>
 
       <div className="group">
+        <div className="group-head">Nesting</div>
+        <NumberField
+          label="Part gap"
+          value={partGap}
+          unit="mm"
+          step={0.5}
+          min={0}
+          max={50}
+          onChange={setPartGap}
+        />
+        <NumberField
+          label="Label size"
+          value={labelHeight}
+          unit="mm"
+          step={0.5}
+          min={0}
+          max={20}
+          onChange={setLabelHeight}
+        />
+        <label className="field">
+          <span className="field-label">Spacers</span>
+          <span className="field-input field-check">
+            <input
+              type="checkbox"
+              checked={makeSpacers}
+              onChange={(e) => setMakeSpacers(e.target.checked)}
+            />
+            <span className="field-unit-wide">cut spacer rings</span>
+          </span>
+        </label>
+        {makeSpacers ? (
+          <NumberField
+            label="Ring width"
+            value={ringWidth}
+            unit="mm"
+            step={0.5}
+            min={0.5}
+            max={40}
+            onChange={setRingWidth}
+          />
+        ) : null}
+        {sheetCount > 0 ? (
+          <div className="derived derived-strong">
+            {sheetCount} {sheetCount === 1 ? 'sheet' : 'sheets'}, {sheets.partCount} parts
+            <span className="derived-sub">
+              {total} layers
+              {spacerTotal > 0 ? ` + ${spacerTotal} spacer rings` : ''}
+            </span>
+          </div>
+        ) : (
+          <div className="derived">Open Sheet to nest the job onto the bed.</div>
+        )}
+        {spacerMismatch ? (
+          <div className="warn">
+            Rings can only be a whole sheet thick. {stack.spacerHeight} mm was
+            asked for; {sheets.spacerAchieved} mm is what {material.thickness} mm
+            material gives. Set the spacer height to a multiple of the thickness
+            or the stack will not close on the rods.
+          </div>
+        ) : null}
+        {sheets.unplaced.length > 0 ? (
+          <div className="warn">
+            {sheets.unplaced.length} parts do not fit the bed at all. They are
+            left out of every sheet.
+          </div>
+        ) : null}
+        {sheets.pinnedCount > 0 ? (
+          <>
+            <button type="button" className="btn btn-wide" onClick={clearAllPlacements}>
+              Unpin all {sheets.pinnedCount} parts
+            </button>
+            <div className="derived">
+              Pinned parts stay where you put them when the job is nested again.
+              Drag in the Sheet view, arrow keys to nudge, Backspace to unpin.
+            </div>
+          </>
+        ) : null}
+        {collidingSheets.length > 0 ? (
+          <div className="warn">
+            Cut outlines actually meet on{' '}
+            {collidingSheets.length === 1 ? 'sheet' : 'sheets'}{' '}
+            {collidingSheets.join(', ')}. Those parts are drawn in amber and
+            will burn into each other. Nothing stops you exporting it — the
+            check is a warning, not a lock.
+          </div>
+        ) : null}
+        {collidingSheets.length === 0 && tightSheets.length > 0 ? (
+          <div className="derived">
+            Closest approach {closestGap.toFixed(2)} mm, under the {partGap} mm
+            part gap, on{' '}
+            {tightSheets.length === 1 ? 'sheet' : 'sheets'} {tightSheets.join(', ')}.
+            Those outlines are dimmed. Nothing overlaps, so this is only worth a
+            look if the material chars easily.
+          </div>
+        ) : null}
+      </div>
+
+      <div className="group">
         <div className="group-head">Export</div>
         <button
           type="button"
           className="btn btn-wide"
-          disabled={!slice}
-          onClick={exportLayer}
+          disabled={sheetIndex === 0}
+          onClick={() => exportSheet(sheetIndex)}
         >
-          {slice ? `Export layer ${slice.index} as DXF` : 'Export layer as DXF'}
+          {sheetIndex > 0 ? `Export sheet ${sheetIndex} as DXF` : 'Export sheet as DXF'}
+        </button>
+        <button
+          type="button"
+          className="btn btn-wide"
+          disabled={sheetCount === 0}
+          onClick={exportAllSheets}
+        >
+          {sheetCount > 1 ? `Export all ${sheetCount} sheets` : 'Export all sheets'}
+        </button>
+        <button
+          type="button"
+          className="btn btn-wide"
+          disabled={!slices}
+          onClick={exportManifest}
+        >
+          Export build manifest
         </button>
         <button type="button" className="btn btn-wide" onClick={exportKerfTest}>
           Export kerf test
         </button>
         <div className="derived">
-          DXF R12, layer {LAYER_CUT}, millimetres. Contours are kerf-compensated
-          at {material.kerf} mm; the kerf test deliberately is not — that is
-          what makes it a measurement. Nesting several layers onto one sheet
-          arrives in M4.
+          DXF R12, millimetres, CUT and ENGRAVE layers. Cuts are
+          kerf-compensated at {material.kerf} mm; the kerf test deliberately is
+          not — that is what makes it a measurement. Layer numbers are engraved
+          as stroke polylines rather than DXF text, which laser front-ends
+          handle inconsistently.
         </div>
         {material.kerf <= 0 ? (
           <div className="warn">
