@@ -8,6 +8,7 @@ export function FeatureTree() {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
   const addShape = useKerros((s) => s.addShape);
+  const addRod = useKerros((s) => s.addRod);
   const removeFeature = useKerros((s) => s.removeFeature);
   const moveFeature = useKerros((s) => s.moveFeature);
   const toggleFeature = useKerros((s) => s.toggleFeature);
@@ -50,8 +51,14 @@ export function FeatureTree() {
                 <span className="row-main">
                   <span className="row-name">{f.name}</span>
                   <span className="row-sub">
-                    {i === 0 ? 'base solid' : OP_LABELS[op]}
-                    {known ? '' : ' · unknown module'}
+                    {f.stage === 'RIG'
+                      ? `${f.params.size ?? 'M5'} · z ${Number(f.params.zStart) || 0}–${
+                          Number(f.params.zEnd) || 0
+                        }`
+                      : i === 0
+                        ? 'base solid'
+                        : OP_LABELS[op]}
+                    {f.stage === 'RIG' || known ? '' : ' · unknown module'}
                   </span>
                 </span>
                 <span className="row-actions">
@@ -117,8 +124,12 @@ export function FeatureTree() {
             Add
           </button>
         </div>
+        <button type="button" className="btn btn-wide" onClick={addRod}>
+          Add rod
+        </button>
         <span className="foot-note">
-          Order is evaluation order — drag a subtract below what it cuts into
+          Order is evaluation order — drag a subtract below what it cuts into.
+          Rods are drilled after slicing and ignore tree order.
         </span>
       </footer>
     </section>

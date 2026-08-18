@@ -102,6 +102,15 @@ select {
   gap: 2px;
 }
 
+.topbar {
+  gap: 12px;
+  overflow-x: auto;
+}
+
+.topbar > * {
+  flex: none;
+}
+
 .view-btn {
   padding: 4px 12px;
   background: transparent;
@@ -553,6 +562,92 @@ select {
 
 .hud-stats {
   margin-left: auto;
+}
+
+/* ---------- slice inspector ---------- */
+
+.slice-view {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--k-bg);
+}
+
+.slice-canvas-wrap {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.slice-canvas-wrap canvas {
+  display: block;
+}
+
+.slice-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--k-mono);
+  font-size: 11px;
+  color: var(--k-text-faint);
+  pointer-events: none;
+}
+
+.slice-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--k-panel);
+  border-top: 1px solid var(--k-line);
+}
+
+.slice-bar input[type='range'] {
+  flex: 1;
+  min-width: 80px;
+  accent-color: var(--k-cut);
+}
+
+.slice-readout {
+  font-family: var(--k-mono);
+  font-size: 10px;
+  color: var(--k-text-faint);
+  white-space: nowrap;
+}
+
+.btn-wide {
+  display: block;
+  width: 100%;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.btn:disabled {
+  color: var(--k-text-faint);
+  cursor: default;
+  border-color: var(--k-line-soft);
+}
+
+.slice-warn {
+  color: var(--k-warn);
+}
+
+.field-check {
+  gap: 8px;
+}
+
+.field-check input[type='checkbox'] {
+  width: auto;
+  accent-color: var(--k-cut);
+}
+
+.field-unit-wide {
+  font-family: var(--k-mono);
+  font-size: 10px;
+  color: var(--k-text-faint);
 }
 
 /* ---------- crash ---------- */

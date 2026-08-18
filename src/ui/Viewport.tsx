@@ -8,6 +8,10 @@ import { evaluateGrid, findModule, nearestFeatureIndex, num } from '../core/sdf'
 import type { Params } from '../core/sdf';
 import { surfaceNets } from '../core/surfaceNets';
 import { buildGeometry } from '../core/mesh';
+import { circleFitsInPart, groupContours } from '../core/slice';
+import type { SliceSet } from '../core/slice';
+import { rodDiameter, rodSpan } from '../core/rig';
+import { rodSpanOf, rodsFromFeatures } from '../core/store';
 import type { Feature } from '../core/types';
 
 /**
@@ -43,7 +47,16 @@ const COLORS = {
   zAxis: 0x4a9fd8,
   model: 0xd2c8bc,
   selection: 0xe04a2f,
+  sheet: 0xc9bfb2,
+  sheetCurrent: 0xe04a2f,
+  rod: 0x8d8a86,
+  rodSelected: 0xe04a2f,
 };
+
+interface ViewportProps {
+  /** Slices to show in stack mode. Null while modelling or still computing. */
+  slices: SliceSet | null;
+}
 
 interface Stats {
   triangles: number;
@@ -161,11 +174,15 @@ function makeSelectionOutline(feature: Feature): THREE.Object3D | null {
   return holder;
 }
 
-export function Viewport() {
+export function Viewport({ slices }: ViewportProps) {
   const view = useKerros((s) => s.view);
+  const mode = useKerros((s) => s.mode);
+  const currentLayer = useKerros((s) => s.currentLayer);
+  const hideAbove = useKerros((s) => s.hideAbove);
   const machine = useKerros((s) => s.machine);
   const features = useKerros((s) => s.features);
   const previewRes = useKerros((s) => s.previewRes);
+  const displayMode = useKerros((s) => s.displayMode);
   const selectedId = useKerros((s) => s.selectedId);
   const gizmoMode = useKerros((s) => s.gizmoMode);
   const snapEnabled = useKerros((s) => s.snapEnabled);
@@ -177,6 +194,8 @@ export function Viewport() {
   const sceneRef = useRef<THREE.Scene | null>(null);
   const bedRef = useRef<THREE.Group | null>(null);
   const modelRef = useRef<THREE.Group | null>(null);
+  const stackRef = useRef<THREE.Group | null>(null);
+  const rodsRef = useRef<THREE.Group | null>(null);
   const selectionRef = useRef<THREE.Group | null>(null);
   const proxyRef = useRef<THREE.Object3D | null>(null);
   const cameraRef = useRef<THREE.Camera | null>(null);
@@ -230,6 +249,14 @@ export function Viewport() {
     const model = new THREE.Group();
     scene.add(model);
     modelRef.current = model;
+
+    const stack = new THREE.Group();
+    scene.add(stack);
+    stackRef.current = stack;
+
+    const rods = new THREE.Group();
+    scene.add(rods);
+    rodsRef.current = rods;
 
     const selection = new THREE.Group();
     scene.add(selection);
@@ -303,14 +330,30 @@ export function Viewport() {
       const cam = cameraRef.current;
       const target = modelRef.current;
       if (!cam || !target) return;
+      if (useKerros.getState().mode !== 'model') return;
 
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, cam);
 
-      const hits = raycaster.intersectObjects(target.children, true);
       const { features: current, selectFeature } = useKerros.getState();
+
+      // Rods are real meshes and thin, so they get first refusal — otherwise
+      // a rod inside the form could never be clicked.
+      const rodGroup = rodsRef.current;
+      if (rodGroup) {
+        const rodHits = raycaster.intersectObjects(rodGroup.children, false);
+        if (rodHits.length > 0) {
+          const id = rodHits[0].object.userData.featureId;
+          if (typeof id === 'string') {
+            selectFeature(id);
+            return;
+          }
+        }
+      }
+
+      const hits = raycaster.intersectObjects(target.children, true);
 
       if (hits.length === 0) {
         selectFeature(null);
@@ -353,6 +396,8 @@ export function Viewport() {
       window.removeEventListener('keydown', onKeyDown);
       disposeChildren(bed);
       disposeChildren(model);
+      disposeChildren(stack);
+      disposeChildren(rods);
       disposeChildren(selection);
       grid.geometry.dispose();
       (grid.material as THREE.Material).dispose();
@@ -368,6 +413,8 @@ export function Viewport() {
       sceneRef.current = null;
       bedRef.current = null;
       modelRef.current = null;
+      stackRef.current = null;
+      rodsRef.current = null;
       selectionRef.current = null;
       proxyRef.current = null;
     };
@@ -412,11 +459,22 @@ export function Viewport() {
 
     const onObjectChange = () => {
       const proxy = proxyRef.current;
-      const id = useKerros.getState().selectedId;
+      const state = useKerros.getState();
+      const id = state.selectedId;
       if (!proxy || !id) return;
 
+      const feature = state.features.find((f) => f.id === id);
+      if (feature?.stage === 'RIG') {
+        state.setTransform(id, {
+          px: tidy(proxy.position.x),
+          py: tidy(proxy.position.y),
+          pz: tidy(proxy.position.z),
+        });
+        return;
+      }
+
       const euler = new THREE.Euler().setFromQuaternion(proxy.quaternion, EULER_ORDER);
-      useKerros.getState().setTransform(id, {
+      state.setTransform(id, {
         px: tidy(proxy.position.x),
         py: tidy(proxy.position.y),
         pz: tidy(proxy.position.z),
@@ -464,7 +522,27 @@ export function Viewport() {
       return;
     }
 
+    // Reset every axis on attach: a previous selection must not leave an
+    // axis switched off on the next one.
+    gizmo.showX = true;
+    gizmo.showY = true;
+    gizmo.showZ = true;
+
+    // A rod moves in all three axes like anything else — its Z position is
+    // the middle of its span. Rotating one would mean nothing, so translate
+    // is the only mode it gets.
+    if (feature.stage === 'RIG') gizmo.setMode('translate');
+
     applyTransform(proxy, feature.params);
+    if (feature.stage === 'RIG') {
+      const [low, high] = rodSpanOf(feature.params);
+      proxy.position.set(
+        num(feature.params, 'px', 0),
+        num(feature.params, 'py', 0),
+        (low + high) / 2,
+      );
+      proxy.rotation.set(0, 0, 0);
+    }
     gizmo.attach(proxy);
 
     return () => {
@@ -483,6 +561,18 @@ export function Viewport() {
 
     const feature = features.find((f) => f.id === selectedId);
     if (!feature) return;
+    if (feature.stage === 'RIG') {
+      if (!draggingRef.current && proxyRef.current) {
+        const [low, high] = rodSpanOf(feature.params);
+        proxyRef.current.position.set(
+          num(feature.params, 'px', 0),
+          num(feature.params, 'py', 0),
+          (low + high) / 2,
+        );
+        proxyRef.current.rotation.set(0, 0, 0);
+      }
+      return;
+    }
 
     const outline = makeSelectionOutline(feature);
     if (outline) selection.add(outline);
@@ -504,11 +594,123 @@ export function Viewport() {
     bed.add(makeRect(usableW, usableH, 0, COLORS.bedMargin, 0.9));
   }, [machine.bedWidth, machine.bedHeight, machine.margin]);
 
+  // Rods, drawn at clearance diameter over their span. They are geometry you
+  // can point at, which is what makes click-to-select and dragging work.
+  useEffect(() => {
+    const group = rodsRef.current;
+    if (!group) return;
+
+    disposeChildren(group);
+    if (mode === 'slice') return;
+
+    for (const rod of rodsFromFeatures(features)) {
+      const [low, high] = rodSpan(rod);
+      const length = Math.max(high - low, 0.5);
+      const geometry = new THREE.CylinderGeometry(
+        rodDiameter(rod) / 2,
+        rodDiameter(rod) / 2,
+        length,
+        20,
+      );
+      // Cylinders are built along Y; the world is Z up.
+      geometry.rotateX(Math.PI / 2);
+
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({
+          color: rod.id === selectedId ? COLORS.rodSelected : COLORS.rod,
+          roughness: 0.35,
+          metalness: 0.6,
+        }),
+      );
+      mesh.position.set(rod.x, rod.y, low + length / 2);
+      mesh.userData.featureId = rod.id;
+      group.add(mesh);
+    }
+  }, [features, selectedId, mode]);
+
+  // Only one of the two 3D representations is on screen at a time.
+  useEffect(() => {
+    if (modelRef.current) modelRef.current.visible = mode !== 'stack';
+    if (stackRef.current) stackRef.current.visible = mode === 'stack';
+    if (selectionRef.current) selectionRef.current.visible = mode === 'model';
+    if (mode !== 'model') gizmoRef.current?.detach();
+  }, [mode]);
+
+  // Exploded stack: each layer extruded to real material thickness and placed
+  // at its real z, so the gaps you see are the spacers you will actually cut.
+  useEffect(() => {
+    const stack = stackRef.current;
+    if (!stack) return;
+
+    disposeChildren(stack);
+    if (mode !== 'stack' || !slices) return;
+
+    const plain = new THREE.MeshStandardMaterial({
+      color: COLORS.sheet,
+      roughness: 0.7,
+      metalness: 0.02,
+    });
+    const highlighted = new THREE.MeshStandardMaterial({
+      color: COLORS.sheetCurrent,
+      roughness: 0.5,
+      metalness: 0.02,
+    });
+
+    for (const slice of slices.slices) {
+      if (hideAbove && slice.index > currentLayer) continue;
+
+      for (const group of groupContours(slice.contours)) {
+        const shape = new THREE.Shape();
+        const outer = group.outer.points;
+        shape.moveTo(outer[0], outer[1]);
+        for (let i = 2; i < outer.length; i += 2) shape.lineTo(outer[i], outer[i + 1]);
+        shape.closePath();
+
+        for (const hole of group.holes) {
+          const path = new THREE.Path();
+          path.moveTo(hole.points[0], hole.points[1]);
+          for (let i = 2; i < hole.points.length; i += 2) {
+            path.lineTo(hole.points[i], hole.points[i + 1]);
+          }
+          path.closePath();
+          shape.holes.push(path);
+        }
+
+        // Only rod holes that genuinely fit inside this part. A hole that
+        // crosses a contour is not a hole, it is a bite out of the edge, and
+        // feeding it to the tessellator produces a fan of garbage across the
+        // whole layer. It is still drawn in the slice inspector, where the
+        // thin-feature warning is what the maker needs to see.
+        for (const circle of slice.circles) {
+          if (!circleFitsInPart(group, circle)) continue;
+          const path = new THREE.Path();
+          path.absarc(circle.x, circle.y, circle.r, 0, Math.PI * 2, true);
+          shape.holes.push(path);
+        }
+
+        const geometry = new THREE.ExtrudeGeometry(shape, {
+          depth: slices.thickness,
+          bevelEnabled: false,
+          curveSegments: 16,
+        });
+        const mesh = new THREE.Mesh(
+          geometry,
+          slice.index === currentLayer ? highlighted : plain,
+        );
+        mesh.position.z = slice.zBottom;
+        stack.add(mesh);
+      }
+    }
+  }, [mode, slices, currentLayer, hideAbove]);
+
   // Re-evaluate the feature tree and rebuild the preview mesh.
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const model = modelRef.current;
       if (!model) return;
+
+      if (useKerros.getState().mode === 'stack') return;
 
       const shapes = features.filter((f) => f.stage === 'SHAPE');
       const started = performance.now();
@@ -519,12 +721,36 @@ export function Viewport() {
       disposeChildren(model);
 
       if (mesh.triangleCount > 0) {
-        const material = new THREE.MeshStandardMaterial({
-          color: COLORS.model,
-          roughness: 0.62,
-          metalness: 0.02,
-        });
-        model.add(new THREE.Mesh(buildGeometry(mesh), material));
+        const geometry = buildGeometry(mesh);
+
+        if (displayMode === 'wire') {
+          const edges = new THREE.WireframeGeometry(geometry);
+          model.add(
+            new THREE.LineSegments(
+              edges,
+              new THREE.LineBasicMaterial({
+                color: COLORS.model,
+                transparent: true,
+                opacity: 0.35,
+              }),
+            ),
+          );
+          geometry.dispose();
+        } else {
+          const xray = displayMode === 'xray';
+          const material = new THREE.MeshStandardMaterial({
+            color: COLORS.model,
+            roughness: xray ? 0.4 : 0.62,
+            metalness: 0.02,
+            transparent: xray,
+            // Ghosting needs both: the far side visible through the near one,
+            // and no depth writes so rods inside are not hidden by the shell.
+            opacity: xray ? 0.26 : 1,
+            depthWrite: !xray,
+            side: xray ? THREE.DoubleSide : THREE.FrontSide,
+          });
+          model.add(new THREE.Mesh(geometry, material));
+        }
       }
 
       setStats({
@@ -536,7 +762,7 @@ export function Viewport() {
     }, EVAL_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [features, previewRes]);
+  }, [features, previewRes, mode, displayMode]);
 
   return (
     <div className="viewport">
@@ -544,9 +770,20 @@ export function Viewport() {
       <div className="viewport-hud">
         <span className="hud-view">{view}</span>
         <span className="hud-note">
-          Click a shape to select · M move · R rotate · Esc deselect
+          {mode === 'stack'
+            ? 'Exploded stack at real layer pitch'
+            : `Click a shape to select · M move · R rotate · Esc deselect${
+                displayMode === 'solid' ? '' : ` · ${displayMode}`
+              }`}
         </span>
-        {stats && stats.triangles > 0 ? (
+        {mode === 'stack' && slices ? (
+          <span className="hud-stats">
+            {slices.slices.length} layers · pitch {slices.pitch.toFixed(2)} mm ·
+            {' '}
+            {slices.thickness.toFixed(2)} mm sheet
+          </span>
+        ) : null}
+        {mode !== 'stack' && stats && stats.triangles > 0 ? (
           <span className="hud-stats">
             {stats.dims} samples @ {stats.step.toFixed(2)} mm ·{' '}
             {stats.triangles.toLocaleString('en-US')} tris · {stats.ms.toFixed(0)} ms
