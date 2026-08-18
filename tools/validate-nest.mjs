@@ -22,6 +22,7 @@ import {
   findLabelSpot,
   nestParts,
   countParts,
+  nestByMaterial,
   applyPlacements,
   findOverlaps,
   analyseSheet,
@@ -887,6 +888,61 @@ console.log('nest: clamping and hit testing');
     partAt(sheet, 200, 150).id === 'h2',
   );
   check('a click on empty sheet hits nothing', partAt(sheet, 5, 5) === null);
+}
+
+console.log('nest: materials never share a sheet');
+{
+  const options = { sheetWidth: 400, sheetHeight: 300, gap: 4, labelHeight: 0 };
+  const parts = [
+    { id: 'a', label: 'A', kind: 'slice', material: 'stock', outer: ring(0, 0, 40), holes: [], circles: [] },
+    { id: 'b', label: 'B', kind: 'slice', material: 'stock', outer: ring(0, 0, 40), holes: [], circles: [] },
+    { id: 'w', label: 'W', kind: 'window', material: 'window', outer: ring(0, 0, 20), holes: [], circles: [] },
+  ];
+
+  const nested = nestByMaterial(parts, options);
+  check('two materials give two sheets', nested.sheets.length === 2, `${nested.sheets.length}`);
+  check('nothing is lost', countParts(nested.sheets) === 3);
+  check(
+    'no sheet mixes materials',
+    nested.sheets.every((sheet) =>
+      sheet.parts.every((part) => (part.material ?? 'stock') === sheet.material),
+    ),
+  );
+  check('sheets are indexed globally', nested.sheets.map((s2) => s2.index).join(',') === '1,2');
+  check(
+    'and numbered from one within their own material',
+    nested.sheets.every((s2) => s2.ordinal === 1),
+  );
+
+  const single = nestByMaterial(
+    parts.filter((p) => p.material === 'stock'),
+    options,
+  );
+  check('one material behaves as before', single.sheets.length === 1 && single.sheets[0].material === 'stock');
+
+  const untagged = nestByMaterial(
+    [{ id: 'u', label: 'U', kind: 'slice', outer: ring(0, 0, 30), holes: [], circles: [] }],
+    options,
+  );
+  check('an untagged part counts as stock', untagged.sheets[0].material === 'stock');
+
+  const runA = nestByMaterial(parts, options);
+  const runB = nestByMaterial([...parts].reverse(), options);
+  check(
+    'material order does not depend on part order',
+    runA.sheets.map((s2) => s2.material).join(',') === runB.sheets.map((s2) => s2.material).join(','),
+  );
+
+  const moved = applyPlacements(nested, { w: { sheet: 2, dx: 40, dy: 40 } }, {
+    width: options.sheetWidth,
+    height: options.sheetHeight,
+  });
+  check(
+    'placements keep the sheet material',
+    moved.sheets.every((sheet) =>
+      sheet.parts.every((part) => (part.material ?? 'stock') === sheet.material),
+    ),
+  );
 }
 
 console.log('');

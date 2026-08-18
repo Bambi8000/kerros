@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
-import {
-  isFieldFeature,
-  patternOptionsOf,
-  rodsFromFeatures,
-  useKerros,
-} from '../core/store';
-import { evaluatePoint, modelBounds, prepareFeatures } from '../core/sdf';
+import { composeField, patternOptionsOf, rodsFromFeatures, useKerros } from '../core/store';
+import { windowField } from '../core/window';
 import { minFeatureGap, sliceModel } from '../core/slice';
 import type { GapReport, SliceSet } from '../core/slice';
 import { applyRods } from '../core/rig';
@@ -16,6 +11,8 @@ const SLICE_DEBOUNCE_MS = 250;
 
 export interface SliceResult {
   set: SliceSet | null;
+  /** One sliced set of plugs per window feature. */
+  windows: { label: string; set: SliceSet }[];
   /** Holes each pattern feature actually placed, keyed by feature id. */
   patternCounts: Record<string, number>;
   /** One report per slice, aligned by index. */
@@ -24,7 +21,14 @@ export interface SliceResult {
   pending: boolean;
 }
 
-const IDLE: SliceResult = { set: null, patternCounts: {}, reports: [], ms: 0, pending: false };
+const IDLE: SliceResult = {
+  set: null,
+  windows: [],
+  patternCounts: {},
+  reports: [],
+  ms: 0,
+  pending: false,
+};
 
 /**
  * Slice the current feature tree, drill the rods, and check the result.
@@ -56,22 +60,30 @@ export function useSlices(enabled: boolean): SliceResult {
     setResult((prev) => ({ ...prev, pending: true }));
 
     const timer = window.setTimeout(() => {
-      const shapes = features.filter(isFieldFeature);
-      const bounds = modelBounds(shapes);
+      const field = composeField(features, kerf);
+      const bounds = field.bounds;
 
       if (!bounds) {
         setResult(IDLE);
         return;
       }
 
-      const prepared = prepareFeatures(shapes);
       const started = performance.now();
+      const layerOptions = { thickness, spacerHeight, resolution, tolerance, smoothing };
 
-      const sliced = sliceModel(
-        (x, y, z) => evaluatePoint(prepared, x, y, z),
-        bounds,
-        { thickness, spacerHeight, resolution, tolerance, smoothing, kerf },
-      );
+      const sliced = sliceModel(field.sample, bounds, { ...layerOptions, kerf });
+
+      // Each window's plugs are cut from the form BEFORE any window was taken
+      // out of it, on the same layer planes, so a plug and its hole are the
+      // same curve offset only by the fit clearance. Their own kerf, because
+      // they are cut from their own material.
+      const windows = field.windows.map((spec) => ({
+        label: spec.label,
+        set: sliceModel(windowField(field.solid, spec), bounds, {
+          ...layerOptions,
+          kerf: spec.kerf,
+        }),
+      }));
 
       // Rods drill after slicing: they take no part in the field, they only
       // add holes to the layers their span reaches.
@@ -104,7 +116,7 @@ export function useSlices(enabled: boolean): SliceResult {
                       maxY: bounds.max[1],
                     },
                     existing: circles,
-                    sample: (x, y, z) => evaluatePoint(prepared, x, y, z),
+                    sample: field.sample,
                     layer: slice.index,
                   },
                   patternOptionsOf(feature, kerf, seed),
@@ -124,6 +136,7 @@ export function useSlices(enabled: boolean): SliceResult {
 
       setResult({
         set,
+        windows,
         patternCounts,
         reports,
         ms: performance.now() - started,

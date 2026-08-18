@@ -69,11 +69,12 @@ export function Layout() {
   const {
     set: slices,
     reports: sliceReports,
+    windows: sliceWindows,
     patternCounts,
     ms: sliceMs,
     pending: slicePending,
   } = useSlices(mode !== 'model');
-  const sheets = useSheets(slices);
+  const sheets = useSheets(slices, sliceWindows);
   const layerCount = slices?.slices.length ?? 0;
 
   // Layer stepping belongs to the workspace, not to one panel: paging up and

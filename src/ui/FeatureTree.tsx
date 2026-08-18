@@ -3,6 +3,26 @@ import { useKerros } from '../core/store';
 import { OP_LABELS, SHAPE_MODULES, findModule, text } from '../core/sdf';
 import type { Op } from '../core/sdf';
 import { STAGES, STAGE_NOTES } from '../core/types';
+import type { Feature } from '../core/types';
+
+/** One line under a feature's name, saying what it does at a glance. */
+function subtitleFor(f: Feature, index: number, op: Op): string {
+  if (f.kind === 'window') {
+    return `${Number(f.params.count) || 0} windows · ${Number(f.params.width) || 0}°`;
+  }
+  if (f.stage === 'RIG') {
+    return `${f.params.size ?? 'M5'} · ${Number(f.params.length) || 0} mm`;
+  }
+  if (f.stage === 'CARVE') {
+    return `hollow · ${Number(f.params.t) || 0} mm wall`;
+  }
+  if (f.stage === 'PATTERN') {
+    return `${f.params.patternKind ?? 'hex'} · Ø${
+      (Number(f.params.radius) || 0) * 2
+    } at ${Number(f.params.pitch) || 0} mm`;
+  }
+  return index === 0 ? 'base solid' : OP_LABELS[op];
+}
 
 export function FeatureTree() {
   const features = useKerros((s) => s.features);
@@ -11,6 +31,7 @@ export function FeatureTree() {
   const addRod = useKerros((s) => s.addRod);
   const addShell = useKerros((s) => s.addShell);
   const addPattern = useKerros((s) => s.addPattern);
+  const addWindow = useKerros((s) => s.addWindow);
   const removeFeature = useKerros((s) => s.removeFeature);
   const moveFeature = useKerros((s) => s.moveFeature);
   const toggleFeature = useKerros((s) => s.toggleFeature);
@@ -53,17 +74,7 @@ export function FeatureTree() {
                 <span className="row-main">
                   <span className="row-name">{f.name}</span>
                   <span className="row-sub">
-                    {f.stage === 'RIG'
-                      ? `${f.params.size ?? 'M5'} · ${Number(f.params.length) || 0} mm`
-                      : f.stage === 'CARVE'
-                        ? `hollow · ${Number(f.params.t) || 0} mm wall`
-                        : f.stage === 'PATTERN'
-                          ? `${f.params.patternKind ?? 'hex'} · Ø${
-                              (Number(f.params.radius) || 0) * 2
-                            } at ${Number(f.params.pitch) || 0} mm`
-                          : i === 0
-                          ? 'base solid'
-                          : OP_LABELS[op]}
+                    {subtitleFor(f, i, op)}
                     {f.stage === 'SHAPE' && !known ? ' · unknown module' : ''}
                   </span>
                 </span>
@@ -138,9 +149,14 @@ export function FeatureTree() {
             Add rod
           </button>
         </div>
-        <button type="button" className="btn btn-wide" onClick={addPattern}>
-          Add perforation
-        </button>
+        <div className="add-row">
+          <button type="button" className="btn" onClick={addPattern}>
+            Perforation
+          </button>
+          <button type="button" className="btn" onClick={addWindow}>
+            Window
+          </button>
+        </div>
         <span className="foot-note">
           Order is evaluation order — drag a subtract below what it cuts into.
           Rods are drilled after slicing and ignore tree order.

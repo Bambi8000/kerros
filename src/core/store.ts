@@ -10,10 +10,14 @@ import { DEFAULT_MACHINE, DEFAULT_MATERIAL, DEFAULT_STACK } from './profiles';
 import {
   defaultModifierParams,
   defaultParams,
+  evaluatePoint,
   findModule,
   modelBounds,
+  prepareFeatures,
   shellModifier,
 } from './sdf';
+import { stockField } from './window';
+import type { WindowSpec } from './window';
 import { ROD_CLEARANCE } from './rig';
 import type { RodSpec } from './rig';
 import type { PartPlacement } from './nest';
@@ -137,6 +141,7 @@ interface KerrosState {
   addRod: () => void;
   addShell: () => void;
   addPattern: () => void;
+  addWindow: () => void;
   /** Stretch a rod to span the whole model. */
   fitRodToModel: (id: string) => void;
   removeFeature: (id: string) => void;
@@ -297,6 +302,47 @@ export const useKerros = create<KerrosState>((set, get) => ({
 
       return {
         features: next,
+        nextFeatureNumber: s.nextFeatureNumber + 1,
+        selectedId: id,
+        panel: 'inspector' as const,
+      };
+    }),
+
+  /**
+   * A window is a wedge taken out of the form, and the piece that came out is
+   * cut from something else and glued back in. It spans the model's height by
+   * default, since the usual first move is to see where the light lands and
+   * then trim the band.
+   */
+  addWindow: () =>
+    set((s) => {
+      const bounds = modelBounds(s.features.filter(isFieldFeature));
+      const id = `f${s.nextFeatureNumber}`;
+      const count = s.features.filter((f) => f.kind === 'window').length + 1;
+      const z = bounds ? (bounds.min[2] + bounds.max[2]) / 2 : 50;
+      const length = bounds ? (bounds.max[2] - bounds.min[2]) * 0.6 : 60;
+
+      return {
+        features: [
+          ...s.features,
+          {
+            id,
+            kind: 'window',
+            stage: 'CARVE' as Stage,
+            name: `Window ${count}`,
+            enabled: true,
+            params: {
+              count: 4,
+              width: 40,
+              angle: 0,
+              twist: 0,
+              pz: Math.round(z * 10) / 10,
+              length: Math.round(length * 10) / 10,
+              fit: 0.4,
+              windowKerf: s.material.kerf,
+            },
+          },
+        ],
         nextFeatureNumber: s.nextFeatureNumber + 1,
         selectedId: id,
         panel: 'inspector' as const,
@@ -677,4 +723,48 @@ export function patternOptionsOf(
 export function shellWallOf(features: Feature[]): number {
   const shell = [...features].reverse().find((f) => f.kind === 'shell' && f.enabled);
   return shell ? Math.max(Number(shell.params.t) || 0, 0) : 0;
+}
+
+/** Window features of a tree, as the window module wants them. */
+export function windowsFromFeatures(features: Feature[], fallbackKerf: number): WindowSpec[] {
+  const out: WindowSpec[] = [];
+  for (const f of features) {
+    if (f.kind !== 'window' || !f.enabled) continue;
+    out.push({
+      id: f.id,
+      label: f.name,
+      count: Math.max(Math.round(Number(f.params.count) || 1), 1),
+      width: Number(f.params.width) || 0,
+      angle: Number(f.params.angle) || 0,
+      twist: Number(f.params.twist) || 0,
+      z: Number(f.params.pz) || 0,
+      length: Math.max(Number(f.params.length) || 0, 0),
+      fit: Math.max(Number(f.params.fit) || 0, 0),
+      kerf: Math.max(Number(f.params.windowKerf) ?? fallbackKerf, 0),
+    });
+  }
+  return out;
+}
+
+/**
+ * The field the rest of the program slices.
+ *
+ * Windows are applied here rather than inside the SDF core, which has no
+ * imports and must not gain one. `solid` is the form before any window is taken
+ * out of it — the plug of each window is cut from that, so it has to stay
+ * available separately.
+ */
+export function composeField(features: Feature[], kerf: number) {
+  const fieldFeatures = features.filter(isFieldFeature);
+  const prepared = prepareFeatures(fieldFeatures);
+  const windows = windowsFromFeatures(features, kerf);
+
+  const solid = (x: number, y: number, z: number) => evaluatePoint(prepared, x, y, z);
+
+  return {
+    solid,
+    sample: stockField(solid, windows),
+    windows,
+    bounds: modelBounds(fieldFeatures),
+  };
 }

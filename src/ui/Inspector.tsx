@@ -123,6 +123,144 @@ function RodInspector({ feature }: { feature: Feature }) {
   );
 }
 
+function WindowInspector({ feature }: { feature: Feature }) {
+  const setParam = useKerros((s) => s.setParam);
+  const renameFeature = useKerros((s) => s.renameFeature);
+  const stockKerf = useKerros((s) => s.material.kerf);
+
+  const count = num(feature.params, 'count', 4);
+  const width = num(feature.params, 'width', 40);
+  const fit = num(feature.params, 'fit', 0.4);
+  const windowKerf = num(feature.params, 'windowKerf', stockKerf);
+  const share = 360 / Math.max(Math.round(count), 1);
+  const clamped = Math.min(width, share * 0.9, 178);
+
+  return (
+    <>
+      <div className="group">
+        <div className="group-head">Window</div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <span className="field-input">
+            <input
+              type="text"
+              value={feature.name}
+              onChange={(e) => renameFeature(feature.id, e.target.value)}
+            />
+          </span>
+        </label>
+        <div className="derived">
+          Takes a wedge out of the form, and the piece that came out becomes a
+          part of its own on its own sheets — plexi in cardboard. The plug and
+          the hole are the same curve by construction, offset only by the fit.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">Wedge</div>
+        <NumberField
+          label="Count"
+          value={count}
+          step={1}
+          min={1}
+          max={48}
+          onChange={(v) => setParam(feature.id, 'count', Math.max(Math.round(v), 1))}
+        />
+        <NumberField
+          label="Width"
+          value={width}
+          unit="°"
+          step={5}
+          min={0}
+          max={180}
+          onChange={(v) => setParam(feature.id, 'width', v)}
+        />
+        <NumberField
+          label="Angle"
+          value={num(feature.params, 'angle', 0)}
+          unit="°"
+          step={5}
+          min={-360}
+          max={360}
+          onChange={(v) => setParam(feature.id, 'angle', v)}
+        />
+        <NumberField
+          label="Twist"
+          value={num(feature.params, 'twist', 0)}
+          unit="°/mm"
+          step={0.1}
+          min={-20}
+          max={20}
+          onChange={(v) => setParam(feature.id, 'twist', v)}
+        />
+        {clamped < width - 1e-9 ? (
+          <div className="warn">
+            {width}° will not fit {count} times round; using {clamped.toFixed(1)}°.
+            Wider windows would meet and the ring would fall into loose arcs.
+          </div>
+        ) : null}
+        <div className="derived">
+          Twist turns the set as it goes up, so the windows spiral through the
+          stack and no two layers line up.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">Band</div>
+        <NumberField
+          label="Position Z"
+          value={num(feature.params, 'pz', 0)}
+          unit="mm"
+          step={1}
+          onChange={(v) => setParam(feature.id, 'pz', v)}
+        />
+        <NumberField
+          label="Height"
+          value={num(feature.params, 'length', 60)}
+          unit="mm"
+          step={1}
+          min={0}
+          onChange={(v) => setParam(feature.id, 'length', v)}
+        />
+        <div className="derived">
+          Only layers inside the band get windows. Everything above and below is
+          solid stock.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">Fit</div>
+        <NumberField
+          label="Clearance"
+          value={fit}
+          unit="mm"
+          step={0.05}
+          min={0}
+          max={5}
+          onChange={(v) => setParam(feature.id, 'fit', v)}
+        />
+        <NumberField
+          label="Window kerf"
+          value={windowKerf}
+          unit="mm"
+          step={0.01}
+          min={0}
+          max={2}
+          onChange={(v) => setParam(feature.id, 'windowKerf', v)}
+        />
+        <div className="derived">
+          The finished plug comes out {fit.toFixed(2)} mm smaller than its hole,{' '}
+          {(fit / 2).toFixed(2)} mm on each face for glue. The two kerfs pull in
+          opposite directions — the hole is cut narrow so it burns out to size,
+          the plug is cut wide so it burns down to size — so both numbers have to
+          be right. Stock kerf is {stockKerf} mm; this material&rsquo;s is{' '}
+          {windowKerf} mm.
+        </div>
+      </div>
+    </>
+  );
+}
+
 function ShellInspector({ feature }: { feature: Feature }) {
   const setParam = useKerros((s) => s.setParam);
   const renameFeature = useKerros((s) => s.renameFeature);
@@ -500,6 +638,7 @@ export function Inspector({ patternCounts, sliced }: InspectorProps) {
   }
 
   if (feature.stage === 'RIG') return <RodInspector feature={feature} />;
+  if (feature.kind === 'window') return <WindowInspector feature={feature} />;
   if (feature.stage === 'CARVE') return <ShellInspector feature={feature} />;
   if (feature.stage === 'PATTERN') {
     return (

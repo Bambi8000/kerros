@@ -93,8 +93,11 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
   const exportSheet = (which: number) => {
     const target = sheets.sheets[which - 1];
     if (!target) return;
-    const number = String(target.index).padStart(2, '0');
-    downloadText(`kerros-sheet-${number}.dxf`, writeDxfR12(sheetToDxf(target)));
+    const number = String(target.ordinal).padStart(2, '0');
+    downloadText(
+      `kerros-${target.material}-sheet-${number}.dxf`,
+      writeDxfR12(sheetToDxf(target)),
+    );
   };
 
   const exportAllSheets = () => {

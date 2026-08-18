@@ -674,6 +674,58 @@ export function modelBounds(
  * `res` is the sample count along the longest axis; the other axes get
  * whatever that spacing gives them, so voxels stay cubic.
  */
+/**
+ * Sample any field onto a grid over given bounds.
+ *
+ * Split out from `evaluateGrid` so callers that compose extra volumes on top of
+ * the tree — windows, for one — preview exactly the field they will slice,
+ * rather than a tree that no longer describes the model.
+ */
+export function evaluateGridSampled(
+  sample: (x: number, y: number, z: number) => number,
+  bounds: { min: [number, number, number]; max: [number, number, number] } | null,
+  res: number,
+  blendPad = 0,
+): SdfGrid {
+  if (!bounds) {
+    return {
+      data: new Float32Array([EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY]),
+      dims: [2, 2, 2],
+      min: [0, 0, 0],
+      step: 1,
+    };
+  }
+
+  const resolution = Math.max(8, Math.round(res));
+  const sizeX = bounds.max[0] - bounds.min[0];
+  const sizeY = bounds.max[1] - bounds.min[1];
+  const sizeZ = bounds.max[2] - bounds.min[2];
+  const longest = Math.max(sizeX, sizeY, sizeZ, 1);
+  const step = longest / resolution;
+  const pad = 3 * step + blendPad;
+
+  const minX = bounds.min[0] - pad;
+  const minY = bounds.min[1] - pad;
+  const minZ = bounds.min[2] - pad;
+  const nx = Math.ceil((sizeX + 2 * pad) / step) + 1;
+  const ny = Math.ceil((sizeY + 2 * pad) / step) + 1;
+  const nz = Math.ceil((sizeZ + 2 * pad) / step) + 1;
+
+  const data = new Float32Array(nx * ny * nz);
+  let idx = 0;
+  for (let k = 0; k < nz; k++) {
+    const z = minZ + k * step;
+    for (let j = 0; j < ny; j++) {
+      const y = minY + j * step;
+      for (let i = 0; i < nx; i++) {
+        data[idx++] = sample(minX + i * step, y, z);
+      }
+    }
+  }
+
+  return { data, dims: [nx, ny, nz], min: [minX, minY, minZ], step };
+}
+
 export function evaluateGrid(features: EvalFeature[], res: number): SdfGrid {
   const prepared = prepareFeatures(features);
   const bounds = modelBounds(features);

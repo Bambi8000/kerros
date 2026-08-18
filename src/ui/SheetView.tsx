@@ -594,7 +594,8 @@ export function SheetView({ sheets, pending }: Props) {
         <span className="slice-readout">
           {sheet ? (
             <>
-              Sheet {index} / {total} · {sheet.parts.length} parts ·{' '}
+              Sheet {index} / {total} · {sheet.material} {sheet.ordinal} ·{' '}
+              {sheet.parts.length} parts ·{' '}
               {(sheet.fill * 100).toFixed(0)}% of the bed
               {sheets.pinnedCount > 0 ? ` · ${sheets.pinnedCount} pinned` : ''}
               {selected ? (

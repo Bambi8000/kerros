@@ -191,6 +191,75 @@ Kerf and shell compose correctly without either knowing about the other: the
 compensated contour grows the outer ring by half a kerf and shrinks the inner
 by half a kerf, so the wall as cut ends up the thickness you asked for.
 
+## Windows — **shipped** (M8)
+
+`src/core/window.ts`. A wedge taken out of the form, and the piece that came
+out becomes a part in its own right — cut from something else and glued back
+in. Plexi in cardboard: the stack stays opaque and the windows pass the light.
+
+### One definition, two parts
+
+The wedge is an angular sector as a distance field, and that is what makes both
+halves fall out of one thing:
+
+```
+stock  = solid MINUS sector
+window = solid AND   sector, shrunk by the fit clearance
+```
+
+Both go through the same slicer on the same layer planes, so **the plug's edge
+and the hole it fills are the same curve by construction**, not because two
+pieces of code agree about a wedge.
+
+| Param | Meaning | Default |
+| --- | --- | --- |
+| `count` | windows evenly around the axis | 4 |
+| `width` | angular width of each, degrees | 40 |
+| `angle` | where the first one points | 0 |
+| `twist` | degrees the set turns per mm of height | 0 |
+| `pz` `length` | middle and height of the window band | model centre, 60% |
+| `fit` | total clearance between plug and hole, mm | 0.4 |
+| `windowKerf` | kerf of the material the plug is cut from | stock kerf |
+
+`twist` spirals the windows up the stack, so no two layers line up — the same
+idea as turning the perforation lattice per layer, and the same reason.
+
+### Kerf pulls the two apart in opposite directions
+
+This is the part that has to be right or nothing fits. The hole is a hole, so
+its path is cut **narrow** and burns out to size. The plug is a part, so its
+path is cut **wide** and burns down to size. With a 0.4 mm fit, a 0.2 mm stock
+kerf and a 0.1 mm plexi kerf, the two cut paths differ by only 0.1 mm — while
+the finished pieces differ by the full 0.4 mm.
+
+The validator slices both, solves for where each contour crosses a measuring
+circle, and asserts **both** numbers: the cut paths differ by the fit less both
+kerfs, and the finished pieces differ by the fit. A test that only looked at the
+cut paths would have called a correct implementation broken, which is exactly
+what happened on the first run.
+
+### The width ceiling
+
+Windows that met would merge into one opening and the ring would fall into
+loose arcs, so the half-angle is capped at 90% of each window's share of the
+circle, and never past a right angle — beyond which the two-half-plane form the
+wedge is built from stops being exact. The inspector says when it has clamped
+and why.
+
+### Materials never share a sheet
+
+`nestByMaterial()` groups parts by material and nests each group separately.
+Cardboard and plexi are never on the machine at once, so they are never on the
+same sheet. Sheets keep a global index for the viewer and an **ordinal within
+their own material** for the filename, so `kerros-window-sheet-01.dxf` means
+what it says. Grouping is sorted by material name so the order does not depend
+on which part happened to come first.
+
+A real run — a 120 mm sphere, 10 mm shell, five windows twisting 1.2°/mm —
+gives 14 stock layers and 8 window layers, 46 cardboard parts on one sheet and
+40 plexi plugs on another, with each windowed layer coming apart into five
+separate arcs.
+
 ## RIG — **shipped in part** (M3)
 
 `src/core/rig.ts`. Rods now; spacer rings in M4; E27 mount, cable cavity and

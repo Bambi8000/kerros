@@ -3,7 +3,7 @@ import { rodsFromFeatures, useKerros } from '../core/store';
 import { spacerHeightAchieved, spacerPlans } from '../core/rig';
 import type { SpacerPlan } from '../core/rig';
 import { buildParts } from '../core/job';
-import { analyseSheet, applyPlacements, nestParts } from '../core/nest';
+import { analyseSheet, applyPlacements, nestByMaterial } from '../core/nest';
 import type { NestResult, SheetReport } from '../core/nest';
 import type { SliceSet } from '../core/slice';
 
@@ -34,7 +34,10 @@ const EMPTY: SheetResult = {
  * runs synchronously off a memo rather than a debounce, and re-runs whenever
  * the slices or the bed change.
  */
-export function useSheets(slices: SliceSet | null): SheetResult {
+export function useSheets(
+  slices: SliceSet | null,
+  windows: { label: string; set: SliceSet }[] = [],
+): SheetResult {
   const features = useKerros((s) => s.features);
   const machine = useKerros((s) => s.machine);
   const thickness = useKerros((s) => s.material.thickness);
@@ -54,8 +57,8 @@ export function useSheets(slices: SliceSet | null): SheetResult {
       ? spacerPlans(rodsFromFeatures(features), slices.slices, spacerOptions)
       : [];
 
-    const parts = buildParts(slices, spacers);
-    const nested = nestParts(parts, {
+    const parts = buildParts(slices, spacers, windows);
+    const nested = nestByMaterial(parts, {
       sheetWidth: Math.max(machine.bedWidth - machine.margin * 2, 1),
       sheetHeight: Math.max(machine.bedHeight - machine.margin * 2, 1),
       gap: partGap,
@@ -64,10 +67,7 @@ export function useSheets(slices: SliceSet | null): SheetResult {
 
     // Manual placements go on last, so re-nesting rearranges everything except
     // what a person deliberately put somewhere.
-    const placed = applyPlacements(nested, partPlacements, {
-      width: Math.max(machine.bedWidth - machine.margin * 2, 1),
-      height: Math.max(machine.bedHeight - machine.margin * 2, 1),
-    });
+    const placed = applyPlacements(nested, partPlacements);
 
     // The real check: do the outlines actually meet, and is there enough room
     // between them. Bounding boxes cannot tell you either — a part nested into
@@ -89,6 +89,7 @@ export function useSheets(slices: SliceSet | null): SheetResult {
     };
   }, [
     slices,
+    windows,
     features,
     machine.bedWidth,
     machine.bedHeight,

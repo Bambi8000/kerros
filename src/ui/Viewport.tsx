@@ -4,14 +4,20 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM, useKerros } from '../core/store';
 import type { ViewName } from '../core/store';
-import { evaluateGrid, findModule, nearestFeatureIndex, num } from '../core/sdf';
+import { evaluateGridSampled, findModule, nearestFeatureIndex, num } from '../core/sdf';
 import type { Params } from '../core/sdf';
 import { surfaceNets } from '../core/surfaceNets';
 import { buildGeometry } from '../core/mesh';
 import { circleFitsInPart, groupContours } from '../core/slice';
 import type { SliceSet } from '../core/slice';
 import { rodDiameter, rodSpan } from '../core/rig';
-import { hasTransform, isFieldFeature, rodSpanOf, rodsFromFeatures } from '../core/store';
+import {
+  composeField,
+  hasTransform,
+  isFieldFeature,
+  rodSpanOf,
+  rodsFromFeatures,
+} from '../core/store';
 import type { Feature } from '../core/types';
 
 /**
@@ -720,9 +726,11 @@ export function Viewport({ slices }: ViewportProps) {
 
       if (useKerros.getState().mode === 'stack') return;
 
-      const shapes = features.filter(isFieldFeature);
       const started = performance.now();
-      const grid = evaluateGrid(shapes, previewRes);
+      // The composed field, so a window shows as a gap in the preview rather
+      // than appearing only once the model is sliced.
+      const field = composeField(features, 0);
+      const grid = evaluateGridSampled(field.sample, field.bounds, previewRes);
       const mesh = surfaceNets(grid);
       const elapsed = performance.now() - started;
 

@@ -19,7 +19,12 @@ export interface PartGeometry {
   id: string;
   /** Engraved on the part, e.g. 'L07'. */
   label: string;
-  kind: 'slice' | 'spacer';
+  kind: 'slice' | 'spacer' | 'window';
+  /**
+   * What this part is cut from. Parts of different materials never share a
+   * sheet, because they are never on the machine at the same time.
+   */
+  material?: string;
   /** Outer boundary as a closed ring, always present. */
   outer: number[];
   /** Set when the outline is exactly a circle, so export can emit CIRCLE. */
@@ -64,6 +69,10 @@ export interface PlacedPart extends PartGeometry {
 
 export interface Sheet {
   index: number;
+  /** Material every part on this sheet is cut from. */
+  material: string;
+  /** Position within this material's own run of sheets, from 1. */
+  ordinal: number;
   parts: PlacedPart[];
   /** How much of the usable area the bounding boxes take up, 0..1. */
   fill: number;
@@ -264,13 +273,21 @@ export function nestParts(parts: PartGeometry[], options: NestOptions): NestResu
     sheet = undefined;
   };
 
+  const material = parts.length > 0 ? parts[0].material ?? 'stock' : 'stock';
+
   const openSheet = (): Sheet => {
     closeSheet();
     cursorX = 0;
     shelfY = 0;
     shelfHeight = 0;
     usedArea = 0;
-    return { index: sheets.length + 1, parts: [], fill: 0 };
+    return {
+      index: sheets.length + 1,
+      material,
+      ordinal: sheets.length + 1,
+      parts: [],
+      fill: 0,
+    };
   };
 
   for (const { part, bbox } of measured) {
@@ -492,8 +509,11 @@ export function applyPlacements(
     for (const part of parts) {
       used += (part.bbox.maxX - part.bbox.minX) * (part.bbox.maxY - part.bbox.minY);
     }
+    const source = result.sheets[i - 1];
     sheets.push({
       index: i,
+      material: source ? source.material : 'stock',
+      ordinal: source ? source.ordinal : i,
       parts,
       fill: sheetArea > 0 ? used / sheetArea : 0,
     });
@@ -852,4 +872,43 @@ export function scatterRotations(
     out[id] = Math.round((random() * 2 - 1) * maxAngle * 10) / 10;
   });
   return out;
+}
+
+/**
+ * Nest each material onto its own sheets.
+ *
+ * Cardboard and plexi are never on the machine at the same time, so they are
+ * never on the same sheet. Sheets keep a global index for the viewer and an
+ * ordinal within their own material for the filename, so "plexi sheet 1" means
+ * what it says.
+ */
+export function nestByMaterial(parts: PartGeometry[], options: NestOptions): NestResult {
+  const groups = new Map<string, PartGeometry[]>();
+  for (const part of parts) {
+    const material = part.material ?? 'stock';
+    const group = groups.get(material);
+    if (group) group.push(part);
+    else groups.set(material, [part]);
+  }
+
+  // Sorted so the order does not depend on which part happened to come first.
+  const materials = Array.from(groups.keys()).sort();
+
+  const sheets: Sheet[] = [];
+  const unplaced: PartGeometry[] = [];
+
+  for (const material of materials) {
+    const nested = nestParts(groups.get(material) as PartGeometry[], options);
+    for (const sheet of nested.sheets) {
+      sheets.push({
+        ...sheet,
+        index: sheets.length + 1,
+        material,
+        ordinal: sheet.index,
+      });
+    }
+    unplaced.push(...nested.unplaced);
+  }
+
+  return { sheets, unplaced };
 }

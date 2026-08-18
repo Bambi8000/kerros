@@ -30,7 +30,11 @@ function layerLabel(slice: Slice, partIndex: number, partCount: number): string 
  * preview: a hole that crosses a contour is not cuttable, and it must not
  * reach the DXF either.
  */
-export function buildParts(set: SliceSet, spacers: SpacerPlan[]): PartGeometry[] {
+export function buildParts(
+  set: SliceSet,
+  spacers: SpacerPlan[],
+  windows: { label: string; set: SliceSet }[] = [],
+): PartGeometry[] {
   const parts: PartGeometry[] = [];
 
   for (const slice of set.slices) {
@@ -40,6 +44,7 @@ export function buildParts(set: SliceSet, spacers: SpacerPlan[]): PartGeometry[]
         id: `slice-${slice.index}-${i}`,
         label: layerLabel(slice, i, groups.length),
         kind: 'slice',
+        material: 'stock',
         outer: group.outer.points,
         holes: group.holes.map((h) => h.points),
         circles: slice.circles
@@ -56,10 +61,33 @@ export function buildParts(set: SliceSet, spacers: SpacerPlan[]): PartGeometry[]
         id: `spacer-${plan.rodId}-${i}`,
         label: plan.label.length <= 4 ? plan.label : 'SP',
         kind: 'spacer',
+        material: 'stock',
         outer: circlePoints(0, 0, plan.outerR),
         outerCircle: { x: 0, y: 0, r: plan.outerR },
         holes: [],
         circles: [{ x: 0, y: 0, r: plan.innerR }],
+      });
+    }
+  }
+
+  // Window plugs are cut from something else, so they carry their own material
+  // and never share a sheet with the stock.
+  for (const window of windows) {
+    for (const slice of window.set.slices) {
+      const groups = groupContours(slice.contours);
+      groups.forEach((group, i) => {
+        parts.push({
+          id: `window-${window.label}-${slice.index}-${i}`,
+          label: `W${String(slice.index).padStart(2, '0')}${
+            groups.length > 1 ? String.fromCharCode(65 + i) : ''
+          }`,
+          kind: 'window',
+          material: 'window',
+          outer: group.outer.points,
+          holes: group.holes.map((h) => h.points),
+          circles: [],
+          layer: slice.index,
+        });
       });
     }
   }
@@ -170,6 +198,17 @@ export function manifestText(input: ManifestInput): string {
   }
   lines.push(`Layers     ${set.slices.length}`);
   lines.push(`Sheets     ${sheets.length}`);
+  const byMaterial = new Map<string, number>();
+  for (const sheet of sheets) {
+    byMaterial.set(sheet.material, (byMaterial.get(sheet.material) ?? 0) + 1);
+  }
+  if (byMaterial.size > 1) {
+    lines.push(
+      `           ${Array.from(byMaterial.entries())
+        .map(([m, n]) => `${n} ${m}`)
+        .join(', ')}`,
+    );
+  }
   lines.push('');
 
   lines.push('LAYERS');
@@ -201,7 +240,10 @@ export function manifestText(input: ManifestInput): string {
   lines.push('SHEETS');
   for (const sheet of sheets) {
     const labels = sheet.parts.map((p) => p.label).join(' ');
-    lines.push(`  Sheet ${sheet.index}: ${sheet.parts.length} parts, ${(sheet.fill * 100).toFixed(0)}% of the bed`);
+    lines.push(
+      `  Sheet ${sheet.index} (${sheet.material} ${sheet.ordinal}): ` +
+        `${sheet.parts.length} parts, ${(sheet.fill * 100).toFixed(0)}% of the bed`,
+    );
     lines.push(`    ${labels}`);
   }
   lines.push('');
