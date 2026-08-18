@@ -9,7 +9,7 @@
  *   node tools/check-version.mjs
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -30,6 +30,22 @@ if (pkg.version !== constant) {
   console.error(`FAIL  package.json ${pkg.version} != src/version.ts ${constant}`);
   console.error(`      fix with: npm pkg set version=${constant}`);
   process.exit(1);
+}
+
+// The native shell reads its version from package.json by reference, so there
+// is no third copy to drift. Check that the reference is still there rather
+// than checking a number.
+const tauriPath = join(root, 'src-tauri/tauri.conf.json');
+if (existsSync(tauriPath)) {
+  const tauri = JSON.parse(readFileSync(tauriPath, 'utf8'));
+  if (tauri.version !== '../package.json') {
+    console.error(
+      `FAIL  src-tauri/tauri.conf.json pins version ${JSON.stringify(tauri.version)};` +
+        ' it should be "../package.json" so there is only one number to bump',
+    );
+    process.exit(1);
+  }
+  console.log('OK    the native shell takes its version from package.json');
 }
 
 console.log(`OK    version ${constant} matches in package.json and src/version.ts`);

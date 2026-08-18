@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { PREVIEW_RESOLUTIONS, SLICE_RESOLUTIONS, useKerros } from '../core/store';
 import { layerPitch } from '../core/types';
 import type { GapReport, SliceSet } from '../core/slice';
@@ -7,7 +7,15 @@ import { manifestText, sheetToDxf } from '../core/job';
 import { KERROS_VERSION } from '../version';
 import { parseProject, projectFilename, serializeProject } from '../core/project';
 import { NumberField } from './NumberField';
-import { downloadText, readTextFile } from './download';
+import {
+  currentExportFolder,
+  forgetExportFolder,
+  isNative,
+  openText,
+  saveMany,
+  saveText,
+} from './download';
+import type { SaveOutcome } from './download';
 import type { SheetResult } from './useSheets';
 
 interface Props {
@@ -20,8 +28,18 @@ interface Props {
 export function ProfilePanel({ slices, reports, sheets }: Props) {
   const projectName = useKerros((s) => s.projectName);
   const setProjectName = useKerros((s) => s.setProjectName);
-  const [loadMessage, setLoadMessage] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
+  const [folder, setFolder] = useState<string | null>(currentExportFolder());
+
+  /** One place to announce what a save did, so every button behaves the same. */
+  const announce = (outcome: SaveOutcome) => {
+    setFolder(currentExportFolder());
+    if (outcome.cancelled) {
+      setNotice(null);
+      return;
+    }
+    setNotice({ kind: outcome.ok ? 'ok' : 'bad', text: outcome.message });
+  };
   const machine = useKerros((s) => s.machine);
   const material = useKerros((s) => s.material);
   const stack = useKerros((s) => s.stack);
@@ -90,28 +108,28 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
     stack.spacerHeight > 0 &&
     Math.abs(sheets.spacerAchieved - stack.spacerHeight) > 1e-6;
 
-  const exportSheet = (which: number) => {
+  const sheetFile = (target: SheetResult['sheets'][number]) => ({
+    name: `kerros-${target.material}-sheet-${String(target.ordinal).padStart(2, '0')}.dxf`,
+    contents: writeDxfR12(sheetToDxf(target)),
+  });
+
+  const exportSheet = async (which: number) => {
     const target = sheets.sheets[which - 1];
     if (!target) return;
-    const number = String(target.ordinal).padStart(2, '0');
-    downloadText(
-      `kerros-${target.material}-sheet-${number}.dxf`,
-      writeDxfR12(sheetToDxf(target)),
-    );
+    announce(await saveText(sheetFile(target)));
   };
 
-  const exportAllSheets = () => {
-    // Spaced out: browsers throttle a burst of downloads from one gesture.
-    sheets.sheets.forEach((target, i) => {
-      window.setTimeout(() => exportSheet(target.index), i * 350);
-    });
+  const exportAllSheets = async () => {
+    announce(await saveMany(sheets.sheets.map(sheetFile)));
   };
 
-  const exportManifest = () => {
+  const exportManifest = async () => {
     if (!slices) return;
-    downloadText(
-      'kerros-manifest.txt',
-      manifestText({
+    announce(
+      await saveText(
+        {
+          name: 'kerros-manifest.txt',
+          contents: manifestText({
         set: slices,
         sheets: sheets.sheets,
         spacers: sheets.spacers,
@@ -121,40 +139,54 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
         kerf: material.kerf,
         spacerHeight: stack.spacerHeight,
         spacerAchieved: sheets.spacerAchieved,
-        version: KERROS_VERSION,
-      }),
-      'text/plain',
+            version: KERROS_VERSION,
+          }),
+        },
+        'text/plain',
+      ),
     );
   };
 
-  const saveProject = () => {
+  const saveProject = async () => {
     const data = useKerros.getState().projectData();
-    downloadText(
-      projectFilename(data.name),
-      serializeProject(data, KERROS_VERSION, new Date().toISOString()),
-      'application/json',
+    announce(
+      await saveText(
+        {
+          name: projectFilename(data.name),
+          contents: serializeProject(data, KERROS_VERSION, new Date().toISOString()),
+        },
+        'application/json',
+      ),
     );
-    setLoadMessage({ kind: 'ok', text: `Saved ${projectFilename(data.name)}` });
   };
 
-  const loadProject = async (file: File) => {
-    const result = parseProject(await readTextFile(file));
+  const loadProject = async () => {
+    const picked = await openText(['json'], '.json,.kerros.json,application/json');
+    if (!picked) return;
+
+    const result = parseProject(picked.contents);
     if (!result.ok || !result.data) {
-      setLoadMessage({ kind: 'bad', text: result.error ?? 'That file could not be read.' });
+      setNotice({ kind: 'bad', text: result.error ?? 'That file could not be read.' });
       return;
     }
+
     useKerros.getState().applyProject(result.data, result.nextFeatureNumber);
-    setLoadMessage({
+    setNotice({
       kind: 'ok',
       text:
         result.warnings.length > 0
           ? `Opened with ${result.warnings.length} warning${result.warnings.length === 1 ? '' : 's'}: ${result.warnings[0]}`
-          : `Opened ${file.name}`,
+          : 'Opened',
     });
   };
 
-  const exportKerfTest = () => {
-    downloadText('kerros-kerf-test.dxf', writeDxfR12(kerfTestDocument()));
+  const exportKerfTest = async () => {
+    announce(
+      await saveText({
+        name: 'kerros-kerf-test.dxf',
+        contents: writeDxfR12(kerfTestDocument()),
+      }),
+    );
   };
 
   const pitch = layerPitch(material, stack);
@@ -175,32 +207,14 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
             />
           </span>
         </label>
-        <button type="button" className="btn btn-wide" onClick={saveProject}>
+        <button type="button" className="btn btn-wide" onClick={() => void saveProject()}>
           Save project
         </button>
-        <button
-          type="button"
-          className="btn btn-wide"
-          onClick={() => fileRef.current?.click()}
-        >
+        <button type="button" className="btn btn-wide" onClick={() => void loadProject()}>
           Open project…
         </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".json,.kerros.json,application/json"
-          style={{ display: 'none' }}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            // Cleared so picking the same file twice still fires a change.
-            e.target.value = '';
-            if (file) void loadProject(file);
-          }}
-        />
-        {loadMessage ? (
-          <div className={loadMessage.kind === 'bad' ? 'warn' : 'derived'}>
-            {loadMessage.text}
-          </div>
+        {notice ? (
+          <div className={notice.kind === 'bad' ? 'warn' : 'derived'}>{notice.text}</div>
         ) : null}
         <div className="derived">
           A .kerros.json holds the profiles, the whole feature tree, the seed
@@ -603,7 +617,7 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
           type="button"
           className="btn btn-wide"
           disabled={sheetIndex === 0}
-          onClick={() => exportSheet(sheetIndex)}
+          onClick={() => void exportSheet(sheetIndex)}
         >
           {sheetIndex > 0 ? `Export sheet ${sheetIndex} as DXF` : 'Export sheet as DXF'}
         </button>
@@ -611,7 +625,7 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
           type="button"
           className="btn btn-wide"
           disabled={sheetCount === 0}
-          onClick={exportAllSheets}
+          onClick={() => void exportAllSheets()}
         >
           {sheetCount > 1 ? `Export all ${sheetCount} sheets` : 'Export all sheets'}
         </button>
@@ -619,13 +633,41 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
           type="button"
           className="btn btn-wide"
           disabled={!slices}
-          onClick={exportManifest}
+          onClick={() => void exportManifest()}
         >
           Export build manifest
         </button>
-        <button type="button" className="btn btn-wide" onClick={exportKerfTest}>
+        <button type="button" className="btn btn-wide" onClick={() => void exportKerfTest()}>
           Export kerf test
         </button>
+        {isNative() ? (
+          <>
+            {folder ? (
+              <>
+                <div className="derived">
+                  Batch exports go to <code>{folder}</code>, chosen once for this
+                  session.
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-wide"
+                  onClick={() => {
+                    forgetExportFolder();
+                    setFolder(null);
+                    setNotice(null);
+                  }}
+                >
+                  Choose another folder
+                </button>
+              </>
+            ) : (
+              <div className="derived">
+                Exporting all sheets asks for a folder once and writes them all
+                there.
+              </div>
+            )}
+          </>
+        ) : null}
         <div className="derived">
           DXF R12, millimetres, CUT and ENGRAVE layers. Cuts are
           kerf-compensated at {material.kerf} mm; the kerf test deliberately is

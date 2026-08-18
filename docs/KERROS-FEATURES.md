@@ -1089,6 +1089,75 @@ perpendicular to the bed and no single kerf value will fix the fit.
 
 ---
 
+## Native shell — **shipped** (M10)
+
+Tauri 2 wraps the same Vite app in a native window. `src-tauri/` is a sibling of
+`src/` and does not touch it; `npm run dev` in a browser still works and is still
+the faster way to develop, because there is no compile step and reload is
+instant.
+
+`devUrl` points at **5180**, the port pinned in `vite.config.ts` with
+`strictPort` back in M0 for exactly this.
+
+### The Rust side does two things
+
+Host the window, and write a text file where the person said to put it. That is
+all.
+
+Writing is an **application command rather than the fs plugin**, deliberately.
+The plugin would need filesystem scopes declared in the capabilities file, and
+getting those subtly wrong shows up as a silent refusal at the worst possible
+moment. An application's own commands do not go through that ACL at all, so
+there is less to get wrong and the result is identical. The **dialog** plugin
+stays, because asking the operating system where to save is exactly what a
+plugin should be for — so `capabilities/default.json` grants `dialog:default`
+and nothing else.
+
+Path joining happens in Rust with `PathBuf`, so the separator is right on every
+platform rather than assumed.
+
+### One module changed
+
+`src/ui/download.ts` was made the single boundary for getting files out in M3,
+when there was nothing behind it but the browser download. This is where that
+pays: the native shell landed and **it is the only module that changed**. Sheet
+DXFs, the build manifest, the kerf test and the project file all went native at
+once, because they all already went through it.
+
+Two branches, one API:
+
+| | native | browser |
+| --- | --- | --- |
+| one file | save dialog | download to Downloads |
+| many files | one folder, chosen once | sequential downloads, 350 ms apart |
+| opening | open dialog | a file input created on the spot |
+
+**A folder is chosen once per session, not once per file.** Exporting eleven
+sheets should not mean eleven dialogs, and it should not mean eleven throttled
+downloads either. The chosen folder is shown in the panel with a button to
+change it, and it is forgotten if a write fails, since a folder that has gone
+away should not be remembered.
+
+Every save funnels through one `announce()` so the panel reports a path, a count
+or a failure the same way whichever button was pressed — and a dismissed dialog
+says nothing at all, because cancelling is not an error.
+
+### Version stays in one place
+
+`tauri.conf.json` sets `"version": "../package.json"` rather than a number, so
+the shell reads it by reference and there is no third copy to drift.
+`check-version.mjs` now asserts the **reference** is still there, which is the
+thing that can break, rather than comparing a number that cannot.
+
+### Known: the webview is slower than Chrome
+
+macOS uses WKWebView, so the JS engine is Safari's rather than V8. Kerros spends
+its time on plain numeric work — field sampling, marching squares, sculpt
+strokes — and V8 is roughly 1.5 to 2 times quicker at it. The Rust side is not
+the bottleneck; it only hosts the window. Lowering the preview resolution is the
+immediate answer; moving slicing to a Web Worker, promised in the handoff since
+M2, is the real one.
+
 ## Infrastructure
 
 ### World convention — M0
