@@ -1,268 +1,224 @@
-# KERROS — Project Handoff / Starting Notes (v0)
+# KERROS — Project Handoff
 
-Read this first when starting Kerros development. It captures the agreed design,
-the conventions inherited from the Muusia project, the pipeline, and the MVP
-plan. Once a repo exists, the repo is the source of truth; this file is the map
-and must be kept current (same doc-batch discipline as Muusia).
+Read this first when picking up Kerros development. It is the **map**: what the
+program is, how it is built, which of the original plan's decisions were
+overturned and why, and what is left. `docs/KERROS-FEATURES.md` is the
+**territory** — the module-by-module catalogue, kept current in the same batch as
+the code it describes. When the two disagree, FEATURES is right and this file is
+stale.
+
+**State at the time of writing: version 0.12.1.** The MVP as originally scoped is
+complete, plus two feature families that were not in the plan at all. Kerros has
+cut real lamps.
 
 ## What Kerros is
 
-A standalone desktop application for designing **sliced lamps**: generate or
-sculpt a 3D blob-like form, carve negative space into it, slice it along the
-Z axis into sheets of real material (plexi, cardboard, plywood), and export
-laser-ready DXF files. The physical result is a stack of laser-cut slices on
-threaded rods, with optional spacers between layers so light escapes through
-the gaps.
+A desktop application for designing **sliced lamps**. Build a blob-like form,
+hollow it, carve it, slice it along Z into sheets of real material, and export
+laser-ready DXF. The physical result is a stack of cut slices on threaded rods
+with spacers between them so light escapes through the gaps.
 
-Kerros is a **separate program from Muusia** — different repo, different
-architecture. No node graph: the UI paradigm is a **CAD-style feature tree**
-(ordered list of operations, each editable, whole model re-evaluated
-deterministically from the tree). The workspace is a true 3D world with
-multiple views. It does not need to be a hosted web app; it runs as a local
-desktop app.
+Daniel (Helsinki, AV/video systems and hardware maker) is the developer. Working
+language of dev sessions is **Finnish**; all code identifiers, GUI text and
+documentation are **English**. All randomness is seeded.
 
-Daniel (Helsinki, AV/video systems + hardware maker) is the developer. Working
-language of dev sessions is **Finnish**; all code identifiers, GUI text, and
-documentation are **English**. All randomness is **seeded** (deterministic
-re-evaluation, same principle as Muusia).
+The UI paradigm is a **CAD-style feature tree**, not a node graph: an ordered
+list of operations, each editable, the whole model re-evaluated deterministically
+from the tree.
 
-## Locked design decisions
+## The one architectural idea
 
-These were agreed in the planning session and are not open questions:
+**The model is a signed distance field evaluated analytically, point by point.**
+Not a voxel grid that gets edited — a function composed from the feature tree,
+sampled on demand at whatever resolution the caller needs.
 
-- **Platform**: web-stack desktop app — React + Vite + three.js. Start as a
-  plain local Vite app for dev speed; wrap in **Tauri** once native file I/O
-  matters (direct save of DXF/projects without the browser download dance —
-  a known pain point from Muusia).
-- **UI paradigm**: CAD feature tree, NOT a node graph.
-- **Geometry core**: SDF (signed distance field) on a voxel grid is the
-  working representation. Booleans are trivial (min/max/smooth-min), the
-  model is watertight by construction, and slicing falls out of evaluating
-  the field at a z-plane. Mesh preview via marching cubes.
-- **Shape creation**: BOTH parametric (SDF primitives + blend/subtract
-  groups) AND sculpt-style (brush strokes). Shape generators are a
-  **module/plugin system** — new designs/generators must be addable later
-  without touching the core.
-- **Machine profile**: laser bed is configurable. First machine: **730 × 410
-  mm** bed. The cutter may change; bed size, margin, and kerf live in
-  profiles, never hardcoded.
-- **Assembly system**: threaded rods **M3/M4/M5/M6/M8**, **6+ rods**
-  supported (arbitrary count), each freely positioned in XY **and given a
-  Z-span** — a rod does not have to pass through every slice; holes are
-  added only to slices inside the rod's span.
-- **Spacers between slices** are the primary mode (light escapes between
-  layers); **tight stacking** (spacer = 0) must also work. Spacer rings are
-  generated as laser-cut parts on the same sheets.
-- **Lamp rig parts**: E27 socket mount, cable cavity/channel, and a chamber
-  for Wago connectors. Rig parts are also extensible — more part types will
-  be added later.
-- **Wall patterns**: perforation/light patterns applied to the walls of the
-  slices (see Pattern stage below).
-- **Nesting**: slices are auto-laid-out onto bed-sized sheets, parts
-  separated by a configurable gap, layer numbers engraved.
-- **Export**: DXF R12, layers **CUT** and **ENGRAVE**, units mm — same
-  convention as Daniel's existing laser workflow and parametric Python
-  generators.
-- **Name**: Kerros (Finnish for "layer/storey"). Sibling naming to
-  Muusia (software) / Viivain (plotter).
+Almost every good outcome in this project follows from that, and so does almost
+every performance problem:
 
-## Pipeline (the feature tree top-to-bottom)
+- **Booleans are arithmetic.** `min`, `max`, and their smooth variants.
+- **Kerf compensation is one number.** Take the contour at iso-level `+kerf/2`
+  instead of 0 and outer boundaries grow while holes shrink, because the field's
+  sign already knows which side the material is on. This is why Kerros needs no
+  polygon offsetting library, which the original plan required.
+- **Nothing has a resolution.** Sculpt strokes, imports aside, give the same
+  surface whether the preview samples at 32 or the slicer at 300. The plan
+  expected to have to record grid resolutions in features to keep replays stable;
+  there is nothing to record.
+- **Slicing is sampling a plane.** No mesh intersection.
+- **The cost is per-sample work.** Every feature that cannot be rejected cheaply
+  is walked at every sample, which is why sculpt strokes and mesh imports both
+  needed spatial indices, and why the second attempt at each index was the one
+  that worked.
 
-The feature tree is an ordered list. Re-evaluating the tree from top to
-bottom always reproduces the same model (seeded, deterministic). Stages:
+## Where the plan was wrong
 
-### 1. SHAPE
-- SDF primitives: sphere, capsule, box (rounded), torus, superellipsoid,
-  ellipsoid; each with transform + params.
-- Combine ops: union, smooth union (blend radius), subtract, smooth
-  subtract, intersect. Blob/metaball aesthetics come from smooth union.
-- **Sculpt features**: a sculpt feature records a list of brush strokes;
-  each stroke is a list of stamped capsules (position, radius, op:
-  add/subtract/smooth). Strokes are replayed onto the SDF grid on
-  re-evaluation. This keeps sculpting deterministic, undoable
-  (stroke-level), and serializable in the project file.
-- **Import feature**: STL/OBJ → SDF via distance queries against a BVH
-  (three-mesh-bvh) with inside/outside from raycast parity or winding
-  number. Import lands as one feature row; the rest of the tree operates
-  on it like any other volume.
-- Generators are modules: a generator module exports
-  `{ key, name, params, evalSDF(p, params) }` (exact contract to be
-  specced in KERROS-MODULE-API.md when the first external module is
-  written). New designs = new module files.
+These are the decisions the original handoff got backwards. Each cost real
+debugging, and each is documented at length in FEATURES. Do not quietly revert
+them.
 
-### 2. CARVE
-- Negative volumes: any SHAPE-stage construct in subtract mode (smooth
-  subtract gives organic cavities).
-- **Shell**: hollow the model with a wall-thickness parameter. Essential
-  for a lamp (bulb sits in the cavity). Shell = `abs(d) - t/2` on the SDF,
-  optionally only below a z-limit so the top can stay closed.
+| Plan | What shipped | Why |
+| --- | --- | --- |
+| Clipper/WASM for kerf offsetting | iso-level shift | the field does it exactly, with no self-intersection to clean up |
+| Marching cubes for preview | surface nets | no 256×16 table to mistype; rounder edges, which only affect preview |
+| RDP simplify, then Chaikin smooth | **Chaikin, then RDP** | simplify-first collapses a 90° corner to one vertex, and Chaikin then eats 15% of a square |
+| one spacer ring per gap | `round(spacer / thickness)` rings | a ring is one sheet thick; 6 mm from 3 mm plexi is two rings |
+| three-mesh-bvh for imports | own broad phase | it is a three.js dependency, and the validators load the field in Node with no three |
+| bake sculpt strokes to the grid, record the resolution | evaluate strokes analytically | removes the drift instead of managing it |
+| shell as `abs(d) - t/2` | `max(d, -(d + t))` | the abs form quietly shrinks the silhouette by half a wall |
+| pattern region by offsetting contours | in-plane distance to the slice's own rings | the 3D field under-reports depth near a curved top and empties the middle of a solid slice |
 
-### 3. RIG (assembly features)
-- **Rod**: metric size (M3–M8; clearance hole table 3.2/4.3/5.3/6.4/8.4 mm,
-  overridable), XY position (draggable in the top view), Z-span
-  [zStart, zEnd]. Adds a clearance hole to every slice whose mid-plane
-  falls in the span. Unlimited count; 6+ is the design case.
-- **Spacer generation**: per-rod ring parts (ID = rod clearance, OD
-  parametric), one per gap in the rod's span, emitted as cut parts into
-  the LAYOUT stage. Global default spacer height (= extra layer pitch),
-  overridable per gap later (roadmap).
-- **E27 mount**: parametric socket-mount feature applied to a designated
-  slice: center hole for the socket's threaded tube (default M10 nipple
-  hole 10.5 mm, or full socket-body hole ~40.5 mm — parametric, verify
-  against the actual socket before first cut), optional screw holes.
-- **Cable cavity**: vertical channel (capsule or rounded-rect cross
-  section) subtracted through a chosen z-range — becomes a hole in each
-  affected slice.
-- **Wago chamber**: box cavity across a chosen span of slices (a pocket
-  in the stack), with a defined access direction.
-- Rig parts are modules too — same extensibility contract as generators.
+## The recurring failure mode
 
-### 4. SLICE
-- Layer pitch = material thickness + spacer height. Slice k's mid-plane
-  z_k = z0 + k·pitch + thickness/2. MVP samples the SDF at the mid-plane;
-  roadmap: top/bottom-plane intersection or min/max union per layer for
-  stepped-accuracy on steep walls.
-- SDF plane sample → marching squares → contours (outer boundaries +
-  holes, orientation by signed area) → RDP simplify + Chaikin smooth →
-  polygon set per slice.
-- **Kerf compensation**: outer contours offset outward by kerf/2, holes
-  offset inward by kerf/2 (Clipper-style polygon offsetting). Kerf comes
-  from the material profile.
-- Slice inspector view: step through layers in 2D, see contours, holes,
-  rod holes, patterns.
+**Silence read as a bug, four times.** Spacers with no rods. A perforation with
+no room. A gizmo writing parameters nothing read. An import with no gizmo at all.
+Every time the program did the correct thing and said nothing, and every time it
+was reported as broken.
 
-### 5. PATTERN (wall perforation)
-- Applied per-slice in 2D, NOT as 3D volume subtraction (manufacturability
-  first): the pattern region is the wall band between the outer contour and
-  the inner (shell) contour, inset by a margin. Pattern generators (seeded):
-  hole grids, seeded scatter, stripes, voronoi cells, ring segments.
-- **Min bridge width** parameter guarantees the slice stays in one piece
-  and survives cutting/handling — every pattern generator must respect it.
-- Pattern generators are modules (same plugin contract).
-- 3D volumetric patterns (carved through multiple layers) go to roadmap.
+The rule that came out of it, and which is now honoured throughout: **a check
+that refuses to do something is obliged to say what it refused and why.** Counts
+of what was placed, what did not fit, and what it would have needed.
 
-### 6. LAYOUT (nesting)
-- Sheets = machine bed minus margin. MVP nesting: bounding-box shelf
-  packing with a configurable part gap ("palat irti toisistaan" on the
-  sheet). True-shape nesting is roadmap.
-- Every part carries its layer number engraved (simple stroke font — the
-  Muusia SFONT approach can be ported) + optional orientation tick so
-  asymmetric slices can't be assembled rotated.
-- Spacer rings and rig plates flow into the same nesting pool.
-- Multi-sheet output when parts don't fit one sheet.
+## The other recurring one
 
-### 7. EXPORT
-- DXF R12 per sheet: POLYLINE/VERTEX entities (LWPOLYLINE is R13+ — do not
-  use it in R12 output), layers CUT and ENGRAVE, units mm. Writer is a
-  small in-house module; Daniel's existing Python DXF R12 generators are
-  the reference for what the target laser accepts.
-- Assembly aid: exploded-stack render + a per-layer manifest (layer number,
-  z, sheet, rods passing through).
-- Project save/load: `.kerros.json` — machine + material profiles snapshot,
-  full feature tree including sculpt strokes, seeds, app version.
+**Things that do not follow the form when the form moves**, three times: windows,
+sculpt strokes, imports. A shell follows for free because it acts on the
+accumulated field. Anything that is its own volume needs either a position of its
+own or a frame to live in.
 
-## Views
+The general answer is **attachment**: geometry stored in a parent's coordinates,
+with the query point transformed into that frame at evaluation. Sculpt strokes
+and windows use it. Fixtures still do not — they are the last thing that stays
+behind, and if you find yourself dragging a socket hole after a moved shape, that
+is the fix, not a new feature.
 
-- **Perspective orbit** (main modeling view; sculpting happens here).
-- **Orthographic top/front/side** (rod placement primarily in top view).
-- **Slice inspector**: 2D, one layer at a time with prev/next.
-- **Exploded stack**: 3D preview of the physical result with real layer
-  pitch (thickness + spacers), per-layer visibility. Spiritual sibling of
-  Muusia's Stack View, but true 3D geometry.
-- Roadmap: "lamp preview" with an emissive light source in the cavity.
+## Module map
 
-## Profiles
+Core modules with **no value imports** are loaded directly by Node validators as
+the real thing, never stubs. That constraint is load-bearing: keep it.
 
-- **Machine profile**: name, bed W×H mm (default 730×410), sheet margin.
-- **Material profile**: name, thickness mm, kerf mm, notes (power/speed
-  are the laser's business, but a free-text note field helps). Kerf values
-  are calibrated with a test figure (small square + circle + slot ladder)
-  cut per material — a built-in "kerf test" export is an early feature.
+```
+src/core/
+  sdf.ts          the field: primitives, ops, modifiers, sculpt strokes,
+                  import steps, frames, grid evaluation          [no imports]
+  slice.ts        marching squares, simplify, smooth, grouping,
+                  kerf iso-level, thin-feature and fit checks    [no imports]
+  surfaceNets.ts  isosurface extraction for the preview mesh     [no imports]
+  window.ts       angular sector wedges, per-layer rolls         [no imports]
+  fixture.ts      E27 mount, cable channel, Wago chamber         [no imports]
+  pattern.ts      perforation generators, EdgeIndex              [no imports]
+  rig.ts          rod clearances, spans, spacer ring planning    [no imports]
+  nest.ts         shelf packing, placement, collision, rotation  [no imports]
+  font.ts         stroke font for engraved labels                [no imports]
+  dxf.ts          DXF R12 writer, kerf test figure               [no imports]
+  project.ts      .kerros.json read and write                    [no imports]
+  meshImport.ts   STL binary/ASCII and OBJ parsing               [no imports]
+  voxelise.ts     triangle soup to signed grid                   [no imports]
+  types.ts        Feature, stages, layer pitch
+  profiles.ts     machine and material defaults
+  mesh.ts         surface nets output to three.js geometry
+  job.ts          composition: parts, sheets, manifest           (imports freely)
+  store.ts        zustand state and all feature actions          (imports freely)
+```
 
-## Tech stack (pinned intentions)
+`job.ts` and `store.ts` are the wiring layers and the only ones that import
+across the others. `job.ts` is deliberately thin; every algorithm it calls is
+validated on its own.
 
-- React + Vite, three.js for all 3D. TypeScript from day one (geometry
-  code with plain JS was a recurring bug source in Muusia).
-- SDF voxel grid in a Float32Array; two resolutions: coarse while editing
-  (fast marching cubes preview), fine for slicing. Marching cubes and
-  marching squares implemented in-house (small, and full control over
-  determinism) or from a vetted small dependency.
-- three-mesh-bvh for STL import distance/inside queries.
-- Polygon offsetting (kerf) via a Clipper port (js-angusj-clipper WASM or
-  clipper-lib) — plain polygon-clipping libs don't do offsets.
-- Web Worker for slicing + nesting so the viewport never freezes.
-- Tauri wrap when file I/O pain justifies it; before that, plain Vite dev
-  server locally is fine ("does not need to run in a browser" means no
-  hosted-web constraint, not a ban on web tech).
+## Conventions, binding
 
-## Conventions inherited from Muusia (binding)
+- **Z up, 1 unit = 1 mm.** three.js defaults to Y-up, so every camera sets `up`
+  explicitly. Rotations use R = Rz·Ry·Rx, which is three.js Euler order `ZYX` —
+  pinned by a validator, because the gizmo and the field must agree or a rotated
+  part jumps the moment its value round-trips.
+- **Layer pitch is derived in one place**, `layerPitch()` in `types.ts`. Nothing
+  else computes it.
+- **Bed size and kerf come from profiles**, never hardcoded in geometry code.
+- **All randomness seeded**, and seeded so that adjusting a setting does not
+  reroll a choice. Per-layer window rolls key on the layer number; scatter keys
+  on part index; changing a count must not change which layers were chosen.
+- **Every geometry module gets a validator** in `tools/validate-<name>.mjs`,
+  importing the real module. Twelve of them, run by `npm run check`.
+- **Version lives in one place.** `src/version.ts` and `package.json` must agree;
+  `tauri.conf.json` reads `"../package.json"` by reference so there is no third
+  copy. `check-version.mjs` asserts the reference is still there.
+- **Docs batch immediately after every push**, never deferred: this file plus
+  `docs/KERROS-FEATURES.md`.
+- **Command blocks copy-paste ready**, zsh-safe, expected output stated, no `#`
+  comments in interactive commands.
+- **Design before code**: plan the feature completely, then implement.
+- **No error boundary means one throw whites out the app.** There are four,
+  around the app, the viewport, the feature tree and the right-hand panel.
 
-- Finnish sessions; English code, GUI, docs.
-- All randomness seeded; a project file must re-evaluate to identical
-  geometry. `mulberry32`-style PRNG.
-- Every geometry module gets a Node.js validator
-  (`tools/validate-<name>.mjs`) run before it ships; validators import the
-  REAL shared helpers, never stubs (harness drift caused silent
-  lab-pass/ship-fail bugs in Muusia repeatedly).
-- Docs batch immediately after every push, never deferred: this handoff +
-  a KERROS-FEATURES.md (feature/module catalog, the NODES.md equivalent).
-- Version constant in one place; verify with grep after every bump; never
-  assume repo state from conversation memory — parallel sessions move the
-  repo.
-- Command blocks delivered copy-paste-ready, zsh-safe, expected output
-  stated, no `#` comments in interactive commands. Downloaded files are
-  moved into place by the command block itself (newest-file `find | ls -t
-  | head -1` pattern) — until Tauri removes the download dance entirely.
-- Design before code: plan the feature completely, then implement.
+## Pipeline as built
 
-## MVP milestones (order negotiable, scope not)
+Feature tree stages evaluate in order. A shell or a window applies where it sits,
+so sculpting a spout and then shelling hollows the spout too.
 
-- **M0** — Repo scaffold: Vite + React + TS + three.js; orbit + ortho
-  views; machine/material profile UI; empty feature tree panel.
-- **M1** — SDF core: primitives, smooth ops, voxel grid, marching-cubes
-  preview, feature tree CRUD with re-evaluation.
-- **M2** — Slicing: pitch from material + spacer, marching squares →
-  contours, slice inspector, exploded stack view.
-- **M3** — Rods with Z-span + clearance holes; DXF R12 export of one
-  sheet (CUT layer); kerf offset; kerf test figure export.
-- **M4** — Nesting (shelf packing, part gap), multi-sheet, layer-number
-  ENGRAVE, spacer ring generation.
-- **M5** — Shell + carve (smooth subtract volumes).
-- **M6** — Sculpt brushes (add/subtract/smooth strokes on the grid).
-- **M7** — Wall patterns (module API, 2–3 built-in generators, min bridge
-  width).
-- **M8** — Rig parts: E27 mount, cable cavity, Wago chamber.
-- **M9** — STL/OBJ import.
-- **M10** — Tauri wrap: native open/save, direct DXF write to disk.
+1. **SHAPE** — six SDF primitives (sphere, rounded box, capsule, torus,
+   ellipsoid, superellipsoid) with six combine ops; sculpt strokes; mesh
+   imports. No scale parameter on primitives, deliberately; imports carry a
+   **uniform** scale, which preserves the field.
+2. **CARVE** — shell with optional solid caps; windows, which subtract a wedge
+   and emit the removed piece as a part in another material.
+3. **RIG** — rods with Z-span and clearance holes, spacer rings, and the lamp
+   fixtures.
+4. **SLICE** — mid-plane sampling, marching squares, Chaikin then RDP, kerf at
+   the iso-level, thin-feature check.
+5. **PATTERN** — perforation per slice, four generators, one bridge-width test
+   they all funnel through.
+6. **LAYOUT** — shelf nesting per material, stroke-font layer numbers engraved,
+   manual placement with pinning and rotation, true-shape collision reporting.
+7. **EXPORT** — DXF R12 per sheet, build manifest, kerf test figure, project
+   file. Native save dialogs through Tauri; the browser download path still
+   works.
 
-After M4 the program already produces a buildable lamp (blob + shell via
-primitives, rods, spacers, cut files) — everything later is expressive
-power.
+Four workspace modes: **Model** (preview, direct manipulation, sculpting),
+**Slice** (one layer in 2D, fixed scale), **Stack** (exploded at real pitch),
+**Sheet** (nesting on the bed).
 
-## Known risks / things to watch
+## Known limits
 
-- Marching-squares contours at coarse XY resolution produce wobbly edges:
-  budget for RDP + Chaikin from the start, and slice at a finer grid than
-  the preview.
-- Kerf offset can self-intersect on thin features — Clipper handles it,
-  but slices with walls thinner than ~2× kerf must be flagged in the slice
-  inspector, not silently exported.
-- Sculpt determinism depends on grid resolution being part of the recorded
-  stroke context — replaying strokes on a different grid resolution gives
-  different geometry. Store the sculpt grid resolution in the feature.
-- E27 socket dimensions vary by socket model — the mount feature is
-  parametric and the defaults must be verified against the physical socket
-  before the first cut.
-- Wall patterns + kerf + min bridge width interact: enforce the bridge
-  check AFTER kerf offsetting.
-- No error boundary = one throw whites out a React app (hard-learned in
-  Muusia). Kerros gets an error boundary around the viewport and the
-  feature tree from M0.
+- **WKWebView is 1.5–2× slower than Chrome** at the numeric work, and the native
+  shell uses it. `npm run dev` in a browser is still the faster way to develop.
+- **Slicing and import baking are synchronous** and freeze the UI for up to a
+  second or two. The Web Worker has been promised since M2 and is the only real
+  fix. This is the largest outstanding piece of work.
+- **An import's field is exact only to `reach × scale`** from the surface,
+  clamped beyond. A shell thicker than that puts its cavity on the clamp. The
+  inspector warns; raising the resolution or the scale fixes it.
+- **Project files record an import's path, not its geometry.** A grid is
+  megabytes and the project file is meant to stay readable, so imports must be
+  located again after opening.
+- **Nesting is bounding-box shelf packing** and does not rotate parts. True-shape
+  nesting would let a small part sit inside a large ring's waste; manual
+  placement covers that case by hand today.
+- **Fixtures do not follow a moved shape** — see attachment, above.
 
-## Roadmap (post-MVP ideas)
+## Candidates, in the order I would take them
 
-True-shape nesting · per-gap spacer heights · 3D volumetric patterns ·
-lamp light preview (emissive render) · cross-slicing / eggcrate mode
-(X+Y interlocking) · SVG export alongside DXF · module marketplace-style
-folder for user generators · assembly PDF with per-layer diagrams ·
-material usage/cost estimate · registration notches for glue-stack mode.
+1. **Web Worker for slicing and baking.** Fixes the only complaint that is about
+   the program rather than a feature it lacks.
+2. **`npm run tauri build`** and a first `.app`, with an icon that is not the
+   Tauri default.
+3. **Attachment for fixtures**, the last thing that stays behind.
+4. Roadmap, unranked: true-shape nesting, per-gap spacer heights, polygon-shaped
+   perforation, a lamp preview with an emissive source in the cavity,
+   cross-slicing / eggcrate mode, SVG export, a folder of user generator modules,
+   an assembly PDF, material usage and cost, registration notches for glue-stack
+   mode.
+
+## Practical notes from cutting actual lamps
+
+- **Cut the kerf test into the real material before anything else**, and measure
+  the outer square and inner square separately. If they disagree the beam is not
+  perpendicular and no single kerf value will save the fit.
+- **Plexi needs its own kerf**, and it is usually much smaller than cardboard's.
+  Window fit depends on both directly.
+- **Corrugated board's flutes show in the cut edge.** Turning parts against the
+  grain is what makes a stack look alive rather than like twelve identical
+  lines — hence part rotation, seeded scatter, and the flute preview.
+- **Start with a wider bridge than seems necessary** in corrugated stock: 2 mm
+  rather than 1.5. The vertical flute between the liners does not carry like
+  solid material.
+- **A socket mount needs a solid layer**, not a ring. Make one with the shell's
+  solid cap and aim the fixture's band at it.
