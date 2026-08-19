@@ -1318,6 +1318,85 @@ showing — without that, a slow job finishing late would overwrite a newer resu
 exactly what the program did before the worker existed. A worker that fails to
 construct is a reason to be slower, not a reason to stop working.
 
+## True-shape nesting — **shipped**
+
+Bounding-box shelf packing reserves a rectangle for every part, so the inside of
+every ring is waste — and a lamp is mostly rings. `nestTrueShape()` packs against
+the real outline by rasterising each part with **material solid and holes free**,
+then looking for somewhere its cells do not collide with what is already down.
+A small part dropping into a ring's hole needs no special case: the hole simply is
+not occupied.
+
+Off by default, chosen in the profile panel. It costs about half a second per
+layout, which is worth paying when you are about to buy material and not worth
+paying while you are still deciding what the lamp looks like.
+
+### Why a raster and not no-fit polygons
+
+NFP is the tighter method. It also needs Minkowski sums and convex decomposition,
+and every one of its failure modes is a subtly wrong polygon that looks plausible
+right up until it is cut. A raster is coarse in a way that is **measurable,
+obvious and always conservative**: a cell is either free or it is not.
+
+### Two optimisations that made it usable
+
+The first version took **2.3 seconds** on a 71-part job. Two changes brought it to
+0.7:
+
+A **summed-area table** over each sheet rejects a candidate position in constant
+time when the part's bounding box covers nothing occupied — which is most
+positions on a half-empty sheet. Rebuilt after each placement, which is cheap
+compared to what it saves.
+
+A **sparse pass before the exact one**: every eighth cell first, the full walk only
+if that passes. Without it the exact test walked tens of thousands of cells for
+nearly every candidate on a filling sheet. A real overlap almost always hits one of
+every eighth cell, so the expensive walk is left for near misses.
+
+Candidates are also tried on a coarser lattice than the raster — roughly 4 mm of
+search granularity whatever the cell size. The raster decides whether a part
+*fits*; the lattice only decides how finely the search *looks*.
+
+### Measured
+
+A 220 mm sphere, 10 mm wall, 3 mm sheets at 3 mm spacing, plus 24 spacer rings and
+10 window plugs — 71 parts, 2489 cm² of material, on a 700 × 400 bed:
+
+| | sheets | first sheet holds |
+| --- | --- | --- |
+| bounding box | 8 | 3 parts |
+| true shape, 2 mm | 7 | 47 parts |
+| true shape, 1.5 mm | **6** | 48 parts |
+| true shape, 1 mm | 7 | 47 parts |
+
+**A finer grid is not reliably better.** Greedy bottom-left packing is not
+monotonic in resolution: 1.5 mm beat both 1 mm and 2 mm on this job. The inspector
+says so and offers the dial rather than pretending there is a best value — try a
+couple before cutting and keep whichever wins.
+
+### The check that matters more than the saving
+
+If the raster is wrong, parts overlap and the sheet is ruined. So the validator
+nests a job and runs the existing true-shape collision analysis over the result:
+**zero collisions**, and nothing closer than the raster can promise. It also
+asserts that bounding boxes **do** overlap, since that overlap is the whole point,
+and — on a sheet sized to exactly one ring, where the only free space is that
+ring's hole — that small parts really do end up inside it.
+
+That last test took three attempts to state correctly. A greedy packer fills from
+the bottom left, so small parts sit *beside* the rings for as long as open sheet
+remains, which is correct behaviour and made the first two versions of the test
+assert something the algorithm had no reason to do.
+
+### Fill now counts material
+
+`fill` was the share of the sheet covered by bounding boxes. Once parts nest inside
+each other's holes those boxes overlap and the total can pass 100%, which would
+make the number meaningless exactly where it matters most. It is now the share
+covered by **material**, in both packers and in `applyPlacements`, computed by a
+local shoelace formula — local because `nest.ts` has no imports and one small
+formula is a cheaper price than breaking that.
+
 ## Grouping shapes — **shipped**
 
 Several shapes can be moved and turned as one. There is **no group feature and no

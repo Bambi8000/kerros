@@ -75,10 +75,28 @@ export interface Sheet {
   ordinal: number;
   parts: PlacedPart[];
   /** How much of the usable area the bounding boxes take up, 0..1. */
+  /**
+   * Share of the sheet covered by **material**, holes excluded.
+   *
+   * Not the share covered by bounding boxes: once parts nest inside each other's
+   * holes those boxes overlap and their total can pass 100%, which would make the
+   * number meaningless exactly where it matters most.
+   */
   fill: number;
 }
 
 export interface NestOptions {
+  /**
+   * Pack against the real outline rather than the bounding box.
+   *
+   * The prize is the hole in the middle of a ring: a fourteen-layer lamp leaves
+   * large central voids that bounding-box packing cannot use at all.
+   */
+  trueShape?: boolean;
+  /**
+   * Grid the true-shape packer works on, mm. Finer packs tighter and costs more.
+   */
+  cell?: number;
   /** Usable sheet size, i.e. bed minus margins, mm. */
   sheetWidth: number;
   sheetHeight: number;
@@ -346,7 +364,7 @@ export function nestParts(parts: PartGeometry[], options: NestOptions): NestResu
     };
 
     sheet.parts.push(placed);
-    usedArea += w * h;
+    usedArea += partArea(part);
     cursorX += w + gap;
     shelfHeight = Math.max(shelfHeight, h);
   }
@@ -496,7 +514,7 @@ export function applyPlacements(
     if (sheetArea === 0 && sheet.fill > 0) {
       let used = 0;
       for (const part of sheet.parts) {
-        used += (part.bbox.maxX - part.bbox.minX) * (part.bbox.maxY - part.bbox.minY);
+        used += partArea(part);
       }
       sheetArea = used / sheet.fill;
     }
@@ -507,7 +525,7 @@ export function applyPlacements(
     const parts = buckets.get(i) as PlacedPart[];
     let used = 0;
     for (const part of parts) {
-      used += (part.bbox.maxX - part.bbox.minX) * (part.bbox.maxY - part.bbox.minY);
+      used += partArea(part);
     }
     const source = result.sheets[i - 1];
     sheets.push({
@@ -883,6 +901,7 @@ export function scatterRotations(
  * what it says.
  */
 export function nestByMaterial(parts: PartGeometry[], options: NestOptions): NestResult {
+  const pack = options.trueShape ? nestTrueShape : nestParts;
   const groups = new Map<string, PartGeometry[]>();
   for (const part of parts) {
     const material = part.material ?? 'stock';
@@ -898,7 +917,7 @@ export function nestByMaterial(parts: PartGeometry[], options: NestOptions): Nes
   const unplaced: PartGeometry[] = [];
 
   for (const material of materials) {
-    const nested = nestParts(groups.get(material) as PartGeometry[], options);
+    const nested = pack(groups.get(material) as PartGeometry[], options);
     for (const sheet of nested.sheets) {
       sheets.push({
         ...sheet,
@@ -909,6 +928,344 @@ export function nestByMaterial(parts: PartGeometry[], options: NestOptions): Nes
     }
     unplaced.push(...nested.unplaced);
   }
+
+  return { sheets, unplaced };
+}
+
+
+/* ------------------------------------------------------------------ *
+ * True-shape nesting
+ *
+ * Bounding-box shelf packing wastes the inside of every ring, and a lamp is
+ * mostly rings. This packs against the real outline by rasterising each part —
+ * material solid, holes free — and looking for somewhere its cells do not
+ * collide with what is already on the sheet.
+ *
+ * Why a raster rather than no-fit polygons: NFP is the tighter method, but it
+ * needs Minkowski sums and convex decomposition, and every one of its failure
+ * modes is a subtly wrong polygon that looks plausible until it is cut. A raster
+ * is coarse in a way that is measurable, obvious, and always conservative — a
+ * cell is either free or it is not.
+ *
+ * Rotation is deliberately not searched. Turning parts is already a feature, and
+ * it is an aesthetic one: in corrugated stock the flute direction is what makes a
+ * stack look alive, and the maker chooses it with scatter. A nester that rotated
+ * freely to save material would silently overwrite that choice.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Enclosed area of a closed ring, by the shoelace formula.
+ *
+ * Local rather than borrowed from the slicer: this module has no imports so that
+ * a validator can load it as the real thing, and one small formula is a cheaper
+ * price than breaking that.
+ */
+function ringArea(points: number[]): number {
+  let sum = 0;
+  const n = points.length / 2;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    sum += points[i * 2] * points[j * 2 + 1] - points[j * 2] * points[i * 2 + 1];
+  }
+  return Math.abs(sum) / 2;
+}
+
+/** How many cells the sparse overlap pass skips between samples. */
+const SAMPLE_STRIDE = 8;
+
+/** Area of the material in a part: the outline less its holes. */
+export function partArea(part: PartGeometry): number {
+  let area = ringArea(part.outer);
+  for (const hole of part.holes) area -= ringArea(hole);
+  return Math.max(area, 0);
+}
+
+interface PartRaster {
+  /** Cells across and up. */
+  w: number;
+  h: number;
+  /** Offsets into a w×h grid that hold material, after the gap dilation. */
+  cells: Int32Array;
+  /** Part-space position of the raster's lower-left corner. */
+  originX: number;
+  originY: number;
+}
+
+/**
+ * Rasterise a part: material solid, holes free.
+ *
+ * Circles are ignored. A rod hole or a perforation is a real hole in the
+ * material, but nothing in a lamp is small enough to nest inside one, and
+ * treating them as free space would only add noise to the search.
+ *
+ * The gap is applied by dilating the bitmap rather than by insetting polygons.
+ * Box dilation makes the clearance slightly generous on the diagonal, which errs
+ * in the direction of parts not touching.
+ */
+export function rasterisePart(part: PartGeometry, cell: number, gap: number): PartRaster {
+  const bbox = boundsOf(part);
+  const margin = Math.max(gap, 0) / 2;
+  const step = Math.max(cell, 0.05);
+
+  const originX = bbox.minX - margin;
+  const originY = bbox.minY - margin;
+  const w = Math.max(Math.ceil((bbox.maxX - bbox.minX + 2 * margin) / step), 1);
+  const h = Math.max(Math.ceil((bbox.maxY - bbox.minY + 2 * margin) / step), 1);
+
+  const solid = new Uint8Array(w * h);
+
+  for (let j = 0; j < h; j++) {
+    const y = originY + (j + 0.5) * step;
+    for (let i = 0; i < w; i++) {
+      const x = originX + (i + 0.5) * step;
+      if (!inRing(part.outer, x, y)) continue;
+      let inHole = false;
+      for (const hole of part.holes) {
+        if (inRing(hole, x, y)) {
+          inHole = true;
+          break;
+        }
+      }
+      if (!inHole) solid[i + j * w] = 1;
+    }
+  }
+
+  const grow = Math.round(margin / step);
+  const dilated = grow > 0 ? new Uint8Array(w * h) : solid;
+
+  if (grow > 0) {
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        if (solid[i + j * w] === 0) continue;
+        const loI = Math.max(i - grow, 0);
+        const hiI = Math.min(i + grow, w - 1);
+        const loJ = Math.max(j - grow, 0);
+        const hiJ = Math.min(j + grow, h - 1);
+        for (let b = loJ; b <= hiJ; b++) {
+          for (let a = loI; a <= hiI; a++) dilated[a + b * w] = 1;
+        }
+      }
+    }
+  }
+
+  const list: number[] = [];
+  for (let k = 0; k < dilated.length; k++) if (dilated[k] === 1) list.push(k);
+
+  return { w, h, cells: new Int32Array(list), originX, originY };
+}
+
+/**
+ * Pack parts against their real outlines.
+ *
+ * Biggest first, then bottom-left first fit. Every candidate position is rejected
+ * in constant time by a summed-area table over the sheet: if the part's bounding
+ * box covers nothing occupied, it fits, no further work. Only when the box
+ * overlaps something does the exact cell test run — which is precisely the
+ * interesting case, a part dropping into a ring's hole.
+ */
+export function nestTrueShape(parts: PartGeometry[], options: NestOptions): NestResult {
+  const { sheetWidth, sheetHeight, gap } = options;
+  const maxSheets = options.maxSheets ?? DEFAULT_MAX_SHEETS;
+  const labelHeight = Math.max(options.labelHeight, 0);
+  const cell = Math.max(options.cell ?? 2, 0.2);
+  // Roughly 4 mm of search granularity whatever the cell size.
+  const searchStep = Math.max(Math.round(4 / cell), 1);
+
+  const W = Math.max(Math.floor(sheetWidth / cell), 1);
+  const H = Math.max(Math.floor(sheetHeight / cell), 1);
+
+  const measured = parts.map((part) => ({
+    part,
+    bbox: boundsOf(part),
+    raster: rasterisePart(part, cell, gap),
+    area: partArea(part),
+  }));
+
+  // Largest first by material area, with a stable tie-break so the same job
+  // always nests the same way.
+  measured.sort((a, b) => {
+    if (Math.abs(b.area - a.area) > 1e-9) return b.area - a.area;
+    return a.part.id < b.part.id ? -1 : a.part.id > b.part.id ? 1 : 0;
+  });
+
+  const material = parts.length > 0 ? parts[0].material ?? 'stock' : 'stock';
+  const sheets: Sheet[] = [];
+  const unplaced: PartGeometry[] = [];
+
+  interface Board {
+    occupied: Uint8Array;
+    sat: Int32Array;
+    dirty: boolean;
+    parts: PlacedPart[];
+    area: number;
+  }
+
+  const boards: Board[] = [];
+
+  const rebuildSat = (board: Board) => {
+    const sat = board.sat;
+    sat.fill(0);
+    for (let j = 0; j < H; j++) {
+      for (let i = 0; i < W; i++) {
+        sat[(j + 1) * (W + 1) + (i + 1)] =
+          board.occupied[i + j * W] +
+          sat[j * (W + 1) + (i + 1)] +
+          sat[(j + 1) * (W + 1) + i] -
+          sat[j * (W + 1) + i];
+      }
+    }
+    board.dirty = false;
+  };
+
+  const boxSum = (board: Board, i: number, j: number, w: number, h: number) => {
+    const sat = board.sat;
+    const i2 = i + w;
+    const j2 = j + h;
+    return (
+      sat[j2 * (W + 1) + i2] -
+      sat[j * (W + 1) + i2] -
+      sat[j2 * (W + 1) + i] +
+      sat[j * (W + 1) + i]
+    );
+  };
+
+  /** Bottom-left first fit, or null when the part will not go on this board. */
+  const findSpot = (board: Board, raster: PartRaster): [number, number] | null => {
+    if (raster.w > W || raster.h > H) return null;
+    if (board.dirty) rebuildSat(board);
+    const step = searchStep;
+
+    // Candidates are tried on a coarser lattice than the raster itself. The
+    // raster decides whether a part fits; this only decides how finely the
+    // search looks, and looking at every single cell costs four times as much
+    // for a placement no one could measure.
+    for (let j = 0; j <= H - raster.h; j += step) {
+      for (let i = 0; i <= W - raster.w; i += step) {
+        // Constant-time rejection: an empty box needs no further test.
+        if (boxSum(board, i, j, raster.w, raster.h) === 0) return [i, j];
+
+        // A sparse pass before the full one. Without it the exact test walks
+        // tens of thousands of cells for nearly every candidate on a filling
+        // sheet, which took seconds; a real overlap almost always hits one of
+        // every eighth cell, so the expensive walk is left for near misses.
+        let clash = false;
+        for (let k = 0; k < raster.cells.length; k += SAMPLE_STRIDE) {
+          const offset = raster.cells[k];
+          if (board.occupied[i + (offset % raster.w) + (j + Math.floor(offset / raster.w)) * W] === 1) {
+            clash = true;
+            break;
+          }
+        }
+        if (clash) continue;
+
+        for (let k = 0; k < raster.cells.length; k++) {
+          const offset = raster.cells[k];
+          const ci = i + (offset % raster.w);
+          const cj = j + Math.floor(offset / raster.w);
+          if (board.occupied[ci + cj * W] === 1) {
+            clash = true;
+            break;
+          }
+        }
+        if (!clash) return [i, j];
+      }
+    }
+
+    return null;
+  };
+
+  const stamp = (board: Board, raster: PartRaster, i: number, j: number) => {
+    for (let k = 0; k < raster.cells.length; k++) {
+      const offset = raster.cells[k];
+      const ci = i + (offset % raster.w);
+      const cj = j + Math.floor(offset / raster.w);
+      board.occupied[ci + cj * W] = 1;
+    }
+    board.dirty = true;
+  };
+
+  for (const { part, bbox, raster, area } of measured) {
+    if (bbox.maxX - bbox.minX > sheetWidth || bbox.maxY - bbox.minY > sheetHeight) {
+      unplaced.push(part);
+      continue;
+    }
+
+    let target: Board | undefined;
+    let spot: [number, number] | null = null;
+
+    // Existing sheets first, in order: a part that fits an earlier sheet's waste
+    // belongs there rather than on a fresh one.
+    for (const board of boards) {
+      const found = findSpot(board, raster);
+      if (found) {
+        target = board;
+        spot = found;
+        break;
+      }
+    }
+
+    if (!target) {
+      if (boards.length >= maxSheets) {
+        unplaced.push(part);
+        continue;
+      }
+      const board: Board = {
+        occupied: new Uint8Array(W * H),
+        sat: new Int32Array((W + 1) * (H + 1)),
+        dirty: true,
+        parts: [],
+        area: 0,
+      };
+      const found = findSpot(board, raster);
+      if (!found) {
+        unplaced.push(part);
+        continue;
+      }
+      boards.push(board);
+      target = board;
+      spot = found;
+    }
+
+    const [i, j] = spot as [number, number];
+    stamp(target, raster, i, j);
+
+    const labelWidth = labelHeight > 0 ? estimateLabelWidth(part.label, labelHeight) : 0;
+    let labelAt: [number, number] | null = null;
+    let usedLabelHeight = labelHeight;
+
+    if (labelHeight > 0 && part.label.length > 0) {
+      labelAt = findLabelSpot(part, labelWidth, labelHeight);
+      if (!labelAt) {
+        usedLabelHeight = labelHeight * 0.6;
+        labelAt = findLabelSpot(part, labelWidth * 0.6, usedLabelHeight);
+      }
+      if (!labelAt) usedLabelHeight = 0;
+    }
+
+    // The raster's origin sits a margin below and left of the part's box, so the
+    // translation has to put the raster corner on the cell, not the box corner.
+    target.parts.push({
+      ...part,
+      bbox,
+      pivot: [(bbox.minX + bbox.maxX) / 2, (bbox.minY + bbox.maxY) / 2],
+      dx: i * cell - raster.originX,
+      dy: j * cell - raster.originY,
+      labelAt,
+      labelHeight: usedLabelHeight,
+    });
+    target.area += area;
+  }
+
+  const sheetArea = Math.max(sheetWidth * sheetHeight, 1);
+  boards.forEach((board, index) => {
+    sheets.push({
+      index: index + 1,
+      material,
+      ordinal: index + 1,
+      parts: board.parts,
+      fill: board.area / sheetArea,
+    });
+  });
 
   return { sheets, unplaced };
 }

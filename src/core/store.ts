@@ -109,6 +109,16 @@ interface KerrosState {
   panel: Panel;
 
   /** Sculpting takes the left mouse button, so it is a mode you switch on. */
+  /**
+   * Pack against the real outline instead of the bounding box.
+   *
+   * Off by default: it costs about half a second per layout, which is worth
+   * paying when you are about to buy material and not worth paying while you are
+   * still deciding what the lamp looks like.
+   */
+  trueShapeNesting: boolean;
+  /** Grid the true-shape packer works on, mm. */
+  nestCell: number;
   sculptMode: boolean;
   brushOp: BrushOp;
   brushRadius: number;
@@ -203,6 +213,8 @@ interface KerrosState {
   setView: (view: ViewName) => void;
   setMode: (mode: WorkspaceMode) => void;
   setPanel: (panel: Panel) => void;
+  setTrueShapeNesting: (on: boolean) => void;
+  setNestCell: (mm: number) => void;
   setSculptMode: (on: boolean) => void;
   setBrushOp: (op: BrushOp) => void;
   setBrushRadius: (mm: number) => void;
@@ -345,6 +357,8 @@ export const useKerros = create<KerrosState>((set, get) => ({
   panel: 'inspector',
   importRevision: 0,
 
+  trueShapeNesting: false,
+  nestCell: 2,
   sculptMode: false,
   brushOp: 'smoothUnion',
   brushRadius: 8,
@@ -908,6 +922,8 @@ export const useKerros = create<KerrosState>((set, get) => ({
   setView: (view) => set({ view }),
   setMode: (mode) => set({ mode }),
   setPanel: (panel) => set({ panel }),
+  setTrueShapeNesting: (trueShapeNesting) => set({ trueShapeNesting }),
+  setNestCell: (nestCell) => set({ nestCell: Math.min(Math.max(nestCell, 0.5), 6) }),
   setSculptMode: (sculptMode) => set({ sculptMode }),
   setBrushOp: (brushOp) => set({ brushOp }),
   setBrushRadius: (brushRadius) => set({ brushRadius: Math.max(brushRadius, 0.2) }),

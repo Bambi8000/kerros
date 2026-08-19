@@ -32,6 +32,9 @@ import {
   rotatePart,
   scatterRotations,
   estimateLabelWidth,
+  nestTrueShape,
+  rasterisePart,
+  partArea,
 } from '../src/core/nest.ts';
 
 import {
@@ -943,6 +946,176 @@ console.log('nest: materials never share a sheet');
       sheet.parts.every((part) => (part.material ?? 'stock') === sheet.material),
     ),
   );
+}
+
+console.log('nest: material area');
+{
+  const solid = { id: 'a', label: 'A', kind: 'slice', outer: ring(0, 0, 50), holes: [], circles: [] };
+  check('a disc reports its area', Math.abs(partArea(solid) - Math.PI * 2500) / (Math.PI * 2500) < 0.01);
+
+  const annulus = {
+    id: 'b', label: 'B', kind: 'slice',
+    outer: ring(0, 0, 50), holes: [ring(0, 0, 40).slice().reverse()], circles: [],
+  };
+  const expected = Math.PI * (2500 - 1600);
+  check('a ring reports the band, not the disc',
+    Math.abs(partArea(annulus) - expected) / expected < 0.02,
+    `${partArea(annulus).toFixed(0)} against ${expected.toFixed(0)}`);
+  check('a hole cannot make the area negative', partArea({
+    id: 'c', label: 'C', kind: 'slice', outer: ring(0, 0, 10), holes: [ring(0, 0, 40)], circles: [],
+  }) === 0);
+}
+
+console.log('nest: rasterising a part');
+{
+  const annulus = {
+    id: 'r', label: 'R', kind: 'slice',
+    outer: ring(0, 0, 50), holes: [ring(0, 0, 30).slice().reverse()], circles: [],
+  };
+
+  const raster = rasterisePart(annulus, 2, 0);
+  const solidAt = (x, y) => {
+    const i = Math.floor((x - raster.originX) / 2);
+    const j = Math.floor((y - raster.originY) / 2);
+    if (i < 0 || j < 0 || i >= raster.w || j >= raster.h) return false;
+    return raster.cells.includes(i + j * raster.w);
+  };
+
+  check('the band is solid', solidAt(40, 0) && solidAt(-40, 0) && solidAt(0, 40));
+  check('the hole is free — which is the whole point', !solidAt(0, 0));
+  check('and so is the corner outside the circle', !solidAt(48, 48));
+  check('the raster covers the part', raster.w * 2 >= 100 && raster.h * 2 >= 100);
+  check('and it found some material', raster.cells.length > 100);
+
+  // The gap is applied by dilating, so a gapped raster must be strictly larger.
+  const gapped = rasterisePart(annulus, 2, 8);
+  check('a gap makes the raster bigger', gapped.w > raster.w && gapped.h > raster.h);
+  check('and marks more cells', gapped.cells.length > raster.cells.length);
+
+  const disc = { id: 'd', label: 'D', kind: 'slice', outer: ring(0, 0, 20), holes: [], circles: [] };
+  check('a plain disc has no free centre', rasterisePart(disc, 2, 0).cells.length > 200);
+}
+
+console.log('nest: true-shape packing');
+{
+  const options = { sheetWidth: 700, sheetHeight: 400, gap: 4, labelHeight: 4, cell: 2 };
+
+  // Three big rings and a crowd of small parts: exactly the case bounding boxes
+  // cannot handle, because the small parts belong in the rings' holes.
+  const parts = [];
+  for (let i = 0; i < 3; i++) {
+    parts.push({
+      id: `ring${i}`, label: `L0${i}`, kind: 'slice',
+      outer: ring(0, 0, 105), holes: [ring(0, 0, 92).slice().reverse()], circles: [],
+    });
+  }
+  for (let i = 0; i < 20; i++) {
+    parts.push({ id: `sp${i}`, label: 'SP', kind: 'spacer', outer: ring(0, 0, 8), holes: [], circles: [] });
+  }
+
+  const boxed = nestParts(parts, options);
+  const shaped = nestTrueShape(parts, options);
+
+  check('everything is placed', countParts(shaped.sheets) === parts.length && shaped.unplaced.length === 0);
+  check('on no more sheets than bounding boxes needed',
+    shaped.sheets.length <= boxed.sheets.length,
+    `${shaped.sheets.length} against ${boxed.sheets.length}`);
+
+  // The safety property. If the raster is wrong, parts overlap and the sheet is
+  // ruined — this is the check that matters more than any saving.
+  let colliding = 0;
+  let closest = Infinity;
+  for (const sheet of shaped.sheets) {
+    const report = analyseSheet(sheet, 0);
+    colliding += report.colliding.length;
+    closest = Math.min(closest, report.closest);
+  }
+  check('no part collides with another', colliding === 0, `${colliding} colliding`);
+  check('and nothing is closer than the raster can promise',
+    closest >= options.gap - options.cell * 2,
+    `closest ${closest.toFixed(2)} mm against a ${options.gap} mm gap`);
+
+  const overlaps = shaped.sheets.flatMap((sheet) => findOverlaps(sheet));
+  check('bounding boxes DO overlap, which is the saving',
+    overlaps.length > 0,
+    'small parts sitting inside a ring have boxes inside its box');
+
+  // And they will go inside the holes when there is nowhere easier.
+  //
+  // A greedy packer fills from the bottom left, so small parts sit beside the
+  // rings for as long as open sheet remains — correct, and the reason this needs
+  // a sheet with no room to spare to demonstrate anything.
+  // A sheet the size of one ring plus its gap. The only free space on it is the
+  // hole in the middle, so anything that lands there landed there on purpose.
+  const snug = { ...options, sheetWidth: 214, sheetHeight: 214 };
+  const tight = nestTrueShape(
+    [parts[0], ...parts.filter((p) => p.kind === 'spacer')],
+    snug,
+  );
+  const tightFirst = tight.sheets[0];
+  const tightRings = tightFirst.parts.filter((p) => p.kind === 'slice');
+  const tightSmalls = tightFirst.parts.filter((p) => p.kind === 'spacer');
+  const nested = tightSmalls.filter((sp) =>
+    tightRings.some((r) => {
+      const cx = sp.dx + (sp.bbox.minX + sp.bbox.maxX) / 2;
+      const cy = sp.dy + (sp.bbox.minY + sp.bbox.maxY) / 2;
+      const rx = r.dx + (r.bbox.minX + r.bbox.maxX) / 2;
+      const ry = r.dy + (r.bbox.minY + r.bbox.maxY) / 2;
+      return Math.hypot(cx - rx, cy - ry) < 92;
+    }),
+  );
+  check(
+    'with no room to spare, small parts go inside the rings',
+    nested.length > 5,
+    `${nested.length} of ${tightSmalls.length} on the first sheet are inside a hole`,
+  );
+  let tightColliding = 0;
+  for (const sheet of tight.sheets) tightColliding += analyseSheet(sheet, 0).colliding.length;
+  check('and still nothing collides', tightColliding === 0, `${tightColliding} colliding`);
+
+  const first = shaped.sheets[0];
+  const rings = first.parts.filter((p) => p.kind === 'slice');
+  const smalls = first.parts.filter((p) => p.kind === 'spacer');
+  check('the first sheet carries both rings and small parts',
+    rings.length > 0 && smalls.length > 0);
+
+  check('fill counts material rather than boxes',
+    shaped.sheets.every((sheet) => sheet.fill > 0 && sheet.fill <= 1),
+    shaped.sheets.map((sh) => sh.fill.toFixed(3)).join(', '));
+
+  const again = nestTrueShape(parts, options);
+  check('packing is deterministic',
+    JSON.stringify(again.sheets.map((sh) => sh.parts.map((p) => [p.id, p.dx, p.dy]))) ===
+      JSON.stringify(shaped.sheets.map((sh) => sh.parts.map((p) => [p.id, p.dx, p.dy]))));
+
+  const huge = nestTrueShape(
+    [{ id: 'big', label: 'B', kind: 'slice', outer: ring(0, 0, 900), holes: [], circles: [] }],
+    options,
+  );
+  check('a part too big for the bed is reported, not squeezed', huge.unplaced.length === 1);
+  check('and makes no sheet', huge.sheets.length === 0);
+
+  check('an empty job packs to nothing', nestTrueShape([], options).sheets.length === 0);
+
+  // Enough rings that one sheet cannot hold them, so the cap has something to bite.
+  const crowd = [];
+  for (let i = 0; i < 12; i++) {
+    crowd.push({
+      id: `c${i}`, label: `C${i}`, kind: 'slice',
+      outer: ring(0, 0, 105), holes: [ring(0, 0, 92).slice().reverse()], circles: [],
+    });
+  }
+  const capped = nestTrueShape(crowd, { ...options, maxSheets: 1 });
+  check('a sheet cap is respected', capped.sheets.length === 1);
+  check('and the overflow is reported rather than dropped',
+    capped.unplaced.length > 0,
+    `${capped.unplaced.length} unplaced of ${crowd.length}`);
+  check('nothing is lost',
+    countParts(capped.sheets) + capped.unplaced.length === crowd.length);
+
+  const viaMaterial = nestByMaterial(parts, { ...options, trueShape: true });
+  check('nestByMaterial dispatches to the true-shape packer',
+    viaMaterial.sheets.length === shaped.sheets.length);
 }
 
 console.log('');

@@ -28,6 +28,10 @@ interface Props {
 export function ProfilePanel({ slices, reports, sheets }: Props) {
   const projectName = useKerros((s) => s.projectName);
   const setProjectName = useKerros((s) => s.setProjectName);
+  const trueShape = useKerros((s) => s.trueShapeNesting);
+  const setTrueShapeNesting = useKerros((s) => s.setTrueShapeNesting);
+  const nestCell = useKerros((s) => s.nestCell);
+  const setNestCell = useKerros((s) => s.setNestCell);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'bad'; text: string } | null>(null);
   const [folder, setFolder] = useState<string | null>(currentExportFolder());
 
@@ -640,6 +644,46 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
         <button type="button" className="btn btn-wide" onClick={() => void exportKerfTest()}>
           Export kerf test
         </button>
+        <label className="field">
+          <span className="field-label">Nesting</span>
+          <span className="field-input">
+            <select
+              value={trueShape ? 'shape' : 'box'}
+              onChange={(e) => setTrueShapeNesting(e.target.value === 'shape')}
+            >
+              <option value="box">Bounding box · fast</option>
+              <option value="shape">True shape · uses the holes</option>
+            </select>
+          </span>
+        </label>
+        {trueShape ? (
+          <>
+            <NumberField
+              label="Nest grid"
+              value={nestCell}
+              unit="mm"
+              step={0.5}
+              min={0.5}
+              max={6}
+              onChange={setNestCell}
+            />
+            <div className="derived">
+              Packs against the real outline, so a small part can sit inside a
+              ring&rsquo;s hole. Costs about half a second per layout, which is
+              worth paying when you are about to buy material.
+              <br />
+              A finer grid is not reliably better: greedy packing is not monotonic
+              in resolution, and on one real job 1.5 mm needed six sheets where
+              both 1 mm and 2 mm needed seven. Try a couple of values before
+              cutting and keep whichever wins.
+            </div>
+          </>
+        ) : (
+          <div className="derived">
+            Bounding-box shelves. Every part reserves a rectangle, so the inside
+            of every ring is waste — which on a lamp is most of the sheet.
+          </div>
+        )}
         {isNative() ? (
           <>
             {folder ? (

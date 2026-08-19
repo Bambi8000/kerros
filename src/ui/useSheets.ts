@@ -39,6 +39,8 @@ export function useSheets(
   windows: { label: string; set: SliceSet }[] = [],
 ): SheetResult {
   const features = useKerros((s) => s.features);
+  const trueShape = useKerros((s) => s.trueShapeNesting);
+  const nestCell = useKerros((s) => s.nestCell);
   const machine = useKerros((s) => s.machine);
   const thickness = useKerros((s) => s.material.thickness);
   const kerf = useKerros((s) => s.material.kerf);
@@ -59,6 +61,8 @@ export function useSheets(
 
     const parts = buildParts(slices, spacers, windows);
     const nested = nestByMaterial(parts, {
+      trueShape,
+      cell: nestCell,
       sheetWidth: Math.max(machine.bedWidth - machine.margin * 2, 1),
       sheetHeight: Math.max(machine.bedHeight - machine.margin * 2, 1),
       gap: partGap,
@@ -90,6 +94,8 @@ export function useSheets(
   }, [
     slices,
     windows,
+    trueShape,
+    nestCell,
     features,
     machine.bedWidth,
     machine.bedHeight,
