@@ -1,1 +1,1 @@
-export const KERROS_VERSION = '0.14.0';
+export const KERROS_VERSION = '0.15.0';

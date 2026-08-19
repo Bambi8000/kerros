@@ -765,6 +765,146 @@ export const IDENTITY_FRAME: Frame = {
   identity: true,
 };
 
+/**
+ * Compose two rigid transforms: the parent applied after the child.
+ *
+ * World = P ∘ C, so R = Rp·Rc and t = Rp·tc + tp. This is what makes grouping
+ * work with no new concept in the tree — a shape attached to another shape simply
+ * has its transform read in that shape's coordinates, and moving or turning the
+ * parent carries it.
+ */
+export function composeRigid(
+  parent: { r: number[]; t: [number, number, number] },
+  child: { r: number[]; t: [number, number, number] },
+): { r: number[]; t: [number, number, number] } {
+  const p = parent.r;
+  const c = child.r;
+  const r = [
+    p[0] * c[0] + p[1] * c[3] + p[2] * c[6],
+    p[0] * c[1] + p[1] * c[4] + p[2] * c[7],
+    p[0] * c[2] + p[1] * c[5] + p[2] * c[8],
+    p[3] * c[0] + p[4] * c[3] + p[5] * c[6],
+    p[3] * c[1] + p[4] * c[4] + p[5] * c[7],
+    p[3] * c[2] + p[4] * c[5] + p[5] * c[8],
+    p[6] * c[0] + p[7] * c[3] + p[8] * c[6],
+    p[6] * c[1] + p[7] * c[4] + p[8] * c[7],
+    p[6] * c[2] + p[7] * c[5] + p[8] * c[8],
+  ];
+
+  const t: [number, number, number] = [
+    p[0] * child.t[0] + p[1] * child.t[1] + p[2] * child.t[2] + parent.t[0],
+    p[3] * child.t[0] + p[4] * child.t[1] + p[5] * child.t[2] + parent.t[1],
+    p[6] * child.t[0] + p[7] * child.t[1] + p[8] * child.t[2] + parent.t[2],
+  ];
+
+  return { r, t };
+}
+
+/**
+ * Euler angles in degrees from a rotation matrix, in the order Kerros uses.
+ *
+ * R = Rz·Ry·Rx, three.js order `ZYX`. Needed because a gizmo hands back a world
+ * orientation and an attached shape stores a local one, so somewhere the matrix
+ * has to become three numbers again. Pinned by a validator against
+ * `rotationMatrix`, since the two must be exact inverses or a grouped shape jumps
+ * the moment it is dragged.
+ */
+export function eulerFromMatrix(r: number[]): [number, number, number] {
+  const DEG = 180 / Math.PI;
+  const sy = -r[6];
+  const clamped = sy < -1 ? -1 : sy > 1 ? 1 : sy;
+  const ry = Math.asin(clamped);
+
+  // Gimbal lock: with cos(ry) at zero, X and Z are the same axis and only their
+  // sum is recoverable. Putting it all in Z is arbitrary but consistent.
+  if (Math.abs(clamped) > 0.999999) {
+    return [0, ry * DEG, Math.atan2(-r[1], r[4]) * DEG];
+  }
+
+  return [Math.atan2(r[7], r[8]) * DEG, ry * DEG, Math.atan2(r[3], r[0]) * DEG];
+}
+
+/**
+ * The rigid transform a feature's parameters describe, before any attachment.
+ */
+export function rigidOf(params: Params): { r: number[]; t: [number, number, number] } {
+  return {
+    r: rotationMatrix(num(params, 'rx', 0), num(params, 'ry', 0), num(params, 'rz', 0)),
+    t: [num(params, 'px', 0), num(params, 'py', 0), num(params, 'pz', 0)],
+  };
+}
+
+const IDENTITY_RIGID = {
+  r: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  t: [0, 0, 0] as [number, number, number],
+};
+
+/** How deep a chain of attachments is followed before giving up. */
+const MAX_ATTACH_DEPTH = 16;
+
+/**
+ * The world transform of a feature, following its chain of attachments.
+ *
+ * A cycle, or a chain longer than sixteen, resolves to the identity rather than
+ * hanging. Neither should be reachable through the interface — it only offers
+ * parents that sit earlier in the tree — but a hand-edited project file is not
+ * bound by the interface.
+ */
+export function worldRigidOf(
+  features: EvalFeature[],
+  feature: EvalFeature,
+): { r: number[]; t: [number, number, number] } {
+  const chain: EvalFeature[] = [];
+  const seen = new Set<string>();
+
+  let current: EvalFeature | undefined = feature;
+  while (current) {
+    if (current.id !== undefined) {
+      if (seen.has(current.id)) return IDENTITY_RIGID;
+      seen.add(current.id);
+    }
+    chain.push(current);
+    if (chain.length > MAX_ATTACH_DEPTH) return IDENTITY_RIGID;
+
+    const target = text(current.params, 'attachTo', '');
+    if (target === '') break;
+    current = features.find((f) => f.id === target);
+  }
+
+  // Outermost parent first, so each transform is applied after the one above it.
+  let composed = rigidOf(chain[chain.length - 1].params);
+  for (let i = chain.length - 2; i >= 0; i--) {
+    composed = composeRigid(composed, rigidOf(chain[i].params));
+  }
+  return composed;
+}
+
+/**
+ * A world transform expressed in a parent's frame.
+ *
+ * The gizmo works in world terms and an attached shape stores local ones, so a
+ * drag has to come back through the parent before it is written.
+ */
+export function localFromWorld(
+  parent: { r: number[]; t: [number, number, number] },
+  world: { r: number[]; t: [number, number, number] },
+): { position: [number, number, number]; rotation: [number, number, number] } {
+  const p = parent.r;
+  // Inverse of a rotation is its transpose.
+  const pt = [p[0], p[3], p[6], p[1], p[4], p[7], p[2], p[5], p[8]];
+
+  const dx = world.t[0] - parent.t[0];
+  const dy = world.t[1] - parent.t[1];
+  const dz = world.t[2] - parent.t[2];
+
+  const local = composeRigid(
+    { r: pt, t: [0, 0, 0] },
+    { r: world.r, t: [dx, dy, dz] },
+  );
+
+  return { position: local.t, rotation: eulerFromMatrix(local.r) };
+}
+
 export function frameOf(params: Params): Frame {
   const rx = num(params, 'rx', 0);
   const ry = num(params, 'ry', 0);
@@ -963,10 +1103,10 @@ export function prepareFeatures(features: EvalFeature[]): PreparedStep[] {
     const mod = findModule(f.kind);
     if (!mod) continue;
 
-    const rx = num(f.params, 'rx', 0);
-    const ry = num(f.params, 'ry', 0);
-    const rz = num(f.params, 'rz', 0);
-    const m = rotationMatrix(rx, ry, rz);
+    // Composed with whatever it is attached to, which is how grouping works: a
+    // shape's own numbers are read in its parent's coordinates.
+    const world = worldRigidOf(features, f);
+    const m = world.r;
 
     out.push({
       type: 'shape',
@@ -975,12 +1115,13 @@ export function prepareFeatures(features: EvalFeature[]): PreparedStep[] {
       params: f.params,
       op: text(f.params, 'op', 'smoothUnion') as Op,
       k: num(f.params, 'k', 0),
-      tx: num(f.params, 'px', 0),
-      ty: num(f.params, 'py', 0),
-      tz: num(f.params, 'pz', 0),
+      tx: world.t[0],
+      ty: world.t[1],
+      tz: world.t[2],
       // Transpose: inverse of a rotation.
       inv: [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]],
-      identity: rx === 0 && ry === 0 && rz === 0,
+      identity:
+        m[0] === 1 && m[4] === 1 && m[8] === 1 && m[1] === 0 && m[2] === 0 && m[3] === 0,
     });
   }
   return out;

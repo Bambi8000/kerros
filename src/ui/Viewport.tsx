@@ -5,7 +5,6 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM, useKerros } from '../core/store';
 import type { ViewName } from '../core/store';
 import { findModule, nearestFeatureIndex, num } from '../core/sdf';
-import type { Params } from '../core/sdf';
 import { usePreview } from './usePreview';
 import { buildGeometry } from '../core/mesh';
 import { circleFitsInPart, groupContours } from '../core/slice';
@@ -20,6 +19,7 @@ import {
   hasTransform,
   rodsFromFeatures,
   transformOriginOf,
+  worldTransformOf,
 } from '../core/store';
 import type { Feature } from '../core/types';
 
@@ -143,12 +143,20 @@ function disposeChildren(group: THREE.Object3D) {
 }
 
 /** Place an object at a feature's transform, in our rotation order. */
-function applyTransform(obj: THREE.Object3D, params: Params) {
-  obj.position.set(num(params, 'px', 0), num(params, 'py', 0), num(params, 'pz', 0));
-  obj.rotation.set(
-    num(params, 'rx', 0) * DEG,
-    num(params, 'ry', 0) * DEG,
-    num(params, 'rz', 0) * DEG,
+/**
+ * Stand an object where a feature actually is in the world.
+ *
+ * A grouped shape's own parameters are in its parent's coordinates, so the gizmo
+ * has to be placed at the composed transform or it would appear beside the shape
+ * rather than on it.
+ */
+function applyWorldTransform(object: THREE.Object3D, feature: Feature) {
+  const world = worldTransformOf(useKerros.getState().features, feature);
+  object.position.set(world.position[0], world.position[1], world.position[2]);
+  object.rotation.set(
+    world.rotation[0] * DEG,
+    world.rotation[1] * DEG,
+    world.rotation[2] * DEG,
     EULER_ORDER,
   );
 }
@@ -200,7 +208,10 @@ function makeSelectionOutline(feature: Feature): THREE.Object3D | null {
   );
 
   const holder = new THREE.Object3D();
-  applyTransform(holder, feature.params);
+  // The composed transform, not the feature's own: a grouped shape's parameters
+  // are in its parent's coordinates, and a box drawn from them alone would mark
+  // empty air.
+  applyWorldTransform(holder, feature);
   holder.add(lines);
   return holder;
 }
@@ -672,15 +683,14 @@ export function Viewport({ slices }: ViewportProps) {
         return;
       }
 
+      // World in. A grouped shape stores its numbers in its parent's frame, so
+      // the store converts; an ungrouped one is written through unchanged.
       const euler = new THREE.Euler().setFromQuaternion(proxy.quaternion, EULER_ORDER);
-      state.setTransform(id, {
-        px: tidy(proxy.position.x),
-        py: tidy(proxy.position.y),
-        pz: tidy(proxy.position.z),
-        rx: tidy(euler.x / DEG),
-        ry: tidy(euler.y / DEG),
-        rz: tidy(euler.z / DEG),
-      });
+      state.setTransformWorld(
+        id,
+        [tidy(proxy.position.x), tidy(proxy.position.y), tidy(proxy.position.z)],
+        [tidy(euler.x / DEG), tidy(euler.y / DEG), tidy(euler.z / DEG)],
+      );
     };
 
     gizmo.addEventListener('dragging-changed', onDraggingChanged);
@@ -756,7 +766,7 @@ export function Viewport({ slices }: ViewportProps) {
     // its angle parameter. Translate is the only mode they get.
     if (!hasRotation(feature)) gizmo.setMode('translate');
 
-    applyTransform(proxy, feature.params);
+    applyWorldTransform(proxy, feature);
     if (!hasRotation(feature)) {
       const [ox, oy, oz] = transformOriginOf(useKerros.getState().features, feature);
       proxy.position.set(ox, oy, oz);
@@ -793,7 +803,7 @@ export function Viewport({ slices }: ViewportProps) {
     if (outline) selection.add(outline);
 
     if (!draggingRef.current && proxyRef.current) {
-      applyTransform(proxyRef.current, feature.params);
+      applyWorldTransform(proxyRef.current, feature);
     }
   }, [features, selectedId]);
 

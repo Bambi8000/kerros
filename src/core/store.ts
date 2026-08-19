@@ -13,6 +13,9 @@ import {
   defaultParams,
   findModule,
   frameOf,
+  localFromWorld,
+  rigidOf,
+  worldRigidOf,
   frameToLocal,
   frameToWorld,
   modelBounds,
@@ -29,6 +32,7 @@ import type { FixtureKind } from './fixture';
 import type { WindowFrame } from './window';
 import type { PartPlacement } from './nest';
 import type { ProjectData } from './project';
+import { eulerFromMatrix } from './sdf';
 import {
   attachFrameFor,
   composeField as composeFieldWith,
@@ -216,6 +220,19 @@ interface KerrosState {
   setWindowParent: (id: string, parentId: string) => void;
   /** The same for a fixture: it follows a shape, or it stays put. */
   setFixtureParent: (id: string, parentId: string) => void;
+  /**
+   * Group a shape under another shape, or free it.
+   *
+   * Unlike a window or a fixture, a shape inherits the **whole** rotation: it is a
+   * volume, not a hole in a flat sheet, so tipping over is a move it can make.
+   */
+  setShapeParent: (id: string, parentId: string) => void;
+  /** Write a world-space gizmo drag into a feature's own parameters. */
+  setTransformWorld: (
+    id: string,
+    position: [number, number, number],
+    rotation: [number, number, number],
+  ) => void;
   /** Move a feature by its world origin, converting for anything attached. */
   setOriginWorld: (id: string, x: number, y: number, z: number) => void;
   undoStroke: (id: string) => void;
@@ -1058,6 +1075,110 @@ export const useKerros = create<KerrosState>((set, get) => ({
       };
     }),
 
+  setShapeParent: (id, parentId) =>
+    set((s) => {
+      const shape = s.features.find((f) => f.id === id);
+      if (!shape) return s;
+      if (parentId === id) return s;
+
+      // A cycle would make the tree unevaluable. The interface only offers
+      // parents from earlier in the tree, so this is the belt to that braces.
+      let walker = s.features.find((f) => f.id === parentId);
+      const seen = new Set<string>([id]);
+      while (walker) {
+        if (seen.has(walker.id)) return s;
+        seen.add(walker.id);
+        const next = typeof walker.params.attachTo === 'string' ? walker.params.attachTo : '';
+        walker = next === '' ? undefined : s.features.find((f) => f.id === next);
+      }
+
+      // Carry the shape across: it keeps the place it is in, and only the
+      // reference changes.
+      const world = worldRigidOf(s.features, shape);
+      const parent = s.features.find((f) => f.id === parentId);
+      const parentWorld =
+        parentId === '' || !parent
+          ? { r: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0] as [number, number, number] }
+          : worldRigidOf(s.features, parent);
+
+      const local = localFromWorld(parentWorld, world);
+
+      return {
+        features: s.features.map((f) =>
+          f.id === id
+            ? {
+                ...f,
+                params: {
+                  ...f.params,
+                  attachTo: parentId,
+                  px: round1(local.position[0]),
+                  py: round1(local.position[1]),
+                  pz: round1(local.position[2]),
+                  rx: round1(local.rotation[0]),
+                  ry: round1(local.rotation[1]),
+                  rz: round1(local.rotation[2]),
+                },
+              }
+            : f,
+        ),
+      };
+    }),
+
+  setTransformWorld: (id, position, rotation) =>
+    set((s) => {
+      const feature = s.features.find((f) => f.id === id);
+      if (!feature) return s;
+
+      const attachTo = typeof feature.params.attachTo === 'string' ? feature.params.attachTo : '';
+      const parent = attachTo === '' ? undefined : s.features.find((f) => f.id === attachTo);
+
+      // Unattached, world is local and the numbers go in as they are.
+      if (!parent) {
+        return {
+          features: s.features.map((f) =>
+            f.id === id
+              ? {
+                  ...f,
+                  params: {
+                    ...f.params,
+                    px: round1(position[0]),
+                    py: round1(position[1]),
+                    pz: round1(position[2]),
+                    rx: round1(rotation[0]),
+                    ry: round1(rotation[1]),
+                    rz: round1(rotation[2]),
+                  },
+                }
+              : f,
+          ),
+        };
+      }
+
+      const local = localFromWorld(worldRigidOf(s.features, parent), {
+        r: rigidOf({ rx: rotation[0], ry: rotation[1], rz: rotation[2] }).r,
+        t: position,
+      });
+
+      return {
+        features: s.features.map((f) =>
+          f.id === id
+            ? {
+                ...f,
+                params: {
+                  ...f.params,
+                  px: round1(local.position[0]),
+                  py: round1(local.position[1]),
+                  pz: round1(local.position[2]),
+                  rx: round1(local.rotation[0]),
+                  ry: round1(local.rotation[1]),
+                  rz: round1(local.rotation[2]),
+                },
+              }
+            : f,
+        ),
+      };
+    }),
+
   setOriginWorld: (id, x, y, z) =>
     set((s) => {
       const feature = s.features.find((f) => f.id === id);
@@ -1418,6 +1539,37 @@ export function composeField(
   pitch: number,
 ) {
   return composeFieldWith(features, kerf, seed, thickness, pitch, mainVolumes());
+}
+
+/**
+ * Shapes a shape may be grouped under: only those earlier in the tree.
+ *
+ * That restriction is what makes a cycle unreachable through the interface, and
+ * it matches how the tree reads — a follower sits below its leader.
+ */
+export function groupableParents(features: Feature[], id: string): Feature[] {
+  const at = features.findIndex((f) => f.id === id);
+  if (at < 0) return [];
+  return features
+    .slice(0, at)
+    .filter((f) => findModule(f.kind) !== undefined || f.kind === 'import');
+}
+
+/** Shapes attached to this one, directly. */
+export function groupChildren(features: Feature[], id: string): Feature[] {
+  return features.filter((f) => f.params.attachTo === id);
+}
+
+/** Where a feature's gizmo should stand in world terms, for a shape. */
+export function worldTransformOf(
+  features: Feature[],
+  feature: Feature,
+): { position: [number, number, number]; rotation: [number, number, number] } {
+  const world = worldRigidOf(features, feature);
+  return {
+    position: world.t,
+    rotation: eulerFromMatrix(world.r),
+  };
 }
 
 /** Field features with their baked import volumes attached, for picking. */

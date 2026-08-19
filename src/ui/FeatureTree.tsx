@@ -44,6 +44,30 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
   return index === 0 ? 'base solid' : OP_LABELS[op];
 }
 
+/**
+ * How deeply a feature is nested under other features, for indenting the row.
+ *
+ * A group has no row of its own — it is just shapes pointing at a leader — so the
+ * indent is the only thing that shows it in the tree, and it is worth the six
+ * lines.
+ */
+function groupDepth(features: Feature[], feature: Feature): number {
+  let depth = 0;
+  const seen = new Set<string>([feature.id]);
+  let target = typeof feature.params.attachTo === 'string' ? feature.params.attachTo : '';
+
+  while (target !== '' && depth < 8) {
+    if (seen.has(target)) break;
+    seen.add(target);
+    const parent = features.find((f) => f.id === target);
+    if (!parent) break;
+    depth += 1;
+    target = typeof parent.params.attachTo === 'string' ? parent.params.attachTo : '';
+  }
+
+  return depth;
+}
+
 export function FeatureTree() {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
@@ -94,7 +118,10 @@ export function FeatureTree() {
                 }`}
                 onClick={() => selectFeature(f.id)}
               >
-                <span className="row-main">
+                <span
+                  className="row-main"
+                  style={{ paddingLeft: groupDepth(features, f) * 12 }}
+                >
                   <span className="row-name">{f.name}</span>
                   <span className="row-sub">
                     {subtitleFor(f, i, op)}

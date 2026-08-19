@@ -32,6 +32,11 @@ import {
   findModifier,
   defaultModifierParams,
   MODIFIER_MODULES,
+  composeRigid,
+  eulerFromMatrix,
+  rigidOf,
+  worldRigidOf,
+  localFromWorld,
 } from '../src/core/sdf.ts';
 
 let failures = 0;
@@ -414,6 +419,139 @@ console.log('sdf: shell caps');
     Math.abs(before - after) < 0.5,
     `${before.toFixed(3)} then ${after.toFixed(3)}`,
   );
+}
+
+console.log('sdf: grouping by attachment');
+{
+  const sphere = findModule('sphere');
+  const shape = (id, params, attachTo) => ({
+    id,
+    kind: 'sphere',
+    enabled: true,
+    params: { ...defaultParams(sphere), op: 'union', r: 10, ...params, ...(attachTo ? { attachTo } : {}) },
+  });
+
+  // The leader, and four shapes attached to it — a group of five.
+  const leader = shape('a', { r: 12, px: 0, py: 0, pz: 0 });
+  const followers = [
+    shape('b', { r: 8, px: 40 }, 'a'),
+    shape('c', { r: 8, px: -40 }, 'a'),
+    shape('d', { r: 8, py: 40 }, 'a'),
+    shape('e', { r: 8, py: -40 }, 'a'),
+  ];
+  const group = [leader, ...followers];
+
+  const at = (tree, x, y, z) => evaluatePoint(prepareFeatures(tree), x, y, z);
+
+  check('the group evaluates where it was built', at(group, 40, 0, 0) < 0);
+  check('all four followers are there', 
+    at(group, -40, 0, 0) < 0 && at(group, 0, 40, 0) < 0 && at(group, 0, -40, 0) < 0);
+
+  // Move the leader: everything comes along.
+  const moved = [{ ...leader, params: { ...leader.params, px: 200, pz: 50 } }, ...followers];
+  check('moving the leader carries a follower', at(moved, 240, 0, 50) < 0);
+  check('and empties the old place', at(moved, 40, 0, 0) > 0);
+  check('the leader itself moved too', at(moved, 200, 0, 50) < 0);
+
+  // Turn the leader 90 degrees about Z: the +X follower swings to +Y.
+  const turned = [{ ...leader, params: { ...leader.params, rz: 90 } }, ...followers];
+  check('turning the leader swings a follower round', at(turned, 0, 40, 0) < 0);
+  check('and the old direction now holds the one that was on -Y', at(turned, 40, 0, 0) < 0);
+
+  const tipped = [{ ...leader, params: { ...leader.params, ry: 90 } }, ...followers];
+  check('a shape inherits the full rotation, not just Z', at(tipped, 0, 0, -40) < 0,
+    'turned 90 about Y, the +X follower should be under the leader');
+
+  // Bounds have to follow, or a grouped shape gets clipped by the sampling grid.
+  const box = modelBounds(moved);
+  check('bounds follow the group', box.max[0] >= 248 - 1e-6, `max x ${box.max[0].toFixed(1)}`);
+
+  const grid = evaluateGrid(moved, 48);
+  const [nx, ny, nz] = grid.dims;
+  let leaks = 0;
+  for (let k = 0; k < nz; k++) {
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        const face = i === 0 || j === 0 || k === 0 || i === nx - 1 || j === ny - 1 || k === nz - 1;
+        if (face && grid.data[i + nx * (j + ny * k)] < 0) leaks++;
+      }
+    }
+  }
+  check('and the moved group is not clipped', leaks === 0, `${leaks} samples`);
+
+  // Chains: a follower of a follower.
+  const chained = [
+    leader,
+    shape('b', { r: 8, px: 40 }, 'a'),
+    shape('f', { r: 5, px: 20 }, 'b'),
+  ];
+  check('a chain composes', at(chained, 60, 0, 0) < 0);
+  const chainMoved = [
+    { ...leader, params: { ...leader.params, px: 100 } },
+    shape('b', { r: 8, px: 40 }, 'a'),
+    shape('f', { r: 5, px: 20 }, 'b'),
+  ];
+  check('and the whole chain moves with the root', at(chainMoved, 160, 0, 0) < 0);
+
+  const orphan = [shape('z', { r: 8, px: 40 }, 'nobody')];
+  check('an attachment that does not exist falls back to the shape itself',
+    at(orphan, 40, 0, 0) < 0);
+
+  // A cycle must not hang. It cannot be made through the interface, but a
+  // hand-edited project file is not bound by the interface.
+  const cyclic = [shape('p', { r: 8, px: 10 }, 'q'), shape('q', { r: 8, px: 20 }, 'p')];
+  const cycleWorld = worldRigidOf(cyclic, cyclic[0]);
+  check('a cycle resolves to the identity rather than looping forever',
+    cycleWorld.t.every((v) => v === 0));
+  check('and the tree still evaluates', Number.isFinite(at(cyclic, 0, 0, 0)));
+
+  check('picking sees a follower at its composed position',
+    nearestFeatureIndex(moved, 240, 0, 50) === 1);
+}
+
+console.log('sdf: rigid transform algebra');
+{
+  const a = { r: rotationMatrix(0, 0, 90), t: [10, 0, 0] };
+  const b = { r: rotationMatrix(0, 0, 0), t: [5, 0, 0] };
+  const composed = composeRigid(a, b);
+  check('composing puts the child in the parent frame',
+    Math.abs(composed.t[0] - 10) < 1e-9 && Math.abs(composed.t[1] - 5) < 1e-9,
+    `at ${composed.t.map((v) => v.toFixed(2)).join(', ')}`);
+
+  const identity = composeRigid({ r: rotationMatrix(0, 0, 0), t: [0, 0, 0] }, b);
+  check('the identity composes to the child unchanged', identity.t[0] === 5);
+
+  // Euler extraction and matrix construction must be exact inverses, or a grouped
+  // shape jumps the moment it is dragged.
+  let worst = 0;
+  for (const [rx, ry, rz] of [[0,0,0],[30,0,0],[0,45,0],[0,0,60],[17,-33,79],[-120,50,-44],[10,89.9,10]]) {
+    const m = rotationMatrix(rx, ry, rz);
+    const back = eulerFromMatrix(m);
+    const again = rotationMatrix(back[0], back[1], back[2]);
+    for (let i = 0; i < 9; i++) worst = Math.max(worst, Math.abs(m[i] - again[i]));
+  }
+  check('euler and matrix round trip exactly', worst < 1e-9, `worst ${worst.toExponential(2)}`);
+
+  const gimbal = eulerFromMatrix(rotationMatrix(0, 90, 0));
+  check('gimbal lock is handled rather than producing NaN', gimbal.every(Number.isFinite));
+
+  // A world drag written back into a parent's frame.
+  const parent = rigidOf({ px: 100, py: 0, pz: 0, rz: 90 });
+  const world = rigidOf({ px: 100, py: 40, pz: 0, rz: 90 });
+  const local = localFromWorld(parent, world);
+  check('a world position becomes the right local one',
+    Math.abs(local.position[0] - 40) < 1e-9 && Math.abs(local.position[1]) < 1e-9,
+    `local ${local.position.map((v) => v.toFixed(2)).join(', ')}`);
+  check('and the local rotation cancels the parent\'s',
+    local.rotation.every((v) => Math.abs(v) < 1e-9),
+    `rotation ${local.rotation.map((v) => v.toFixed(3)).join(', ')}`);
+
+  const round = localFromWorld(
+    { r: rotationMatrix(0, 0, 0), t: [0, 0, 0] },
+    rigidOf({ px: 7, py: 8, pz: 9, rx: 11, ry: 22, rz: 33 }),
+  );
+  check('with no parent, local is world',
+    Math.abs(round.position[0] - 7) < 1e-9 && Math.abs(round.rotation[2] - 33) < 1e-9);
 }
 
 console.log('');

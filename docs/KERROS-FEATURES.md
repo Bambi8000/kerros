@@ -1318,6 +1318,55 @@ showing — without that, a slow job finishing late would overwrite a newer resu
 exactly what the program did before the worker existed. A worker that fails to
 construct is a reason to be slower, not a reason to stop working.
 
+## Grouping shapes — **shipped**
+
+Several shapes can be moved and turned as one. There is **no group feature and no
+new concept in the tree**: a shape is attached to another shape, its own
+parameters are read in that shape's coordinates, and moving or turning the leader
+carries the followers. A group of five is four shapes pointing at a fifth.
+
+This is the same mechanism a fourth time — sculpt strokes, windows, fixtures, now
+shapes — and the fourth time it needed nothing new except composition.
+
+**A shape inherits the whole rotation**, unlike a window or a fixture. Those live
+in horizontal sheets and can only follow translation and Z; a shape is a volume,
+so tipping over is a move it can make.
+
+**A group is a coordinate unit, not a boolean one.** How the shapes combine is
+still the tree order and the operations. Grouping five spheres does not make them
+one solid; it makes them one thing to aim.
+
+### What had to be exact
+
+`worldRigidOf` walks the chain of attachments and composes: R = Rp·Rc,
+t = Rp·tc + tp. Chains work — a follower of a follower — and a cycle or a chain
+over sixteen deep resolves to the identity rather than hanging. Neither is
+reachable through the interface, which only offers parents from **earlier in the
+tree**, but a hand-edited project file is not bound by the interface.
+
+`eulerFromMatrix` is the part that had to be right. A gizmo hands back a world
+orientation and a grouped shape stores a local one, so somewhere a matrix has to
+become three numbers again — in the order Kerros uses, R = Rz·Ry·Rx. A validator
+round-trips seven orientations through `rotationMatrix` and back and requires
+agreement to 1e-9, including one at 89.9° where the extraction is nearly
+degenerate, plus the gimbal-locked case where only the sum of X and Z is
+recoverable. An approximate inverse here would make a grouped shape jump the
+instant it was dragged, which is exactly the class of bug that is maddening to
+chase from the symptom.
+
+The gizmo and the selection outline both stand at the **composed** transform, or
+they would sit beside the shape rather than on it — the outline had its own
+`applyTransform` inside the builder, which is where the fix belonged rather than
+at the call site.
+
+Bounds compose too, checked by counting samples on the faces of the sampling grid:
+a grouped shape moved 200 mm must not be clipped.
+
+### In the tree
+
+A grouped row is **indented**. A group has no row of its own, so the indent is the
+only thing that shows it, and it is worth the six lines of `groupDepth`.
+
 ## Attachment, finished — **shipped**
 
 Fixtures now follow a shape, which was the last thing in the program that stayed

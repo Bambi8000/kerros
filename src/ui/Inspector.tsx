@@ -1,6 +1,8 @@
 import {
   BRUSH_OPS,
   attachableShapes,
+  groupChildren,
+  groupableParents,
   importEntry,
   importSizeOf,
   rodSpanOf,
@@ -1351,6 +1353,12 @@ function PatternInspector({ feature, placed, sliced }: PatternProps) {
 function ShapeInspector({ feature }: { feature: Feature }) {
   const features = useKerros((s) => s.features);
   const setParam = useKerros((s) => s.setParam);
+  const setShapeParent = useKerros((s) => s.setShapeParent);
+  const groupedUnder = text(feature.params, 'attachTo', '');
+  const parents = groupableParents(features, feature.id);
+  const leader = parents.find((f) => f.id === groupedUnder);
+  const groupOrphaned = groupedUnder !== '' && leader === undefined;
+  const children = groupChildren(features, feature.id);
   const renameFeature = useKerros((s) => s.renameFeature);
 
   const mod = findModule(feature.kind);
@@ -1429,6 +1437,47 @@ function ShapeInspector({ feature }: { feature: Feature }) {
 
       <div className="group">
         <div className="group-head">Placement</div>
+        <label className="field">
+          <span className="field-label">Grouped under</span>
+          <span className="field-input">
+            <select
+              value={groupOrphaned ? '' : groupedUnder}
+              onChange={(e) => setShapeParent(feature.id, e.target.value)}
+            >
+              <option value="">Nothing — stands alone</option>
+              {parents.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </span>
+        </label>
+        {groupOrphaned ? (
+          <div className="warn">
+            The shape this was grouped under is gone, so this one stands alone
+            again where it was.
+          </div>
+        ) : leader ? (
+          <div className="derived">
+            Its numbers below are in {leader.name}&rsquo;s coordinates, so moving or
+            turning {leader.name} carries this shape with it. A group is a
+            coordinate unit, not a boolean one — how the shapes combine is still
+            the tree order and the operations.
+          </div>
+        ) : children.length > 0 ? (
+          <div className="derived">
+            {children.length} {children.length === 1 ? 'shape follows' : 'shapes follow'} this
+            one. Move or turn it and they come along.
+          </div>
+        ) : (
+          <div className="derived">
+            Group a shape under another to move several as one. Only shapes above
+            it in the tree are offered, which is what keeps a group from becoming
+            a loop.
+          </div>
+        )}
+
         {TRANSFORM_PARAMS.map((spec) => (
           <NumberField
             key={spec.key}
