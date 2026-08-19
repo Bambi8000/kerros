@@ -1318,6 +1318,38 @@ showing — without that, a slow job finishing late would overwrite a newer resu
 exactly what the program did before the worker existed. A worker that fails to
 construct is a reason to be slower, not a reason to stop working.
 
+## Packaging — **shipped**
+
+`npm run tauri build` produces `Kerros.app` and a `.dmg` under
+`src-tauri/target/release/bundle/`.
+
+### The icon is source, not output
+
+`assets/kerros-icon.png` is a 1024 px master, drawn by `tools/make-icon.py`.
+`npx tauri icon` expands it into every size Tauri needs, including the `.icns`.
+Keeping the generator in the repository rather than only the PNG means the icon can
+be changed by editing the numbers that describe it, which is the same reason every
+other piece of geometry in this program is a function rather than a file.
+
+**Three colours, and exactly three**: the warm graphite of the application chrome,
+the bone of the preview material, and the CUT red the DXF export uses. An earlier
+version put an amber halo behind the red sheet to stand in for escaping light; at
+32 pixels a third colour around the edge of the second one reads as blur rather
+than as glow, and dropping it made the red layer *more* distinct, not less.
+
+**Six layers, not nine.** Nine reads beautifully at 256 pixels and turns to mush at
+32, and 32 is the size a dock icon is actually seen at — so the taper is stronger
+than the real lamps have and the layer count is lower than any real stack. An icon
+that has to work at small sizes can carry one idea; the idea here is the stack.
+
+### Unsigned, and what that means
+
+The bundle is not code-signed or notarised, which needs a paid Apple Developer
+account. It runs on the machine that built it. Moved to another Mac it will be
+quarantined, and the way past that is either a right-click Open or
+`xattr -dr com.apple.quarantine` on the app — worth knowing before handing a build
+to anyone, and worth solving properly if that ever becomes a habit.
+
 ## Infrastructure
 
 ### World convention — M0

@@ -647,9 +647,12 @@ export function Viewport({ slices }: ViewportProps) {
     scene.add(helper);
     gizmoRef.current = gizmo;
 
-    const onDraggingChanged = (event: { value: boolean }) => {
-      draggingRef.current = event.value;
-      controls.enabled = !event.value;
+    // three types a control event's payload as `unknown`, because the event map
+    // is generic over the control. Narrow it here rather than asserting.
+    const onDraggingChanged = (event: { value: unknown }) => {
+      const dragging = event.value === true;
+      draggingRef.current = dragging;
+      controls.enabled = !dragging;
     };
 
     const onObjectChange = () => {
