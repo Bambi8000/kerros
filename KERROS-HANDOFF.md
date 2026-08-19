@@ -136,6 +136,12 @@ validated on its own.
 - **All randomness seeded**, and seeded so that adjusting a setting does not
   reroll a choice. Per-layer window rolls key on the layer number; scatter keys
   on part index; changing a count must not change which layers were chosen.
+- **`npm run verify`, never `npx tsc --noEmit`.** The root `tsconfig.json` in a
+  Vite react-ts project is a solution file with `"files": []`, so
+  `tsc --noEmit` against it checks **nothing** and exits happily. It gave green
+  light for the whole project until `npm run build` — which runs `tsc -b`, and
+  therefore follows the project references — found two type errors on its first
+  run. `verify` is the thirteen validators plus a real type check.
 - **Every geometry module gets a validator** in `tools/validate-<name>.mjs`,
   importing the real module. Twelve of them, run by `npm run check`.
 - **Version lives in one place.** `src/version.ts` and `package.json` must agree;
