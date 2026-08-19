@@ -11,28 +11,30 @@ import { DEFAULT_MACHINE, DEFAULT_MATERIAL, DEFAULT_STACK } from './profiles';
 import {
   defaultModifierParams,
   defaultParams,
-  evaluatePoint,
   findModule,
   frameOf,
   frameToLocal,
   frameToWorld,
   modelBounds,
-  prepareFeatures,
   shellModifier,
 } from './sdf';
 import type { Frame } from './sdf';
-import { WINDOW_WORLD, resolveWindow, stockField, windowToLocal, windowToWorld } from './window';
+import { WINDOW_WORLD, windowToLocal, windowToWorld } from './window';
 import { importMesh, openEdgeCount } from './meshImport';
 import type { TriangleSoup } from './meshImport';
 import { meshGridBounds, sampleMeshGrid, voxelise } from './voxelise';
 import type { MeshGrid } from './voxelise';
 import { FIXTURE_LABELS, SOCKET_PRESETS } from './fixture';
-import type { FixtureKind, FixtureSpec } from './fixture';
-import type { LayerPlan, WindowFrame, WindowSpec } from './window';
-import { ROD_CLEARANCE } from './rig';
-import type { RodSpec } from './rig';
+import type { FixtureKind } from './fixture';
+import type { WindowFrame } from './window';
 import type { PartPlacement } from './nest';
 import type { ProjectData } from './project';
+import {
+  composeField as composeFieldWith,
+  isFieldFeature,
+  rodSpanOf,
+  windowFrameFor,
+} from './pipeline';
 
 export type ViewName = 'persp' | 'top' | 'front' | 'side';
 
@@ -276,29 +278,26 @@ export function importEntry(id: string): ImportEntry | undefined {
   return importVolumes.get(id);
 }
 
+/** The main thread's baked volumes, in the shape the field wants them. */
+function mainVolumes() {
+  const out = new Map<
+    string,
+    { sample: (x: number, y: number, z: number) => number; min: [number, number, number]; max: [number, number, number] }
+  >();
+  for (const [id, entry] of importVolumes) out.set(id, entry.volume);
+  return out;
+}
+
+/** Every baked grid, for handing to a worker after a bake. */
+export function importGrids(): { id: string; grid: MeshGrid }[] {
+  return Array.from(importVolumes, ([id, entry]) => ({ id, grid: entry.grid }));
+}
+
 /** Tenths of a millimetre: stroke points do not need sixteen decimal places. */
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-/**
- * The frame a window follows: translation and Z rotation only.
- *
- * A window is a vertical wedge and its layers come from world Z, so inheriting
- * a parent's X or Y rotation would tip it out of the stack. See `WindowFrame`.
- */
-export function windowFrameFor(features: Feature[], window: Feature): WindowFrame {
-  const target = typeof window.params.attachTo === 'string' ? window.params.attachTo : '';
-  if (target === '') return WINDOW_WORLD;
-  const parent = features.find((f) => f.id === target);
-  if (!parent) return WINDOW_WORLD;
-  return {
-    x: Number(parent.params.px) || 0,
-    y: Number(parent.params.py) || 0,
-    z: Number(parent.params.pz) || 0,
-    rz: Number(parent.params.rz) || 0,
-  };
-}
 
 /** The frame a sculpt feature's strokes live in. */
 function frameFor(features: Feature[], sculpt: Feature): Frame {
@@ -308,15 +307,6 @@ function frameFor(features: Feature[], sculpt: Feature): Frame {
   return frameOf(parent ? parent.params : {});
 }
 
-/**
- * Features that take part in the distance field.
- *
- * SHAPE contributes solids, CARVE modifies the result. RIG does neither: rods
- * are drilled after slicing and never touch the field.
- */
-export function isFieldFeature(feature: Feature): boolean {
-  return feature.stage === 'SHAPE' || feature.stage === 'CARVE';
-}
 
 export const useKerros = create<KerrosState>((set, get) => ({
   features: [],
@@ -1204,43 +1194,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
   setSeed: (seed) => set({ seed }),
 }));
 
-/**
- * A rod's span, from centre and length.
- *
- * Rods used to be stored as two ends. Both forms are read here so a tree built
- * before the change still resolves, but centre-and-length is the one written.
- */
-export function rodSpanOf(params: Feature['params']): [number, number] {
-  const length = Number(params.length) || 0;
-  if (length > 0) {
-    const centre = Number(params.pz) || 0;
-    return [centre - length / 2, centre + length / 2];
-  }
-  const start = Number(params.zStart) || 0;
-  const end = Number(params.zEnd) || 0;
-  return start <= end ? [start, end] : [end, start];
-}
 
-/** Turn the RIG features of a tree into rod specs the rig module understands. */
-export function rodsFromFeatures(features: Feature[]): RodSpec[] {
-  const rods: RodSpec[] = [];
-  for (const f of features) {
-    if (f.kind !== 'rod' || !f.enabled) continue;
-    const size = typeof f.params.size === 'string' ? f.params.size : 'M5';
-    const [zStart, zEnd] = rodSpanOf(f.params);
-    rods.push({
-      id: f.id,
-      label: f.name,
-      size: ROD_CLEARANCE[size] ? size : 'M5',
-      x: Number(f.params.px) || 0,
-      y: Number(f.params.py) || 0,
-      zStart,
-      zEnd,
-      diameter: Number(f.params.diameter) || 0,
-    });
-  }
-  return rods;
-}
 
 /**
  * Does this feature have a position the gizmo can move?
@@ -1260,36 +1214,6 @@ export function hasTransform(feature: Feature): boolean {
   );
 }
 
-/** Fixture specs of a tree, as the fixture module wants them. */
-export function fixturesFromFeatures(features: Feature[], kerf: number): FixtureSpec[] {
-  const out: FixtureSpec[] = [];
-  for (const f of features) {
-    if (!f.kind.startsWith('fixture:') || !f.enabled) continue;
-    const kind = f.kind.slice('fixture:'.length) as FixtureKind;
-    out.push({
-      id: f.id,
-      label: f.name,
-      kind,
-      x: Number(f.params.px) || 0,
-      y: Number(f.params.py) || 0,
-      z: Number(f.params.pz) || 0,
-      length: Math.max(Number(f.params.length) || 0, 0),
-      rot: Number(f.params.rot) || 0,
-      kerf,
-      preset: typeof f.params.preset === 'string' ? f.params.preset : 'custom',
-      diameter: Number(f.params.diameter) || 0,
-      screws: Math.max(Math.round(Number(f.params.screws) || 0), 0),
-      boltCircle: Number(f.params.boltCircle) || 0,
-      screwDiameter: Number(f.params.screwDiameter) || 0,
-      shape: typeof f.params.shape === 'string' ? f.params.shape : 'round',
-      slotLength: Number(f.params.slotLength) || 0,
-      width: Number(f.params.width) || 0,
-      depth: Number(f.params.depth) || 0,
-      corner: Number(f.params.corner) || 0,
-    });
-  }
-  return out;
-}
 
 /**
  * Can this feature be rotated?
@@ -1326,39 +1250,6 @@ export function transformOriginOf(
   return [x, y, Number(feature.params.pz) || 0];
 }
 
-/** Pattern settings of a feature, in the shape the generator wants. */
-export function patternOptionsOf(
-  feature: Feature,
-  kerf: number,
-  seed: number,
-): {
-  kind: 'grid' | 'hex' | 'scatter' | 'radial';
-  radius: number;
-  pitch: number;
-  minBridge: number;
-  density: number;
-  kerf: number;
-  seed: number;
-  rotatePerLayer: boolean;
-  band: number;
-} {
-  const kind = typeof feature.params.patternKind === 'string' ? feature.params.patternKind : 'hex';
-  return {
-    kind: (['grid', 'hex', 'scatter', 'radial'].includes(kind) ? kind : 'hex') as
-      | 'grid'
-      | 'hex'
-      | 'scatter'
-      | 'radial',
-    band: Math.max(Number(feature.params.band) || 0, 0),
-    radius: Number(feature.params.radius) || 2,
-    pitch: Number(feature.params.pitch) || 8,
-    minBridge: Number(feature.params.minBridge) || 1.5,
-    density: Number(feature.params.density) || 0,
-    kerf,
-    seed,
-    rotatePerLayer: Number(feature.params.rotatePerLayer) > 0,
-  };
-}
 
 /** Wall thickness of the last enabled shell in a tree, or 0 when there is none. */
 export function shellWallOf(features: Feature[]): number {
@@ -1366,86 +1257,7 @@ export function shellWallOf(features: Feature[]): number {
   return shell ? Math.max(Number(shell.params.t) || 0, 0) : 0;
 }
 
-/** Window features of a tree, as the window module wants them. */
-export function windowsFromFeatures(
-  features: Feature[],
-  fallbackKerf: number,
-  seed: number,
-): WindowSpec[] {
-  const out: WindowSpec[] = [];
-  for (const f of features) {
-    if (f.kind !== 'window' || !f.enabled) continue;
-    const mode = f.params.mode === 'band' ? 'band' : 'perLayer';
-    out.push({
-      id: f.id,
-      label: f.name,
-      mode,
-      chance: Math.min(Math.max(Number(f.params.chance) ?? 0.3, 0), 1),
-      minCount: Math.max(Math.round(Number(f.params.minCount) || 1), 1),
-      maxCount: Math.max(Math.round(Number(f.params.maxCount) || 1), 1),
-      minWidth: Math.max(Number(f.params.minWidth) || 0, 0),
-      maxWidth: Math.max(Number(f.params.maxWidth) || 0, 0),
-      x: Number(f.params.px) || 0,
-      y: Number(f.params.py) || 0,
-      seed,
-      count: Math.max(Math.round(Number(f.params.count) || 1), 1),
-      width: Number(f.params.width) || 0,
-      angle: Number(f.params.angle) || 0,
-      twist: Number(f.params.twist) || 0,
-      z: Number(f.params.pz) || 0,
-      length: Math.max(Number(f.params.length) || 0, 0),
-      fit: Math.max(Number(f.params.fit) || 0, 0),
-      kerf: Math.max(Number(f.params.windowKerf) ?? fallbackKerf, 0),
-    });
-  }
-  // Placements are stored in the parent's frame; resolve them into world terms
-  // here so the sector and the layer planes are measured in the same space.
-  return out.map((spec) => {
-    const feature = features.find((f) => f.id === spec.id);
-    return feature ? resolveWindow(spec, windowFrameFor(features, feature)) : spec;
-  });
-}
 
-/**
- * The field the rest of the program slices.
- *
- * Windows are applied here rather than inside the SDF core, which has no
- * imports and must not gain one. `solid` is the form before any window is taken
- * out of it — the plug of each window is cut from that, so it has to stay
- * available separately.
- */
-export function composeField(
-  features: Feature[],
-  kerf: number,
-  seed: number,
-  thickness: number,
-  pitch: number,
-) {
-  // Imports carry their baked volume through to the evaluator here, since the
-  // grids live outside the store.
-  const fieldFeatures = features.filter(isFieldFeature).map((f) =>
-    f.kind === 'import' ? { ...f, volume: importVolumes.get(f.id)?.volume } : f,
-  );
-  const prepared = prepareFeatures(fieldFeatures);
-  const windows = windowsFromFeatures(features, kerf, seed);
-  const bounds = modelBounds(fieldFeatures);
-
-  // Per-layer windows have to land on the same planes the slicer will take, so
-  // the layer plan is built from the same numbers: the bottom of the model and
-  // the pitch.
-  const plan: LayerPlan = { z0: bounds ? bounds.min[2] : 0, pitch: Math.max(pitch, 0.01) };
-
-  const solid = (x: number, y: number, z: number) => evaluatePoint(prepared, x, y, z);
-
-  return {
-    solid,
-    sample: stockField(solid, windows, plan, thickness),
-    windows,
-    plan,
-    thickness,
-    bounds,
-  };
-}
 
 /** Shapes a sculpt feature can be attached to, in tree order. */
 export function attachableShapes(features: Feature[]): Feature[] {
@@ -1462,4 +1274,40 @@ export function importSizeOf(feature: Feature): [number, number, number] | null 
     (entry.soup.max[1] - entry.soup.min[1]) * scale,
     (entry.soup.max[2] - entry.soup.min[2]) * scale,
   ];
+}
+
+/* ------------------------------------------------------------------ *
+ * Re-exported from the pipeline
+ *
+ * These live in `pipeline.ts` so that the whole slicing path can be loaded in
+ * Node, and therefore validated, without dragging zustand along. They are
+ * re-exported here because every caller in the UI already imports them from the
+ * store and there is no reason to churn that.
+ * ------------------------------------------------------------------ */
+
+export {
+  rodsFromFeatures,
+  windowsFromFeatures,
+  fixturesFromFeatures,
+  patternOptionsOf,
+} from './pipeline';
+
+// Names the store uses itself are re-exported explicitly, since an
+// `export { x } from` does not bring x into this module's scope.
+export { isFieldFeature, rodSpanOf, windowFrameFor };
+
+/**
+ * The field, using the store's own baked imports.
+ *
+ * The pipeline's version takes the volume map explicitly, because a worker has
+ * its own. On the main thread this is the one anyone wants.
+ */
+export function composeField(
+  features: Feature[],
+  kerf: number,
+  seed: number,
+  thickness: number,
+  pitch: number,
+) {
+  return composeFieldWith(features, kerf, seed, thickness, pitch, mainVolumes());
 }

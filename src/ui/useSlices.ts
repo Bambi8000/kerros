@@ -1,53 +1,104 @@
-import { useEffect, useState } from 'react';
-import {
-  composeField,
-  fixturesFromFeatures,
-  patternOptionsOf,
-  rodsFromFeatures,
-  useKerros,
-} from '../core/store';
-import { fixtureHolesAt } from '../core/fixture';
-import { circleFitsInPart, groupContours, polygonFitsInPart, signedArea } from '../core/slice';
-import { windowField } from '../core/window';
-import { minFeatureGap, sliceModel } from '../core/slice';
-import type { GapReport, SliceSet } from '../core/slice';
-import { applyRods } from '../core/rig';
-import { generatePattern } from '../core/pattern';
+import { useEffect, useRef, useState } from 'react';
+import { importGrids, useKerros } from '../core/store';
+import { EMPTY_OUTPUT, runSliceJob } from '../core/pipeline';
+import type { ImportPayload, MeshVolume, SliceJob, SliceOutput } from '../core/pipeline';
+import { sampleMeshGrid } from '../core/voxelise';
+import type { WorkerReply, WorkerRequest } from './kerros.worker';
 
 /** Editing settles before a re-slice, which is far heavier than a preview. */
 const SLICE_DEBOUNCE_MS = 250;
 
-export interface SliceResult {
-  set: SliceSet | null;
-  /** Fixture holes that would not fit the layer they landed on, by feature id. */
-  fixtureMisses: Record<string, number>;
-  /** One sliced set of plugs per window feature. */
-  windows: { label: string; set: SliceSet }[];
-  /** Holes each pattern feature actually placed, keyed by feature id. */
-  patternCounts: Record<string, number>;
-  /** One report per slice, aligned by index. */
-  reports: GapReport[];
-  ms: number;
+export interface SliceResult extends SliceOutput {
+  /** True while a job is queued or running. */
   pending: boolean;
 }
 
-const IDLE: SliceResult = {
-  set: null,
-  fixtureMisses: {},
-  windows: [],
-  patternCounts: {},
-  reports: [],
-  ms: 0,
-  pending: false,
-};
+const IDLE: SliceResult = { ...EMPTY_OUTPUT, pending: false };
+
+/* ------------------------------------------------------------------ *
+ * The worker
+ * ------------------------------------------------------------------ */
+
+let worker: Worker | null = null;
+let workerBroken = false;
+/** Import revision the worker has been told about. */
+let sentRevision = -1;
+
+function ensureWorker(): Worker | null {
+  if (workerBroken) return null;
+  if (worker) return worker;
+
+  try {
+    worker = new Worker(new URL('./kerros.worker.ts', import.meta.url), {
+      type: 'module',
+    });
+    worker.onerror = () => {
+      // A worker that cannot start is not a reason to stop working. Slicing falls
+      // back to the main thread, which is what happened before it existed.
+      workerBroken = true;
+      worker = null;
+    };
+    return worker;
+  } catch {
+    workerBroken = true;
+    return null;
+  }
+}
+
+/** Send the baked grids across, once per bake rather than once per job. */
+function syncImports(target: Worker, revision: number) {
+  if (revision === sentRevision) return;
+
+  const payloads: ImportPayload[] = importGrids().map(({ id, grid }) => ({
+    id,
+    // Copied, not transferred: the main thread still needs its grids for
+    // clicking on an import and for the preview mesh.
+    data: grid.data.slice(),
+    dims: grid.dims,
+    min: grid.min,
+    step: grid.step,
+    reach: grid.reach,
+  }));
+
+  const request: WorkerRequest = { kind: 'imports', payloads };
+  target.postMessage(
+    request,
+    payloads.map((p) => p.data.buffer),
+  );
+  sentRevision = revision;
+}
+
+/** The main thread's own volumes, for the fallback path. */
+function localVolumes(): Map<string, MeshVolume> {
+  const out = new Map<string, MeshVolume>();
+  for (const { id, grid } of importGrids()) {
+    out.set(id, {
+      sample: (x, y, z) => sampleMeshGrid(grid, x, y, z),
+      min: grid.min,
+      max: [
+        grid.min[0] + (grid.dims[0] - 1) * grid.step,
+        grid.min[1] + (grid.dims[1] - 1) * grid.step,
+        grid.min[2] + (grid.dims[2] - 1) * grid.step,
+      ],
+    });
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ *
+ * The hook
+ * ------------------------------------------------------------------ */
 
 /**
- * Slice the current feature tree, drill the rods, and check the result.
+ * Slice the current feature tree, off the main thread.
  *
- * Only runs while `enabled`, so nobody pays for slicing while modelling.
- * Synchronous for now: a full lamp is a couple of hundred milliseconds, which
- * the debounce hides. It moves to a Web Worker when nesting joins it in M4 and
- * the combined cost stops fitting in a frame gap.
+ * Only runs while `enabled`, so nobody pays for slicing while modelling. The
+ * field cannot be sent to a worker — it is a chain of closures — so the worker is
+ * sent the tree instead and builds the field itself.
+ *
+ * Replies carry the token of the job they answer. Anything stale is dropped:
+ * during a drag several jobs are in flight, and the last one asked for is the
+ * only one worth showing.
  */
 export function useSlices(enabled: boolean): SliceResult {
   const features = useKerros((s) => s.features);
@@ -59,8 +110,11 @@ export function useSlices(enabled: boolean): SliceResult {
   const smoothing = useKerros((s) => s.sliceSmoothing);
   const minFeature = useKerros((s) => s.minFeature);
   const seed = useKerros((s) => s.seed);
+  const importRevision = useKerros((s) => s.importRevision);
 
   const [result, setResult] = useState<SliceResult>(IDLE);
+  const tokenRef = useRef(0);
+  const latestRef = useRef(0);
 
   useEffect(() => {
     if (!enabled) {
@@ -71,129 +125,51 @@ export function useSlices(enabled: boolean): SliceResult {
     setResult((prev) => ({ ...prev, pending: true }));
 
     const timer = window.setTimeout(() => {
-      const field = composeField(features, kerf, seed, thickness, thickness + spacerHeight);
-      const bounds = field.bounds;
+      const job: SliceJob = {
+        features,
+        thickness,
+        kerf,
+        spacerHeight,
+        resolution,
+        tolerance,
+        smoothing,
+        minFeature,
+        seed,
+      };
 
-      if (!bounds) {
-        setResult(IDLE);
+      const token = ++tokenRef.current;
+      latestRef.current = token;
+
+      const active = ensureWorker();
+
+      if (!active) {
+        // No worker: do it here, exactly as the program did before.
+        const output = runSliceJob(job, localVolumes());
+        setResult({ ...output, pending: false });
         return;
       }
 
-      const started = performance.now();
-      const layerOptions = { thickness, spacerHeight, resolution, tolerance, smoothing };
+      syncImports(active, importRevision);
 
-      const sliced = sliceModel(field.sample, bounds, { ...layerOptions, kerf });
+      const onMessage = (event: MessageEvent<WorkerReply>) => {
+        const reply = event.data;
+        if (reply.kind === 'imports') return;
+        if (reply.token !== latestRef.current) return;
 
-      // Each window's plugs are cut from the form BEFORE any window was taken
-      // out of it, on the same layer planes, so a plug and its hole are the
-      // same curve offset only by the fit clearance. Their own kerf, because
-      // they are cut from their own material.
-      const windows = field.windows.map((spec) => ({
-        label: spec.label,
-        set: sliceModel(windowField(field.solid, spec, field.plan, field.thickness), bounds, {
-          ...layerOptions,
-          kerf: spec.kerf,
-        }),
-      }));
+        active.removeEventListener('message', onMessage);
 
-      // Rods drill after slicing: they take no part in the field, they only
-      // add holes to the layers their span reaches.
-      const drilled = applyRods(sliced.slices, rodsFromFeatures(features), kerf);
+        if (reply.kind === 'failed') {
+          console.error('[Kerros] slicing failed in the worker:', reply.message);
+          setResult({ ...EMPTY_OUTPUT, pending: false });
+          return;
+        }
 
-      // Fixtures go in after the rods and before the perforation, so the
-      // pattern sees them and keeps clear. Anything that will not fit the layer
-      // it landed on is counted and left out rather than cut as a bite out of
-      // the edge.
-      const fixtures = fixturesFromFeatures(features, kerf);
-      const fixtureMisses: Record<string, number> = {};
-      for (const spec of fixtures) fixtureMisses[spec.id] = 0;
+        setResult({ ...reply.output, pending: false });
+      };
 
-      const fitted = fixtures.length === 0
-        ? drilled
-        : drilled.map((slice) => {
-            const circles = slice.circles.slice();
-            const contours = slice.contours.slice();
-
-            for (const spec of fixtures) {
-              const holes = fixtureHolesAt(spec, slice.z);
-              if (holes.circles.length === 0 && holes.polygons.length === 0) continue;
-
-              const groups = groupContours(contours);
-
-              for (const circle of holes.circles) {
-                const home = groups.find((g) => circleFitsInPart(g, circle));
-                if (home) circles.push(circle);
-                else fixtureMisses[spec.id] += 1;
-              }
-
-              for (const polygon of holes.polygons) {
-                const home = groups.find((g) => polygonFitsInPart(g, polygon));
-                if (home) {
-                  const area = signedArea(polygon);
-                  contours.push({ points: polygon, area, isHole: area < 0 });
-                } else {
-                  fixtureMisses[spec.id] += 1;
-                }
-              }
-            }
-
-            return { ...slice, circles, contours };
-          });
-
-      // Patterns perforate after the rods, so a pattern hole never crowds a
-      // rod hole. Each pattern sees the ones before it for the same reason.
-      const patterns = features.filter((f) => f.stage === 'PATTERN' && f.enabled);
-      // Counted as they are placed: a pattern that fits nowhere must say so
-      // rather than leave the maker looking for holes that were never made.
-      const patternCounts: Record<string, number> = {};
-      for (const feature of patterns) patternCounts[feature.id] = 0;
-
-      const perforated =
-        patterns.length === 0
-          ? fitted
-          : fitted.map((slice) => {
-              const circles = slice.circles.slice();
-              for (const feature of patterns) {
-                const holes = generatePattern(
-                  {
-                    z: slice.z,
-                    // Clearance is measured against the slice's own rings, in
-                    // plane. The field only supplies the inside/outside sign.
-                    contours: slice.contours.map((c) => ({ points: c.points })),
-                    bounds: {
-                      minX: bounds.min[0],
-                      minY: bounds.min[1],
-                      maxX: bounds.max[0],
-                      maxY: bounds.max[1],
-                    },
-                    existing: circles,
-                    sample: field.sample,
-                    layer: slice.index,
-                  },
-                  patternOptionsOf(feature, kerf, seed),
-                );
-                patternCounts[feature.id] += holes.length;
-                circles.push(...holes);
-              }
-              return { ...slice, circles };
-            });
-
-      const set: SliceSet = { ...sliced, slices: perforated };
-
-      // The check threshold is whichever is larger: what the maker asked for,
-      // or two kerfs, below which the material burns through regardless.
-      const threshold = Math.max(minFeature, kerf * 2);
-      const reports = set.slices.map((slice) => minFeatureGap(slice, threshold));
-
-      setResult({
-        set,
-        fixtureMisses,
-        windows,
-        patternCounts,
-        reports,
-        ms: performance.now() - started,
-        pending: false,
-      });
+      active.addEventListener('message', onMessage);
+      const request: WorkerRequest = { kind: 'slice', token, job };
+      active.postMessage(request);
     }, SLICE_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
@@ -208,6 +184,7 @@ export function useSlices(enabled: boolean): SliceResult {
     smoothing,
     minFeature,
     seed,
+    importRevision,
   ]);
 
   return result;

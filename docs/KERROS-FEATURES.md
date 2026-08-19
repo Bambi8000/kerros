@@ -1261,6 +1261,63 @@ the bottleneck; it only hosts the window. Lowering the preview resolution is the
 immediate answer; moving slicing to a Web Worker, promised in the handoff since
 M2, is the real one.
 
+## Slicing off the main thread — **shipped**
+
+`src/core/pipeline.ts` holds the whole path from feature tree to sliced, drilled,
+perforated layers as **one pure function**. `src/ui/kerros.worker.ts` is a thin
+shell around it, and `useSlices` talks to that.
+
+### The field cannot cross a thread boundary
+
+`composeField` returns a chain of closures, and closures do not survive
+`postMessage`. So the worker is not handed a field — it is handed the **tree**,
+and builds the field itself. A tree is plain JSON; a closure is not.
+
+The one thing that is not plain JSON is an imported mesh's grid, megabytes of
+Float32. Those are sent **once per bake**, not once per job, and cached on both
+sides by feature id. `useSlices` tracks which `importRevision` the worker has been
+told about and only re-sends when it changes. The grids are copied rather than
+transferred, because the main thread still needs its own for clicking on an import
+and for the preview mesh.
+
+### The pipeline had to leave the store
+
+The first attempt had `pipeline.ts` importing helpers from `store.ts`. That works
+in a browser and fails the more important test: Node cannot resolve `zustand`, so
+the pipeline could not be loaded in a script, and the whole reason for extracting
+it was to make the worker's logic testable.
+
+So `composeField`, `isFieldFeature`, `rodsFromFeatures`, `windowsFromFeatures`,
+`fixturesFromFeatures`, `patternOptionsOf`, `rodSpanOf` and `windowFrameFor` moved
+from the store into the pipeline, which now imports only modules that have no
+imports of their own — with **explicit `.ts` extensions**, so the graph resolves
+in Node. The store re-exports them, since every caller in the UI already imported
+them from there.
+
+`composeField` takes the volume map as an argument rather than reaching for a
+module-level cache: the main thread has the store's, a worker has its own, and the
+pipeline must not know which it is talking to. The store keeps a wrapper that
+supplies its own.
+
+`tools/validate-pipeline.mjs` then checks the thing that actually runs: an empty
+tree, a shelled body, rods and fixtures and perforation composing in the right
+order, windows coming out as their own sets, an import arriving as a payload and
+rebuilt on the far side, a missing grid contributing nothing, and determinism.
+Sixteen checks over one entry point, where before there were none over the
+composition at all.
+
+### Stale replies are dropped
+
+Every job carries a token, and a reply whose token is not the newest is discarded.
+During a drag several jobs are in flight and only the last one asked for is worth
+showing — without that, a slow job finishing late would overwrite a newer result.
+
+### If the worker will not start
+
+`useSlices` falls back to running the pipeline on the main thread, which is
+exactly what the program did before the worker existed. A worker that fails to
+construct is a reason to be slower, not a reason to stop working.
+
 ## Infrastructure
 
 ### World convention — M0
