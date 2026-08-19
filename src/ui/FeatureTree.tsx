@@ -19,9 +19,11 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
   }
   if (f.kind.startsWith('fixture:')) {
     const kind = f.kind.slice('fixture:'.length);
-    if (kind === 'socket') return `socket · ${f.params.preset ?? 'nipple'}`;
-    if (kind === 'cable') return `cable · ${f.params.shape ?? 'round'} Ø${Number(f.params.diameter) || 0}`;
-    return `pocket · ${Number(f.params.width) || 0}×${Number(f.params.depth) || 0} mm`;
+    const attached = typeof f.params.attachTo === 'string' && f.params.attachTo !== '';
+    const tail = attached ? ' · attached' : '';
+    if (kind === 'socket') return `socket · ${f.params.preset ?? 'nipple'}${tail}`;
+    if (kind === 'cable') return `cable · ${f.params.shape ?? 'round'} Ø${Number(f.params.diameter) || 0}${tail}`;
+    return `pocket · ${Number(f.params.width) || 0}×${Number(f.params.depth) || 0} mm${tail}`;
   }
   if (f.kind === 'window') {
     const attached = typeof f.params.attachTo === 'string' && f.params.attachTo !== '';

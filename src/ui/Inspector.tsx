@@ -798,6 +798,8 @@ function FixtureInspector({ feature, misses }: FixtureProps) {
   const setParam = useKerros((s) => s.setParam);
   const renameFeature = useKerros((s) => s.renameFeature);
   const centreOnModel = useKerros((s) => s.centreOnModel);
+  const features = useKerros((s) => s.features);
+  const setFixtureParent = useKerros((s) => s.setFixtureParent);
   const kerf = useKerros((s) => s.material.kerf);
   const thickness = useKerros((s) => s.material.thickness);
   const spacer = useKerros((s) => s.stack.spacerHeight);
@@ -822,6 +824,10 @@ function FixtureInspector({ feature, misses }: FixtureProps) {
     depth: num(feature.params, 'depth', 22),
   };
   const extent = fixtureExtent(spec as never);
+  const attachTo = text(feature.params, 'attachTo', '');
+  const hosts = attachableShapes(features);
+  const host = hosts.find((f) => f.id === attachTo);
+  const orphaned = attachTo !== '' && host === undefined;
 
   return (
     <>
@@ -1005,6 +1011,34 @@ function FixtureInspector({ feature, misses }: FixtureProps) {
 
       <div className="group">
         <div className="group-head">Placement</div>
+        <label className="field">
+          <span className="field-label">Attached to</span>
+          <span className="field-input">
+            <select
+              value={orphaned ? '' : attachTo}
+              onChange={(e) => setFixtureParent(feature.id, e.target.value)}
+            >
+              <option value="">Nothing — stays where it is</option>
+              {hosts.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </select>
+          </span>
+        </label>
+        {orphaned ? (
+          <div className="warn">
+            The shape this followed is gone, so the fixture is on its own. Pick
+            another, or leave it detached.
+          </div>
+        ) : (
+          <div className="derived">
+            {host
+              ? `Follows ${host.name}: moving it, or turning it about Z, takes this along. Only Z rotation is inherited — a hole belongs to one horizontal sheet, and there is nowhere for a tipped one to go.`
+              : 'Detached. Stays where it is when a shape moves.'}
+          </div>
+        )}
         <NumberField
           label="Position X"
           value={num(feature.params, 'px', 0)}

@@ -30,11 +30,13 @@ import type { WindowFrame } from './window';
 import type { PartPlacement } from './nest';
 import type { ProjectData } from './project';
 import {
+  attachFrameFor,
   composeField as composeFieldWith,
   isFieldFeature,
   rodSpanOf,
   windowFrameFor,
 } from './pipeline';
+import { localiseFixture } from './fixture';
 
 export type ViewName = 'persp' | 'top' | 'front' | 'side';
 
@@ -212,6 +214,8 @@ interface KerrosState {
   setSculptParent: (id: string, parentId: string) => void;
   /** Attach or detach a window, carrying its placement across. */
   setWindowParent: (id: string, parentId: string) => void;
+  /** The same for a fixture: it follows a shape, or it stays put. */
+  setFixtureParent: (id: string, parentId: string) => void;
   /** Move a feature by its world origin, converting for anything attached. */
   setOriginWorld: (id: string, x: number, y: number, z: number) => void;
   undoStroke: (id: string) => void;
@@ -653,6 +657,26 @@ export const useKerros = create<KerrosState>((set, get) => ({
       const count = s.features.filter((f) => f.kind === `fixture:${kind}`).length + 1;
       const pitch = s.material.thickness + s.stack.spacerHeight;
 
+      // Attached to the last shape by default, so a socket hole follows the form
+      // it is drilled into. Detachable, since an off-centre cable exit that holds
+      // still is a real thing to want.
+      const host = [...s.features]
+        .reverse()
+        .find((f) => f.enabled && findModule(f.kind) !== undefined);
+      const hostFrame = host
+        ? {
+            x: Number(host.params.px) || 0,
+            y: Number(host.params.py) || 0,
+            z: Number(host.params.pz) || 0,
+            rz: Number(host.params.rz) || 0,
+          }
+        : { x: 0, y: 0, z: 0, rz: 0 };
+
+      const worldX = bounds ? (bounds.min[0] + bounds.max[0]) / 2 : 0;
+      const worldY = bounds ? (bounds.min[1] + bounds.max[1]) / 2 : 0;
+      const worldZ = bounds ? bounds.min[2] + s.material.thickness / 2 : 0;
+      const local = localiseFixture({ x: worldX, y: worldY, z: worldZ, rot: 0 }, hostFrame);
+
       return {
         features: [
           ...s.features,
@@ -664,11 +688,12 @@ export const useKerros = create<KerrosState>((set, get) => ({
             enabled: true,
             params: {
               fixture: kind,
-              px: bounds ? Math.round(((bounds.min[0] + bounds.max[0]) / 2) * 10) / 10 : 0,
-              py: bounds ? Math.round(((bounds.min[1] + bounds.max[1]) / 2) * 10) / 10 : 0,
-              pz: bounds ? Math.round((bounds.min[2] + s.material.thickness / 2) * 10) / 10 : 0,
+              attachTo: host ? host.id : '',
+              px: round1(local.x),
+              py: round1(local.y),
+              pz: round1(local.z),
               length: Math.max(pitch * 0.9, s.material.thickness),
-              rot: 0,
+              rot: round1(local.rot),
               preset: kind === 'socket' ? 'nipple' : 'custom',
               diameter: kind === 'cable' ? 8 : SOCKET_PRESETS.nipple,
               screws: 0,
@@ -982,6 +1007,57 @@ export const useKerros = create<KerrosState>((set, get) => ({
       };
     }),
 
+  setFixtureParent: (id, parentId) =>
+    set((s) => {
+      const fixture = s.features.find((f) => f.id === id);
+      if (!fixture) return s;
+
+      const from = attachFrameFor(s.features, fixture);
+      const parent = s.features.find((f) => f.id === parentId);
+      const to =
+        parentId === '' || !parent
+          ? { x: 0, y: 0, z: 0, rz: 0 }
+          : {
+              x: Number(parent.params.px) || 0,
+              y: Number(parent.params.py) || 0,
+              z: Number(parent.params.pz) || 0,
+              rz: Number(parent.params.rz) || 0,
+            };
+
+      // Out of the old frame and into the new one: changing the reference moves
+      // the reference, not the hole.
+      const a = (from.rz * Math.PI) / 180;
+      const cos = Math.cos(a);
+      const sin = Math.sin(a);
+      const lx = Number(fixture.params.px) || 0;
+      const ly = Number(fixture.params.py) || 0;
+      const world = {
+        x: from.x + lx * cos - ly * sin,
+        y: from.y + lx * sin + ly * cos,
+        z: from.z + (Number(fixture.params.pz) || 0),
+        rot: (Number(fixture.params.rot) || 0) + from.rz,
+      };
+      const local = localiseFixture(world, to);
+
+      return {
+        features: s.features.map((f) =>
+          f.id === id
+            ? {
+                ...f,
+                params: {
+                  ...f.params,
+                  attachTo: parentId,
+                  px: round1(local.x),
+                  py: round1(local.y),
+                  pz: round1(local.z),
+                  rot: round1(local.rot),
+                },
+              }
+            : f,
+        ),
+      };
+    }),
+
   setOriginWorld: (id, x, y, z) =>
     set((s) => {
       const feature = s.features.find((f) => f.id === id);
@@ -990,6 +1066,28 @@ export const useKerros = create<KerrosState>((set, get) => ({
       // An attached window stores its placement in the parent's frame, so a
       // gizmo drag — which is always in world terms — has to come back through
       // that frame before it is written.
+      if (feature.kind.startsWith('fixture:')) {
+        const local = localiseFixture(
+          { x, y, z, rot: Number(feature.params.rot) || 0 },
+          attachFrameFor(s.features, feature),
+        );
+        return {
+          features: s.features.map((f) =>
+            f.id === id
+              ? {
+                  ...f,
+                  params: {
+                    ...f.params,
+                    px: round1(local.x),
+                    py: round1(local.y),
+                    pz: round1(local.z),
+                  },
+                }
+              : f,
+          ),
+        };
+      }
+
       if (feature.kind === 'window') {
         const frame = windowFrameFor(s.features, feature);
         const local = windowToLocal(
@@ -1242,6 +1340,16 @@ export function transformOriginOf(
     return [world.x, world.y, world.z];
   }
 
+  if (feature.kind.startsWith('fixture:')) {
+    const frame = attachFrameFor(features, feature);
+    const a = (frame.rz * Math.PI) / 180;
+    return [
+      frame.x + x * Math.cos(a) - y * Math.sin(a),
+      frame.y + x * Math.sin(a) + y * Math.cos(a),
+      frame.z + (Number(feature.params.pz) || 0),
+    ];
+  }
+
   if (feature.stage === 'RIG') {
     const [low, high] = rodSpanOf(feature.params);
     return [x, y, (low + high) / 2];
@@ -1310,4 +1418,11 @@ export function composeField(
   pitch: number,
 ) {
   return composeFieldWith(features, kerf, seed, thickness, pitch, mainVolumes());
+}
+
+/** Field features with their baked import volumes attached, for picking. */
+export function fieldFeaturesWithVolumes(features: Feature[]): Feature[] {
+  return features
+    .filter(isFieldFeature)
+    .map((f) => (f.kind === 'import' ? { ...f, volume: importEntry(f.id)?.volume } : f)) as Feature[];
 }

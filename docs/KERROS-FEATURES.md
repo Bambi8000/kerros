@@ -1318,6 +1318,63 @@ showing — without that, a slow job finishing late would overwrite a newer resu
 exactly what the program did before the worker existed. A worker that fails to
 construct is a reason to be slower, not a reason to stop working.
 
+## Attachment, finished — **shipped**
+
+Fixtures now follow a shape, which was the last thing in the program that stayed
+behind when a form moved. It closes a pattern that came up four times: a shell
+follows for free because it acts on the accumulated field, and everything that is
+its own volume needs a frame to live in.
+
+Windows and fixtures share `attachFrameFor()` and the same restriction:
+**translation and rotation about Z, and no more.** Both live in horizontal sheets.
+A socket hole inheriting a parent's X or Y rotation would tip out of the sheet it
+is drilled in and there is nowhere for it to go — the validator asserts that X and
+Y rotation are *not* inherited, which is the unusual case of a test that exists to
+pin down what deliberately does not happen.
+
+A fixture's own `rot` and the frame's add, so a turned plate carries a turned bolt
+circle. `setOriginWorld` converts a gizmo drag back through the frame, and
+attaching or detaching carries the placement across so changing the reference moves
+the reference and not the hole.
+
+`PlaneFrame` is declared in `fixture.ts` and is structurally identical to
+`WindowFrame` in `window.ts`. That duplication is deliberate: both describe what a
+layer-bound feature can inherit, and neither module imports the other, which is
+what keeps both loadable in Node.
+
+## The preview surface off the main thread — **shipped**
+
+`runPreviewJob` joins `runSliceJob` in the pipeline, and the worker handles both.
+This was the last heavy thing left on the main thread: a quarter of a second of
+field sampling and meshing, on every edit, in the mode where editing happens.
+
+**One worker, shared.** `src/ui/workerBridge.ts` owns it, so slicing and the
+preview send to the same instance and share one copy of the imported grids —
+sending megabytes of Float32 twice would have cost more than the work does. The
+bridge also owns the fallback: if a worker cannot be constructed, both jobs run
+inline, exactly as the program did before.
+
+The mesh buffers are **transferred** rather than copied on the way back, since
+nothing in the worker needs them once they are drawn. A worker's `postMessage`
+takes its transfer list as the second argument, unlike a window's — worth knowing,
+because the type error it produces otherwise is about `targetOrigin` and reads like
+something else entirely.
+
+**The preview debounce is shorter than the slice debounce** — 90 ms against 250.
+The preview is the thing being looked at while a value is dragged, so it should
+keep up; slicing can wait for the hand to stop. And the old surface stays on screen
+until the new one arrives, which is cheaper than blanking the viewport and less
+distracting to watch.
+
+A validator now checks that the preview and the slicer **agree on where the top
+is**. They read the same field, so they must — and if they ever stop agreeing, the
+shape on screen is not the shape that gets cut, which is the worst class of bug
+this program could have.
+
+Picking got a fix along the way: it was passing features without their baked import
+volumes, so an imported mesh could never be clicked. `fieldFeaturesWithVolumes()`
+attaches them.
+
 ## Packaging — **shipped**
 
 `npm run tauri build` produces `Kerros.app` and a `.dmg` under

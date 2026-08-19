@@ -4,21 +4,20 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM, useKerros } from '../core/store';
 import type { ViewName } from '../core/store';
-import { evaluateGridSampled, findModule, nearestFeatureIndex, num } from '../core/sdf';
+import { findModule, nearestFeatureIndex, num } from '../core/sdf';
 import type { Params } from '../core/sdf';
-import { surfaceNets } from '../core/surfaceNets';
+import { usePreview } from './usePreview';
 import { buildGeometry } from '../core/mesh';
 import { circleFitsInPart, groupContours } from '../core/slice';
 import type { SliceSet } from '../core/slice';
 import { rodDiameter, rodSpan } from '../core/rig';
 import { socketDiameter } from '../core/fixture';
 import {
-  composeField,
+  fieldFeaturesWithVolumes,
   fixturesFromFeatures,
   importEntry,
   hasRotation,
   hasTransform,
-  isFieldFeature,
   rodsFromFeatures,
   transformOriginOf,
 } from '../core/store';
@@ -43,8 +42,6 @@ const DEG = Math.PI / 180;
 const ORTHO_EXTENT = 320;
 
 /** Editing settles before the grid is resampled, so dragging stays smooth. */
-const EVAL_DEBOUNCE_MS = 120;
-
 /** Pointer movement below this is a click, above it is an orbit drag. */
 const CLICK_SLOP_PX = 4;
 
@@ -215,7 +212,7 @@ export function Viewport({ slices }: ViewportProps) {
   const hideAbove = useKerros((s) => s.hideAbove);
   const machine = useKerros((s) => s.machine);
   const features = useKerros((s) => s.features);
-  const previewRes = useKerros((s) => s.previewRes);
+  const preview = usePreview(mode !== 'stack');
   const displayMode = useKerros((s) => s.displayMode);
   const sculptMode = useKerros((s) => s.sculptMode);
   const brushRadius = useKerros((s) => s.brushRadius);
@@ -541,7 +538,9 @@ export function Viewport({ slices }: ViewportProps) {
       }
 
       const p = hits[0].point;
-      const shapes = current.filter(isFieldFeature);
+      // With their baked volumes attached, or an imported mesh could never be
+      // picked — the field would see a feature with no surface.
+      const shapes = fieldFeaturesWithVolumes(current);
       const index = nearestFeatureIndex(shapes, p.x, p.y, p.z);
       selectFeature(index >= 0 ? shapes[index].id : null);
     };
@@ -993,74 +992,66 @@ export function Viewport({ slices }: ViewportProps) {
     }
   }, [mode, slices, currentLayer, hideAbove]);
 
-  // Re-evaluate the feature tree and rebuild the preview mesh.
+  /*
+   * Draw whatever the preview hook last produced.
+   *
+   * The sampling and meshing happen in the worker now, so this effect only builds
+   * geometry from arrays that have already arrived. The old surface stays on
+   * screen until the new one is ready, which is both cheaper and less distracting
+   * than blanking the viewport on every keystroke.
+   */
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const model = modelRef.current;
-      if (!model) return;
+    const model = modelRef.current;
+    if (!model) return;
+    if (mode === 'stack') return;
 
-      if (useKerros.getState().mode === 'stack') return;
+    disposeChildren(model);
 
-      const started = performance.now();
-      // The composed field, so a window shows as a gap in the preview rather
-      // than appearing only once the model is sliced.
-      const state = useKerros.getState();
-      const field = composeField(
-        features,
-        state.material.kerf,
-        state.seed,
-        state.material.thickness,
-        state.material.thickness + state.stack.spacerHeight,
-      );
-      const grid = evaluateGridSampled(field.sample, field.bounds, previewRes);
-      const mesh = surfaceNets(grid);
-      const elapsed = performance.now() - started;
-
-      disposeChildren(model);
-
-      if (mesh.triangleCount > 0) {
-        const geometry = buildGeometry(mesh);
-
-        if (displayMode === 'wire') {
-          const edges = new THREE.WireframeGeometry(geometry);
-          model.add(
-            new THREE.LineSegments(
-              edges,
-              new THREE.LineBasicMaterial({
-                color: COLORS.model,
-                transparent: true,
-                opacity: 0.35,
-              }),
-            ),
-          );
-          geometry.dispose();
-        } else {
-          const xray = displayMode === 'xray';
-          const material = new THREE.MeshStandardMaterial({
-            color: COLORS.model,
-            roughness: xray ? 0.4 : 0.62,
-            metalness: 0.02,
-            transparent: xray,
-            // Ghosting needs both: the far side visible through the near one,
-            // and no depth writes so rods inside are not hidden by the shell.
-            opacity: xray ? 0.26 : 1,
-            depthWrite: !xray,
-            side: xray ? THREE.DoubleSide : THREE.FrontSide,
-          });
-          model.add(new THREE.Mesh(geometry, material));
-        }
-      }
-
-      setStats({
-        triangles: mesh.triangleCount,
-        dims: grid.dims.join('×'),
-        step: grid.step,
-        ms: elapsed,
+    if (preview.triangles > 0) {
+      const geometry = buildGeometry({
+        positions: preview.positions,
+        indices: preview.indices,
+        triangleCount: preview.triangles,
+        vertexCount: preview.positions.length / 3,
       });
-    }, EVAL_DEBOUNCE_MS);
 
-    return () => window.clearTimeout(timer);
-  }, [features, previewRes, mode, displayMode]);
+      if (displayMode === 'wire') {
+        const edges = new THREE.WireframeGeometry(geometry);
+        model.add(
+          new THREE.LineSegments(
+            edges,
+            new THREE.LineBasicMaterial({
+              color: COLORS.model,
+              transparent: true,
+              opacity: 0.35,
+            }),
+          ),
+        );
+        geometry.dispose();
+      } else {
+        const xray = displayMode === 'xray';
+        const material = new THREE.MeshStandardMaterial({
+          color: COLORS.model,
+          roughness: xray ? 0.4 : 0.62,
+          metalness: 0.02,
+          transparent: xray,
+          // Ghosting needs both: the far side visible through the near one,
+          // and no depth writes so rods inside are not hidden by the shell.
+          opacity: xray ? 0.26 : 1,
+          depthWrite: !xray,
+          side: xray ? THREE.DoubleSide : THREE.FrontSide,
+        });
+        model.add(new THREE.Mesh(geometry, material));
+      }
+    }
+
+    setStats({
+      triangles: preview.triangles,
+      dims: preview.dims.join('×'),
+      step: preview.step,
+      ms: preview.ms,
+    });
+  }, [preview, mode, displayMode]);
 
   return (
     <div className="viewport">

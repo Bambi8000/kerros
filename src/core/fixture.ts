@@ -39,6 +39,26 @@ export const SOCKET_PRESETS: Record<string, number> = {
   body: 40.5,
 };
 
+/**
+ * The part of a parent's transform a flat, Z-aligned feature can follow.
+ *
+ * Translation and rotation about Z, and no more. A socket hole belongs to one
+ * horizontal sheet; inheriting a parent's X or Y rotation would tip it out of
+ * that sheet and there is nowhere for it to go. Structurally identical to
+ * `WindowFrame`, and for the same reason — both describe what a feature that
+ * lives in layers can inherit — but declared here so neither module has to
+ * import the other.
+ */
+export interface PlaneFrame {
+  x: number;
+  y: number;
+  z: number;
+  /** Rotation about Z, degrees. */
+  rz: number;
+}
+
+export const PLANE_WORLD: PlaneFrame = { x: 0, y: 0, z: 0, rz: 0 };
+
 export interface FixtureSpec {
   id: string;
   label: string;
@@ -261,4 +281,48 @@ export function fixtureExtent(spec: FixtureSpec): number {
     return spec.shape === 'slot' ? Math.max(spec.slotLength, spec.diameter) : spec.diameter;
   }
   return Math.hypot(spec.width, spec.depth);
+}
+
+/**
+ * A spec with its placement resolved into world terms.
+ *
+ * The stored numbers are in the parent's frame; everything downstream — the
+ * band test, the hole positions, the bolt circle — works in world coordinates,
+ * so the conversion happens once here rather than at every use.
+ */
+export function resolveFixture(spec: FixtureSpec, frame: PlaneFrame): FixtureSpec {
+  if (frame.x === 0 && frame.y === 0 && frame.z === 0 && frame.rz === 0) return spec;
+
+  const a = (frame.rz * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+
+  return {
+    ...spec,
+    x: frame.x + spec.x * cos - spec.y * sin,
+    y: frame.y + spec.x * sin + spec.y * cos,
+    z: frame.z + spec.z,
+    // The fixture's own rotation and the frame's add: a turned plate carries a
+    // turned bolt circle.
+    rot: spec.rot + frame.rz,
+  };
+}
+
+/** The inverse, for writing a world-space drag back into stored parameters. */
+export function localiseFixture(
+  world: { x: number; y: number; z: number; rot: number },
+  frame: PlaneFrame,
+): { x: number; y: number; z: number; rot: number } {
+  const a = (-frame.rz * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+  const dx = world.x - frame.x;
+  const dy = world.y - frame.y;
+
+  return {
+    x: dx * cos - dy * sin,
+    y: dx * sin + dy * cos,
+    z: world.z - frame.z,
+    rot: world.rot - frame.rz,
+  };
 }

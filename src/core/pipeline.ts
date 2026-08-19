@@ -22,8 +22,8 @@ import {
   applyRods,
 } from './rig.ts';
 import type { RodSpec } from './rig.ts';
-import { fixtureHolesAt } from './fixture.ts';
-import type { FixtureKind, FixtureSpec } from './fixture.ts';
+import { PLANE_WORLD, fixtureHolesAt, resolveFixture } from './fixture.ts';
+import type { FixtureKind, FixtureSpec, PlaneFrame } from './fixture.ts';
 import {
   WINDOW_WORLD,
   resolveWindow,
@@ -31,7 +31,13 @@ import {
   windowField,
 } from './window.ts';
 import type { LayerPlan, WindowFrame, WindowSpec } from './window.ts';
-import { evaluatePoint, modelBounds, prepareFeatures } from './sdf.ts';
+import {
+  evaluateGridSampled,
+  evaluatePoint,
+  modelBounds,
+  prepareFeatures,
+} from './sdf.ts';
+import { surfaceNets } from './surfaceNets.ts';
 import { sampleMeshGrid } from './voxelise.ts';
 import type { MeshGrid } from './voxelise.ts';
 import { generatePattern } from './pattern.ts';
@@ -120,6 +126,66 @@ export interface MeshVolume {
   sample: (x: number, y: number, z: number) => number;
   min: [number, number, number];
   max: [number, number, number];
+}
+
+export interface PreviewJob {
+  features: Feature[];
+  resolution: number;
+  kerf: number;
+  seed: number;
+  thickness: number;
+  spacerHeight: number;
+}
+
+export interface PreviewOutput {
+  positions: Float32Array;
+  indices: Uint32Array;
+  triangles: number;
+  /** Grid the surface came from, for the readout. */
+  dims: [number, number, number];
+  step: number;
+  ms: number;
+}
+
+export const EMPTY_PREVIEW: PreviewOutput = {
+  positions: new Float32Array(0),
+  indices: new Uint32Array(0),
+  triangles: 0,
+  dims: [0, 0, 0],
+  step: 0,
+  ms: 0,
+};
+
+/**
+ * Build the preview surface.
+ *
+ * The same field the slicer reads, sampled coarsely and meshed. Kept here beside
+ * the slice job for one reason: both have to be runnable off the main thread, and
+ * both need the field, which cannot be sent anywhere.
+ */
+export function runPreviewJob(job: PreviewJob, volumes: Map<string, MeshVolume>): PreviewOutput {
+  const field = composeField(
+    job.features,
+    job.kerf,
+    job.seed,
+    job.thickness,
+    job.thickness + job.spacerHeight,
+    volumes,
+  );
+  if (!field.bounds) return EMPTY_PREVIEW;
+
+  const started = Date.now();
+  const grid = evaluateGridSampled(field.sample, field.bounds, job.resolution);
+  const mesh = surfaceNets(grid);
+
+  return {
+    positions: mesh.positions,
+    indices: mesh.indices,
+    triangles: mesh.triangleCount,
+    dims: grid.dims,
+    step: grid.step,
+    ms: Date.now() - started,
+  };
 }
 
 /**
@@ -397,7 +463,33 @@ export function fixturesFromFeatures(features: Feature[], kerf: number): Fixture
       corner: Number(f.params.corner) || 0,
     });
   }
-  return out;
+
+  // Stored in the parent's frame when attached, so resolve to world here — the
+  // band test and the hole positions all work in world coordinates.
+  return out.map((spec) => {
+    const feature = features.find((f) => f.id === spec.id);
+    return feature ? resolveFixture(spec, attachFrameFor(features, feature)) : spec;
+  });
+}
+
+/**
+ * The frame a layer-bound feature follows: translation and Z rotation.
+ *
+ * Windows and fixtures share it. Both live in horizontal sheets, so both can
+ * inherit a parent moving or turning about the stack, and neither can inherit it
+ * tipping over.
+ */
+export function attachFrameFor(features: Feature[], feature: Feature): PlaneFrame {
+  const target = typeof feature.params.attachTo === 'string' ? feature.params.attachTo : '';
+  if (target === '') return PLANE_WORLD;
+  const parent = features.find((f) => f.id === target);
+  if (!parent) return PLANE_WORLD;
+  return {
+    x: Number(parent.params.px) || 0,
+    y: Number(parent.params.py) || 0,
+    z: Number(parent.params.pz) || 0,
+    rz: Number(parent.params.rz) || 0,
+  };
 }
 
 /** Pattern settings of a feature, in the shape the generator wants. */

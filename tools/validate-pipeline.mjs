@@ -9,7 +9,15 @@
  *   node tools/validate-pipeline.mjs
  */
 
-import { runSliceJob, EMPTY_OUTPUT, volumeFromPayload } from '../src/core/pipeline.ts';
+import {
+  runSliceJob,
+  runPreviewJob,
+  attachFrameFor,
+  fixturesFromFeatures,
+  EMPTY_OUTPUT,
+  EMPTY_PREVIEW,
+  volumeFromPayload,
+} from '../src/core/pipeline.ts';
 import { defaultParams, defaultModifierParams, findModule, shellModifier } from '../src/core/sdf.ts';
 import { groupContours } from '../src/core/slice.ts';
 import { importMesh } from '../src/core/meshImport.ts';
@@ -239,6 +247,100 @@ console.log('pipeline: determinism');
     JSON.stringify(a.set.slices) === JSON.stringify(b.set.slices),
   );
   check('and the same reports', JSON.stringify(a.reports) === JSON.stringify(b.reports));
+}
+
+console.log('pipeline: the preview surface');
+{
+  const job = {
+    features: [body, shell],
+    resolution: 48,
+    kerf: 0.2,
+    seed: 7,
+    thickness: 3,
+    spacerHeight: 6,
+  };
+
+  const preview = runPreviewJob(job, new Map());
+  check('a surface comes out', preview.triangles > 500, `${preview.triangles} triangles`);
+  check('with positions and indices', preview.positions.length > 0 && preview.indices.length > 0);
+  check('three indices per triangle', preview.indices.length === preview.triangles * 3);
+  check('the grid is reported', preview.dims.every((n) => n > 8) && preview.step > 0);
+
+  const empty = runPreviewJob({ ...job, features: [] }, new Map());
+  check('an empty tree gives an empty surface', empty.triangles === 0);
+  check('and matches the idle shape', empty.dims.join() === EMPTY_PREVIEW.dims.join());
+
+  const finer = runPreviewJob({ ...job, resolution: 72 }, new Map());
+  check('a finer resolution gives more triangles', finer.triangles > preview.triangles);
+  check('and a smaller step', finer.step < preview.step);
+
+  // The preview and the slicer must read the same field, or the shape on screen
+  // is not the shape that gets cut.
+  const sliced = runSliceJob(baseJob([body, shell]), new Map());
+  const previewTop = preview.positions.reduce((m, v, i) => (i % 3 === 2 ? Math.max(m, v) : m), -Infinity);
+  const sliceTop = sliced.set.slices[sliced.set.slices.length - 1].z;
+  check(
+    'the preview and the slices agree on where the top is',
+    Math.abs(previewTop - sliceTop) < 8,
+    `preview ${previewTop.toFixed(1)}, top slice ${sliceTop.toFixed(1)}`,
+  );
+}
+
+console.log('pipeline: fixtures follow the shape they are attached to');
+{
+  const host = feature('host', 'sphere', 'SHAPE', { ...defaultParams(sphere), op: 'union', r: 60, pz: 65 });
+
+  const socket = (attachTo) =>
+    feature('fx', 'fixture:socket', 'RIG', {
+      fixture: 'socket',
+      attachTo,
+      px: 10,
+      py: 0,
+      pz: 5,
+      length: 8,
+      rot: 0,
+      preset: 'nipple',
+      diameter: 10.5,
+      screws: 3,
+      boltCircle: 30,
+      screwDiameter: 3.2,
+      shape: 'round',
+      slotLength: 24,
+      width: 32,
+      depth: 22,
+      corner: 3,
+    });
+
+  const detached = fixturesFromFeatures([host, socket('')], 0.2)[0];
+  check('detached, the stored numbers are the world numbers', detached.x === 10 && detached.z === 5);
+
+  const moved = { ...host, params: { ...host.params, px: 100, pz: 20 } };
+  const attached = fixturesFromFeatures([moved, socket('host')], 0.2)[0];
+  check('attached, it moves with the shape', attached.x === 110 && attached.z === 25,
+    `at ${attached.x}, ${attached.z}`);
+
+  const turned = { ...host, params: { ...host.params, rz: 90 } };
+  const spun = fixturesFromFeatures([turned, socket('host')], 0.2)[0];
+  check('a Z rotation swings the offset round', Math.abs(spun.x) < 1e-9 && Math.abs(spun.y - 10) < 1e-9,
+    `at ${spun.x.toFixed(2)}, ${spun.y.toFixed(2)}`);
+  check('and turns the bolt circle with it', Math.abs(spun.rot - 90) < 1e-9);
+
+  const tipped = { ...host, params: { ...host.params, rx: 45, ry: 30, rz: 0 } };
+  const flat = fixturesFromFeatures([tipped, socket('host')], 0.2)[0];
+  check(
+    'X and Y rotation are NOT inherited, a hole belonging to one flat sheet',
+    flat.x === 10 && flat.y === 0 && flat.rot === 0,
+  );
+
+  const gone = fixturesFromFeatures([host, socket('nobody')], 0.2)[0];
+  check('an attachment that no longer exists falls back to world', gone.x === 10 && gone.z === 5);
+
+  check('the frame helper is shared with windows', attachFrameFor([moved], socket('host')).x === 100);
+
+  // And it must actually reach the layer it is aimed at once attached.
+  const output = runSliceJob(baseJob([moved, shell, socket('host')]), new Map());
+  check('an attached fixture still slices', output.set !== null);
+  check('and is accounted for', typeof output.fixtureMisses.fx === 'number');
 }
 
 console.log('');
