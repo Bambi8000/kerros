@@ -689,6 +689,101 @@ extrusion, but they are **still drawn in the slice inspector**, where the
 thin-feature warning rings them: the maker needs to see the problem, not have
 it silently disappear.
 
+## Layer selection — **shipped**
+
+`src/core/layers.ts`. One way to say **which layers** a per-slice feature
+applies to. There were four: a window's band, a fixture's band, a rod's z span,
+and perforation, which had no way of saying anything and went on every layer.
+Four spellings of one question is how the attachment problem started, and the
+answer is the same shape — one mechanism, composed rather than copied.
+
+| Kind | Means |
+| --- | --- |
+| `all` | every layer, which is what perforation always did |
+| `band` | a height and a depth in world Z, in millimetres |
+| `range` | first and last layer, numbered as the slice inspector numbers them |
+| `every` | one layer in n, with a phase |
+
+### Two boundaries, both load-bearing
+
+**This is for holes in sheets, not volumes in the field.** A window is a wedge
+subtracted from the field and rolls its layers at sampling time from world Z; it
+cannot see a list of slices. Moving it onto this would mean either dragging the
+slice list into the field or rolling every window twice — and the second would
+reroll every saved lamp. Windows keep their band, and `window.ts` did not change
+at all.
+
+**Selectors resolve once, in the pipeline.** The geometry modules are handed a
+finished set of layer numbers. Letting each resolve its own would put a copy of
+this logic in four modules that may not import one another. `WindowFrame` and
+`PlaneFrame` are duplicated deliberately, but those are *shapes*; logic drifts
+and shapes do not.
+
+### The two details that are traps
+
+**`range` counts sheets, not planes.** A model with a void along Z examines a
+plane there and produces no sheet, and "the bottom three sheets" means three
+sheets a person can hold. Tested against a stack with a gap in it.
+
+**`every` counts by position, not by layer number.** What matters for a pin is
+which sheets are *next to each other*, and a void must not put the phase out.
+Three phases at n = 3 never overlap and together cover the whole stack — which
+is exactly what interleaved pins will need.
+
+### A fixture's band is its position
+
+`fixtureSpansZ` is gone from `fixture.ts`, and it could not have stayed even if
+it wanted to: a fixture's z is resolved through its attachment frame, so which
+layers it reaches depends on where its parent has moved to. That is knowledge
+the pipeline has and a module with no imports cannot.
+
+So `selectorForFixture` builds `{ kind: 'band', z: the resolved z, length }`,
+which is the default and is exactly what the old test did — a project that has
+never heard of selectors lands on the same sheets, and a validator asserts it.
+
+The other kinds ignore the position entirely, which buys something that was not
+the point: **"this socket is on the bottom two sheets"** is now sayable, instead
+of aiming a band at a height and hoping. Choosing one moves `pz` to the middle
+of the chosen run, because a fixture draws a ghost of what it will remove and a
+ghost standing somewhere the holes are not is the silent lie M9.1 existed to
+remove.
+
+### Every layer is a hole in a sheet, not a wall
+
+Perforation is the exception that proves the boundary: it takes a selector too,
+defaulting to `all`, which is its old behaviour written down rather than assumed.
+
+## The fixture inspector had never been on screen
+
+Found by pointing at a socket mount and getting a rod panel. The dispatch read:
+
+```
+if (feature.stage === 'RIG') return <RodInspector />;   // fixtures are RIG
+...
+if (feature.kind.startsWith('fixture:')) { ... }        // three lines later
+```
+
+Fixtures are created with `stage: 'RIG'`, so the first line caught them and
+`FixtureInspector` was unreachable from the day it was written. Every socket,
+cable channel and Wago chamber had been edited through the rod panel — which is
+why a fixture's band arrived labelled "Length" with a rod's tooltip under it,
+and why one showed up holding `8.099999999999994`.
+
+Everything this document says about the fixture inspector — the presets, Centre
+on model, the warning about a hole that will not fit, the note that the model
+view cannot show fixtures — was written and had never been seen.
+
+The test is on the kind now, and fixtures are checked first. Matching a whole
+stage was always going to catch whatever moved into that stage next, and
+something did.
+
+**This is the third thing in one working session that was written and never
+wired**: `layerPitch()`, which nothing called; `parseProject`'s
+backwards-compatibility promise, which was a comment until a broken test forced
+it to be proved; and a whole panel. A green `npm run verify` says the code
+compiles and the algorithms are right. It says nothing about whether anybody can
+reach them.
+
 ## SLICE — **shipped** (M2)
 
 `src/core/slice.ts`. Turns a scalar field into per-layer polygons.
@@ -888,6 +983,77 @@ cut radius = diameter/2 − kerf/2.
 
 Clipper may still return for M7, where wall patterns are pure 2D geometry with
 no field behind them. It is not needed for the MVP.
+
+### Moving things in the slice view
+
+A hole can be pointed at and dragged where it is cut, one layer at a time, at
+true scale, with the neighbours visible. That is a better place to aim a socket
+than a perspective view of a curved surface, and it was asked for after the
+layer selector shipped — choosing layers by number is fine, but seeing the sheet
+you chose is better.
+
+**A hole remembers who cut it.** `CircleHole` and `Contour` carry an optional
+`owner`, stamped at the moment the hole is made — rods in `rig.ts`, fixtures and
+perforation in the pipeline. The model view cannot do this: it asks every
+feature for its own distance, because a merged surface cannot say who owns a
+patch of it. A hole cut per slice was made by exactly one feature, so
+remembering is both cheaper and more truthful than reconstructing.
+
+Contours that came out of the field carry no owner, deliberately. They belong to
+the whole accumulated form and no single feature owns them.
+
+**Perforation is not grabbable.** Its holes come in hundreds and none has a
+position of its own; taking hold of one would drag the entire lattice by
+whichever hole happened to be under the cursor, which is not what the gesture
+looks like it does. They are stamped anyway — it costs nothing and the pattern
+inspector may want it.
+
+**Smallest wins.** A socket hole can sit inside a Wago pocket, and pointing at
+the small one should get the small one — the rule the sheet view already uses
+when a part rests in a ring's waste.
+
+#### Nothing is written while the button is down
+
+The first version wrote to the tree on every pointer move and drew the preview
+as the distance from the *stored* position — which the previous move had just
+updated. The offset was therefore always about zero, the hole did not appear to
+move, and the only thing that did move was the slicing: 250 ms behind, and
+restarted by every write. The hole sat still and then jumped when the hand
+stopped.
+
+A sculpt stroke had the same problem and the same answer. Nothing is
+re-evaluated during the drag; the offset is measured from where the feature was
+when the drag began, and the move is committed once on release. **The preview
+then stays on screen until the new slices arrive**, because clearing it at
+release would put the hole back for a quarter of a second and jump it forward —
+the same flinch, moved to the end of the gesture.
+
+#### A move is a delta, not a position
+
+An attached fixture stores `px`/`py` in its parent's frame, so treating the
+stored numbers as world coordinates throws it sideways by the frame the moment
+anybody drags it. Reconstructing the world position only to convert it straight
+back is work in service of a mistake.
+
+A translation needs no origin. `moveOriginWorldBy` turns a world delta against
+the frame's Z rotation and adds it; nothing else about the frame matters, and
+height is not touched at all, which is what dragging inside a slice plane means.
+Holding the hole where it was grabbed then costs nothing — it falls out of using
+deltas.
+
+#### A pointer layer, not a drag handler
+
+The interaction is routed through a tool, and there is currently one tool. A
+push brush belongs in this view for the same reasons a drag does — one layer at
+a time, true scale, the neighbours visible through onion skin — and wiring the
+drag straight into the canvas events would mean writing the brush on top of it,
+with two interactions arguing over the same button. Model mode already learned
+this: sculpting is a *mode*, and orbit moves to the right button for its
+duration.
+
+Arrow keys are deliberately absent. They already mean "step a layer", which is
+older and stronger; drag for coarse, and the inspector's numbers — now one click
+away, since selecting a hole brings its feature forward — for exact.
 
 ### Manufacturability check — M3
 

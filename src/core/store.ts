@@ -248,6 +248,8 @@ interface KerrosState {
   ) => void;
   /** Move a feature by its world origin, converting for anything attached. */
   setOriginWorld: (id: string, x: number, y: number, z: number) => void;
+  /** Shift a feature by a world XY delta, leaving its height untouched. */
+  moveOriginWorldBy: (id: string, dx: number, dy: number) => void;
   undoStroke: (id: string) => void;
   clearStrokes: (id: string) => void;
   setProjectName: (name: string) => void;
@@ -1199,6 +1201,51 @@ export const useKerros = create<KerrosState>((set, get) => ({
                   rx: round1(local.rotation[0]),
                   ry: round1(local.rotation[1]),
                   rz: round1(local.rotation[2]),
+                },
+              }
+            : f,
+        ),
+      };
+    }),
+
+  /**
+   * A drag in a slice plane, as a delta.
+   *
+   * Absolutes were the wrong currency here. A fixture attached to a shape
+   * stores `px`/`py` in that shape's frame, so treating the stored numbers as
+   * world coordinates throws the feature sideways by the frame the moment
+   * anybody drags it — and reconstructing the world position only to convert it
+   * straight back is work in service of a mistake.
+   *
+   * A translation needs no origin. A world delta becomes a local one by turning
+   * it against the frame's Z rotation, and nothing else about the frame matters.
+   * Height is not touched at all, which is what dragging inside a slice plane
+   * means.
+   */
+  moveOriginWorldBy: (id, dx, dy) =>
+    set((s) => {
+      const feature = s.features.find((f) => f.id === id);
+      if (!feature) return s;
+
+      let rz = 0;
+      if (feature.kind.startsWith('fixture:')) rz = attachFrameFor(s.features, feature).rz;
+      else if (feature.kind === 'window') rz = windowFrameFor(s.features, feature).rz;
+
+      const a = (-rz * Math.PI) / 180;
+      const cos = Math.cos(a);
+      const sin = Math.sin(a);
+      const localDX = dx * cos - dy * sin;
+      const localDY = dx * sin + dy * cos;
+
+      return {
+        features: s.features.map((f) =>
+          f.id === id
+            ? {
+                ...f,
+                params: {
+                  ...f.params,
+                  px: round1((Number(f.params.px) || 0) + localDX),
+                  py: round1((Number(f.params.py) || 0) + localDY),
                 },
               }
             : f,

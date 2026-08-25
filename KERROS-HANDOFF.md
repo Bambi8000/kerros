@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.18.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.19.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -77,6 +77,8 @@ quietly revert them.**
 | layer pitch derived in one place, `layerPitch()` | the **layer plan** built in one place, `planLayers()` | `layerPitch` was never called, once, anywhere, while `store.ts` computed the same sum inline — a rule written and never wired to anything. And with gaps that vary there is no single pitch to derive |
 | spacer rings cut from the stock | rings are their own material | 0.5 mm steel wants 372 rings per rod from 0.5 mm rings and 62 from 3 mm ones; and once they differ they cannot share a sheet |
 | a claim in a comment is documentation | a claim in a comment is a guess | `parseProject`'s backwards-compatibility promise was a comment until a broken round-trip test forced it to be proved |
+| four ways to say which layers, one per feature | one `LayerSelector`, resolved in the pipeline | the same shape as the attachment problem; four modules that may not import one another would each have needed a copy of the *logic*, which drifts |
+| dispatch a panel on a feature's stage | dispatch on its kind | `stage === 'RIG'` caught fixtures three lines before the fixture branch, and `FixtureInspector` was unreachable from the day it was written |
 
 ## The recurring failure mode
 
@@ -103,6 +105,28 @@ about what was refused, but silence about work nobody asked for.** The general
 form is worth having: an expensive derived value should be recomputed only by
 the things it actually depends on, and a hand placement does not depend on the
 packing — it comes after it.
+
+## The third recurring one: written, never wired
+
+Three in a single session, and they look nothing alike until they are put next
+to each other.
+
+- **`layerPitch()`** was named in this file as a binding rule — pitch derived in
+  one place, nothing else allowed to compute it. Nothing called it, while
+  `store.ts` computed the same sum inline.
+- **`parseProject`'s compatibility promise** was a comment saying an older file
+  opens as exactly the lamp it was. Nothing checked it until an unrelated test
+  broke and forced the question.
+- **`FixtureInspector`** was a whole panel, described at length in FEATURES,
+  that could not be reached because the dispatch matched a stage instead of a
+  kind.
+
+The rule that comes out of it: **a green `npm run verify` says the code compiles
+and the algorithms are right. It says nothing about whether anybody can reach
+them.** Fourteen validators were green through all three. The cures are cheap
+and different in each case — call the function, test the claim, click the thing
+— and the habit is to ask, of anything newly written, *what would fail if this
+were never run?*
 
 ## The other recurring one, now closed
 
@@ -140,6 +164,7 @@ src/core/
   fixture.ts      E27 mount, cable channel, Wago chamber, frames   [no imports]
   pattern.ts      perforation generators, EdgeIndex                [no imports]
   rig.ts          rod clearances, spans, spacer ring planning      [no imports]
+  layers.ts       which layers a per-slice feature applies to     [no imports]
   nest.ts         shelf packing, raster true-shape packing,
                   placement, collision, rotation, labels           [no imports]
   font.ts         stroke font for engraved labels                  [no imports]
@@ -233,8 +258,12 @@ so sculpting a spout and then shelling hollows the spout too.
    Native save dialogs through Tauri; the browser download path still works.
 
 Four workspace modes: **Model** (preview, direct manipulation, sculpting),
-**Slice** (one layer in 2D, fixed scale), **Stack** (exploded at real pitch),
-**Sheet** (nesting on the bed).
+**Slice** (one layer in 2D, fixed scale, and where per-slice holes are picked up
+and moved), **Stack** (exploded at real pitch), **Sheet** (nesting on the bed).
+
+Slice mode routes the pointer through a **tool**, of which there is one. The
+push brush belongs there — one layer at a time, true scale, neighbours visible —
+and it will be a second tool rather than a second set of canvas handlers.
 
 ## Known limits
 
@@ -248,6 +277,13 @@ Four workspace modes: **Model** (preview, direct manipulation, sculpting),
 - **Project files record an import's path, not its geometry.** A grid is megabytes
   and the project file is meant to stay readable, so imports must be located again
   after opening.
+- **A fixture is skipped on any layer it does not fit**, which is right for a
+  socket and arguable for a Wago chamber selected across the whole stack: a
+  missing pocket in the middle is a floor inside what was meant to be a cavity,
+  and the inspector reports a count rather than which layers. Left alone
+  deliberately — the failure mode was reasoned about, not met, and physical
+  feedback outranks reasoning here. Fix it when a stack refuses to take a
+  connector.
 - **No cross-slicing.** Everything is horizontal layers. See the plan below.
 - **The bundle is unsigned.** It runs on the machine that built it; another Mac
   quarantines it. Proper notarising needs a paid Apple Developer account.
@@ -321,7 +357,7 @@ once is the whole saving.
 | Foundation | What it unlocks |
 | --- | --- |
 | ~~**An explicit layer plan**~~ — **shipped**, as `{ index, z0, z, thickness, gapAbove }` | varying gaps *(shipped)*; interleaved short pins; per-layer cable holes; per-layer sculpting |
-| **One `LayerSelector`** — a single way to say *which layers*, read by windows, fixtures, perforation and rods | the same four, and it tidies loft as well |
+| ~~**One `LayerSelector`**~~ — **shipped**, for per-slice features; windows keep their band | interleaved pins and per-layer cable holes are now mostly wiring |
 | **`profile2d.ts`** — a 2D profile as a first-class thing, from SVG, a brush, or a slice of the field | SVG import; morph between key layers; per-layer editing |
 | **A material library** — calliper, flute pitch and profile, direction, phase | corrugated sheet as stock; stack pitch that depends on it |
 
@@ -395,6 +431,11 @@ Worth knowing, because it is a working agreement rather than a preference.
   and `.pitch`, and `main` was pushed in a state that would not compile.
 - **Nothing is committed on a verify that was not seen.** The same push happened
   because a commit was made between a red run and the fix for it.
+- **A test's expected value derived by hand from geometry is a guess.** Three
+  times in one session a check asserted a number worked out on paper — a band
+  edge, a fixture's layers, a mid-plane — and the arithmetic was wrong, not the
+  code. Derive the expectation from the model in the test, or run it once and
+  read it.
 - **Every geometry change comes with validator checks in the same batch**, and the
   checks are written to fail for the right reason. Several times a red check has
   been the test being wrong rather than the code, and saying so plainly is part of
