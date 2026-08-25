@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.16.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.17.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -72,6 +72,8 @@ quietly revert them.**
 | no-fit polygons for true-shape nesting | raster occupancy | NFP's failure modes are subtly wrong polygons that look plausible until cut; a raster is coarse in a way that is measurable and always conservative |
 | no scale parameter, ever | **uniform** scale on imports | uniform scaling preserves the distance property; a mesh arrives at whatever size the exporter left it |
 | `npx tsc --noEmit` as the type check | `npm run verify` | the root tsconfig is a solution file with `"files": []`, so `--noEmit` against it checks **nothing** and exits happily |
+| marching cubes if the preview's edges start to mislead | dual contouring, if anything | both put vertices on cell edges, so MC chamfers what surface nets rounds; only a vertex placed *inside* the cell gives a corner the grid does not contain |
+| teach Chaikin to keep sharp corners | leave Chaikin alone | measured: it does not round corners at slicing resolution once the order is right, and keeping them lands the corner *further* from true |
 
 ## The recurring failure mode
 
@@ -82,6 +84,15 @@ type check that checked nothing.
 The rule that came out of it, and which is now honoured throughout: **a check that
 refuses to do something is obliged to say what it refused and why.** Counts of what
 was placed, what did not fit, and what it would have needed.
+
+There is a sixth, kept separate because the cure is the same but the disease is
+not. `partPlacements` was a dependency of the memo that packed the sheets, so
+every drag of a part re-nested the whole job — half a second with true shape on,
+and the layout redrawn underneath the hand doing the dragging. **Not silence
+about what was refused, but silence about work nobody asked for.** The general
+form is worth having: an expensive derived value should be recomputed only by
+the things it actually depends on, and a hand placement does not depend on the
+packing — it comes after it.
 
 ## The other recurring one, now closed
 
@@ -138,7 +149,8 @@ src/ui/
   workerBridge.ts   owns the one worker, the import cache, the fallback
   useSlices.ts      slicing, 250 ms debounce
   usePreview.ts     preview surface, 90 ms debounce
-  useSheets.ts      nesting — still on the main thread
+  useSheets.ts      nesting, 120 ms debounce; hand placement and the
+                    collision check stay on this thread, deliberately
 ```
 
 `pipeline.ts` names its imports with **explicit `.ts` extensions**. That is what
@@ -169,6 +181,10 @@ out of the store for exactly this reason and are re-exported from there.
 - **Import grids live outside the store**, in a module-level map, because a grid is
   megabytes of Float32 and has no business in state that gets compared on every
   render. `importRevision` is what tells the memos to recompute.
+- **A worker returns decisions, not geometry.** Slicing and the preview are handed
+  the tree, because a field is closures and closures do not cross a boundary.
+  Nesting is handed parts and returns a placement table, because neither packer
+  touches geometry — and a reply that carried it back would invite one to.
 - **Docs batch immediately after every push**, never deferred: this file plus
   `docs/KERROS-FEATURES.md`.
 - **Command blocks copy-paste ready**, zsh-safe, expected output stated, no `#`
@@ -182,8 +198,9 @@ out of the store for exactly this reason and are re-exported from there.
 Feature tree stages evaluate in order. A shell or a window applies where it sits,
 so sculpting a spout and then shelling hollows the spout too.
 
-1. **SHAPE** — six SDF primitives with six combine ops; sculpt strokes; mesh
-   imports. No scale on primitives, deliberately; imports carry a uniform one.
+1. **SHAPE** — eight SDF primitives with six combine ops; sculpt strokes; mesh
+   imports. `roundBox` at `r = 0` is an exact box; `prism` and `cone` cover the
+   angular forms it cannot. No scale on primitives, deliberately; imports carry a uniform one.
    Shapes can be grouped under other shapes.
 2. **CARVE** — shell with optional solid caps; windows, which subtract a wedge and
    emit the removed piece as a part in another material.
@@ -192,8 +209,8 @@ so sculpting a spout and then shelling hollows the spout too.
 4. **SLICE** — mid-plane sampling, marching squares, Chaikin then RDP, kerf at the
    iso-level, thin-feature check.
 5. **PATTERN** — perforation per slice, four generators, one bridge test.
-6. **LAYOUT** — nesting per material, either bounding-box shelves or raster
-   true-shape; stroke-font layer numbers engraved; manual placement with pinning
+6. **LAYOUT** — nesting per material in the worker, either bounding-box shelves
+   or raster true-shape; stroke-font layer numbers engraved; manual placement with pinning
    and rotation; true-shape collision reporting.
 7. **EXPORT** — DXF R12 per sheet, build manifest, kerf test figure, project file.
    Native save dialogs through Tauri; the browser download path still works.
@@ -204,9 +221,6 @@ Four workspace modes: **Model** (preview, direct manipulation, sculpting),
 
 ## Known limits
 
-- **Nesting still runs on the main thread.** True-shape costs about 0.5 s per
-  layout and freezes the UI for it. The worker infrastructure exists; moving it is
-  straightforward and is the obvious next piece of housekeeping.
 - **WKWebView is 1.5–2× slower than Chrome** at the numeric work, and the native
   shell uses it. `npm run dev` in a browser is still the faster way to develop.
 - **True-shape nesting resolution is not monotonic.** Greedy bottom-left packing
@@ -255,11 +269,11 @@ about to happen when this handoff was written; ask before assuming.
 
 ## Candidates, in the order I would take them
 
-1. **Nesting into the worker.** Removes the last main-thread freeze, and the
-   infrastructure is already there.
-2. **Assembly PDF.** A numbered stack is not self-explanatory once it is a pile of
-   parts on a bench.
-3. **Cross-slicing (fin / eggcrate mode)**, discussed and scoped:
+1. **Assembly PDF.** A numbered stack is not self-explanatory once it is a pile of
+   parts on a bench. Deliberately *after* the next real cut: what it has to say —
+   whether a gap takes one ring or two, which plexi plug goes in which hole — is a
+   guess until there is a pile of parts on the bench.
+2. **Cross-slicing (fin / eggcrate mode)**, discussed and scoped:
    - **Phase A: generalised slice planes.** `sliceModel` assumes `z = const`, but
      marching squares, Chaikin, RDP, kerf and grouping all work in the plane's own
      coordinates and do not care which plane it is. Generalise to an origin plus
@@ -275,10 +289,55 @@ about to happen when this handoff was written; ask before assuming.
    - **Phase C: assembly.** A fin stack holds nothing up before it is assembled,
      so it needs an order and new refusals: a fin crossing no disc, a disc too
      narrow for a notch, a notch that eats a fin thin enough to snap.
-4. Roadmap, unranked: per-gap spacer heights, polygon-shaped perforation, a lamp
+3. Roadmap, unranked: per-gap spacer heights, polygon-shaped perforation, a lamp
    preview with an emissive source in the cavity, SVG export, a folder of user
    generator modules, material usage and cost, registration notches for glue-stack
    mode.
+
+## Eleven asked for, and the four things they need first
+
+Scoped in conversation and recorded here so the plan does not live only in a chat
+log. Each idea is listed against the foundation it waits on rather than in the
+order it was asked for, because the foundations are shared and building them
+once is the whole saving.
+
+| Foundation | What it unlocks |
+| --- | --- |
+| **An explicit layer plan** — a list of planes `{ index, z0, z1, thickness, gapAbove, rotation }` instead of one pitch | varying gaps; interleaved short pins; per-layer cable holes; per-layer sculpting |
+| **One `LayerSelector`** — a single way to say *which layers*, read by windows, fixtures, perforation and rods | the same four, and it tidies loft as well |
+| **`profile2d.ts`** — a 2D profile as a first-class thing, from SVG, a brush, or a slice of the field | SVG import; morph between key layers; per-layer editing |
+| **A material library** — calliper, flute pitch and profile, direction, phase | corrugated sheet as stock; stack pitch that depends on it |
+
+The layer plan breaks a binding convention on purpose: `layerPitch()` in
+`types.ts` is currently the one place pitch is derived, and with varying gaps
+there is no single pitch to derive. The rule is replaced rather than dropped —
+**the layer plan is built in one place** — which is the same idea in a form that
+survives. Everything that computes `k · pitch` reads the list instead.
+
+Two constraints that have to be said before anyone builds against them:
+
+- **A gap is always a whole number of spacer rings**, because a ring is one sheet
+  thick. Varying gaps are quantised to the spacer material, so 3 mm plexi gives
+  3, 6, 9 — not 3, 4.5, 6. `ringsPerGap()` already knows this; the panel has to
+  say it, because the failure mode is a stack that will not close on the rods
+  after everything is cut.
+- **A slanted leg hole is not the mid-plane ellipse.** A 45° leg moves 3 mm
+  sideways through a 3 mm sheet, so the shape to cut is the sweep between the
+  ellipses at the sheet's top and bottom faces. Cut only the mid-plane ellipse
+  and the leg does not pass through at all. Same mathematics as cross-slicing
+  Phase A, so the two share the work.
+
+Two of the eleven turned out to exist already: solid top and bottom are the
+shell's caps, and measuring the distance between overlapping parts by their real
+outlines is what `analyseSheet` and true-shape nesting already do — though
+true-shape is off by default, so a first look shows bounding boxes.
+
+Two need a decision recorded. Per-layer editing is **brush strokes and 2D
+profiles, not dragged vertices**: a vertex is produced by the field and has no
+identity that survives the form changing, so the durable thing to store is the
+stroke. And interleaved pins **must leave every layer fastened to both
+neighbours**, which means the generator has to check its own output and say so
+when a layer ends up held on one side only.
 
 ## Practical notes from cutting actual lamps
 

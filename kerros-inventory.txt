@@ -1,0 +1,101 @@
+KERROS INVENTORY  2026-08-25  version 0.17.0
+
+--- source, lines each
+   22175 total
+    1605 src/core/sdf.ts
+    1596 src/core/store.ts
+    1543 src/ui/Inspector.tsx
+    1271 src/core/nest.ts
+    1126 tools/validate-nest.mjs
+    1100 src/ui/Viewport.tsx
+     792 src/core/slice.ts
+     759 src/index.css
+     737 src/ui/ProfilePanel.tsx
+     727 src/core/pipeline.ts
+     685 tools/validate-sdf.mjs
+     635 src/ui/SheetView.tsx
+     627 tools/validate-window.mjs
+     515 tools/validate-pipeline.mjs
+     465 tools/validate-slice.mjs
+     432 tools/validate-rig-export.mjs
+     422 src/core/window.ts
+     410 src/core/voxelise.ts
+     396 src/core/project.ts
+     392 tools/validate-pattern.mjs
+     388 src/core/pattern.ts
+     384 tools/validate-import.mjs
+     383 tools/validate-sculpt.mjs
+     328 src/core/fixture.ts
+     302 src/ui/SliceInspector.tsx
+     286 src/ui/Layout.tsx
+     283 src/ui/download.ts
+     283 src/core/meshImport.ts
+     273 tools/validate-project.mjs
+     258 src/core/job.ts
+     249 tools/validate-fixture.mjs
+     244 src/ui/FeatureTree.tsx
+     231 src/core/dxf.ts
+     224 src/core/rig.ts
+     217 src/ui/useSheets.ts
+     203 tools/validate-surfacenets.mjs
+     202 src/core/surfaceNets.ts
+     182 src/ui/workerBridge.ts
+     136 src/core/font.ts
+     131 src/ui/PartInspector.tsx
+      95 src/core/types.ts
+      88 src/ui/kerros.worker.ts
+      84 src/ui/useSlices.ts
+      78 src-tauri/src/lib.rs
+      70 src/ui/usePreview.ts
+      68 tools/make-icon.py
+      52 src/assets/hero.png
+      51 tools/check-version.mjs
+      45 src/ui/ErrorBoundary.tsx
+      43 src/ui/NumberField.tsx
+      33 src/core/profiles.ts
+      18 src/core/mesh.ts
+      10 src/main.tsx
+      10 src/App.tsx
+       6 src-tauri/src/main.rs
+       1 src/version.ts
+       1 src/assets/vite.svg
+       0 src/assets/react.svg
+
+--- npm scripts
+dev: vite
+build: tsc -b && vite build
+lint: oxlint
+preview: vite preview
+check: node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-pipeline.mjs
+tauri: tauri
+verify: npm run check && npm run build
+
+--- recent history
+f1ff563 Handoff at 0.16.0, including session conventions and untested-in-material status
+7ba2b35 True-shape nesting by rasterising parts, so small parts nest inside rings' holes
+21d725a Group shapes by attaching them to a leader, inheriting the full transform
+1675ba1 Fixtures attach to a shape; preview surface moved into the shared worker
+371a105 Record that tsc --noEmit against the root tsconfig checks nothing
+c8616fa Three-colour icon, bundle metadata, and fix a three event type that only tsc -b caught
+1bcddc4 Slicing moved to a Web Worker behind a pure pipeline module, validated end to end
+c5a9295 Rewrite the handoff to describe Kerros as built rather than as planned
+d89f42e Imports get a gizmo and a uniform scale, sized by longest axis in mm
+739d669 STL and OBJ import baked to a signed distance grid, with parity signs and object-scaled reach
+daafe81 M10: Tauri shell with native save and open dialogs, batch export into one chosen folder
+5bc7571 M8.3: windows attach to a shape, following translation and Z rotation, and can be detached
+7740b53 M6.1: sculpt strokes stored in the attached shape's frame, so moving or turning the shape carries them
+566d6dd M9.1: fixtures drawn as clickable ghost volumes in the model view
+9aea7a4 M9: E27 socket mount, cable channel and Wago chamber as dimensioned per-slice fixtures; centre-on-model for windows and fixtures
+b22ce8d M8.2: windows carry their own axis and get a gizmo; rotation separated from translation for rods and windows
+4417159 M8.1: per-layer random windows, seeded per layer so adjusting a setting does not reroll the choice
+f94a38a M8: window wedges producing plexi plugs that fit their holes, nesting split by material
+e8453cd M7.2: measure perforation clearance in the slice plane, add band limit, rename to perforation
+fa8c984 M7: wall patterns with four generators and bridge-width enforcement; gizmo no longer attaches to features without a transform
+8bda200 M4.5: project save and load, panel selection moved into the store
+6a52084 M4.2: true-shape collision and clearance check, replacing the bounding-box overlap warning
+36b5860 M3.1: fix extrusion glitch from intersecting rod holes, rods move in Z with a length parameter, X-ray and wireframe display modes
+e5cd938 M key selects move gizmo, G kept as alias
+736559b M1.5: click-to-select picking via per-feature field distance, transform gizmo with snapping, selection outline
+cb6a510 M1: SDF core with six primitives and six ops, surface nets preview mesher, inspector, validators
+ca76375 M0: Z-up viewport with orbit and ortho views, feature tree store, profiles, error boundaries, version validator
+647afae M0: Vite + React + TS scaffold, three.js, version constant, handoff

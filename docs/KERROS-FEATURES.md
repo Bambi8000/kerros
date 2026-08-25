@@ -46,11 +46,13 @@ returns a local AABB and is what sizes the voxel grid.
 | `torus` | Torus | `R` (major) `r` (tube), lies in the local XY plane |
 | `ellipsoid` | Ellipsoid | `rx` `ry` `rz` |
 | `superellipsoid` | Superellipsoid | `rx` `ry` `rz` `e` (exponent, default 1.4) |
+| `prism` | Prism | `n` (sides, 3–24) `r` (to a vertex) `h` `corner` |
+| `cone` | Cone | `r1` (bottom) `r2` (top) `h` |
 
 Accuracy notes, because they matter downstream:
 
-- `sphere`, `roundBox`, `capsule`, `torus` are exact Euclidean distance
-  fields. Blend radii mean exactly what they say.
+- `sphere`, `roundBox`, `capsule`, `torus`, `prism`, `cone` are exact Euclidean
+  distance fields. Blend radii mean exactly what they say.
 - `ellipsoid` uses the standard bounded approximation: accurate near the
   surface, conservative further out.
 - `superellipsoid` divides the p-norm by its gradient magnitude, giving the
@@ -65,6 +67,56 @@ Accuracy notes, because they matter downstream:
   shapes worth having are the pinched ones under 2, where the form pulls in
   between the axes: at e = 1 the diagonal reaches 58% of the axis radius,
   where at e = 2 it reaches 100%.
+
+### Sharp forms
+
+A square plate with a sphere taken out of it needed no new module: `roundBox`
+is `boxSDF(p, s − r) − r`, so at `r = 0` it *is* an exact box, sharp on every
+edge. The default corner radius is 12 mm, which is the only thing that ever
+made it look otherwise.
+
+What was missing was everything angular that is not a box.
+
+**`prism` is exact, and the reason is the fold.** The query point is rotated
+into the sector belonging to one edge, and inside that sector the nearest
+boundary is either that edge or the vertex ending it — nothing else can be
+closer, because the polygon is convex and the sectors are symmetric. One
+comparison answers it at any number of sides.
+
+A vertex sits on +X, so the first edge midpoint is at angle π/n and the fold is
+about *that*, not about zero. Getting the phase wrong is silent and large: the
+first attempt was out by 25 mm on a triangle, less on a hexagon, and looked
+plausible in the viewport. A validator now pins a vertex, an edge midpoint and
+a point 7 mm off the edge, which is the smallest set that cannot pass with the
+phase rotated.
+
+`corner` rounds the vertical edges by shrinking the apothem and offsetting back
+out, the same trick `sdRoundBox` uses: the flats stay exactly where they were
+and the corners come off, which is what rounding a corner means. Top and bottom
+rims stay sharp — a stack of sheets has no radius there.
+
+`n` is the registry's only integer parameter, and the **field rounds it**
+rather than trusting the inspector to. The inspector renders every parameter
+generically from `mod.params`, so its step of 1 is a convenience, not a
+constraint, and a hand-edited project file asking for 5.5 sides has to give 6
+rather than NaN.
+
+**`cone` is written truncated** because the pointed case falls out of it for
+nothing — `r2 = 0` is a plain cone, `r1 = r2` a cylinder — and because a
+tapered stack is the shape a lamp actually wants. The point is where you stop
+having material to cut.
+
+**There is deliberately no pyramid.** A rectangular-base pyramid's exact
+distance needs five faces plus their edges and vertices handled separately, and
+an approximate field would corrupt every blend and every kerf offset that reads
+it — the same reason the superellipsoid divides by its gradient. A four-sided
+prism gives a square column and a cone gives a round taper; the missing case is
+a square taper, and it will be done properly or not at all.
+
+Both were checked against brute-force distance to a densely sampled surface,
+and both hold `|∇d| = 1` to four decimals across the whole sampled volume. That
+unit gradient is the property smooth blends and the kerf iso-level depend on;
+it is what "exact" means here, not that the zero level is in the right place.
 
 ### Display modes — M3.1
 
@@ -636,9 +688,42 @@ sketched, and the reversal matters:
   62.5 mm² — over 15% of the part.
 
 `tools/validate-slice.mjs` slices a sharp 80 × 80 mm box and asserts the
-cross-section area is within 1% of 6400 mm² and that a vertex lands within one
-sample of the true corner. That test exists because the original
+cross-section area is within **0.1%** of 6400 mm² and that a vertex lands within
+one sample of the true corner. That test exists because the original
 implementation had the order the other way round.
+
+#### Chaikin does not need to be taught about corners
+
+The obvious next move is to stop Chaikin cutting a vertex that turns sharply,
+so a square stays square. It was built, measured, and thrown away.
+
+The turn-angle distributions separate cleanly, so the mechanism would have
+worked: on raw marching-squares rings, curved forms turn by at most about 12°
+per vertex — a sphere manages 0.4° — while a real corner turns by 40° or more.
+A threshold of 30° sits between them with room on both sides.
+
+What it produced was nothing:
+
+| | area of a sharp box | nearest vertex to the true corner |
+| --- | --- | --- |
+| plain Chaikin | −0.006% | 0.79 samples |
+| corners kept | −0.005% | **1.00 samples** |
+
+It does not help, and it makes the corner slightly *worse*. When a corner does
+not land on a grid crossing, marching squares emits two roughly 45° vertices
+bracketing it, and averaging them lands nearer the truth than either one is.
+Keeping both freezes them a full sample out.
+
+So the premise was wrong: **Chaikin does not round corners at slicing
+resolution.** The 15% a square lost was the ordering bug, not Chaikin, and
+reversing the order was already the whole fix. Checked across 60° corners and
+resolutions from 40 to 300, the largest difference anywhere was 0.05% of area —
+about 0.02 mm on a 100 mm edge, under the kerf.
+
+The measurement is kept here because the idea is an obvious one and will occur
+to somebody again. What came of it instead was tightening the box assertion from
+1% to 0.1%: the measured error is 0.006%, so a hundredfold margin still catches
+the ordering bug that would eat whole percent.
 
 ### Grouping
 
@@ -804,6 +889,83 @@ in it, so `hasTransform()` reports false for them and the gizmo does not attach.
 Before this it did attach, and dragging wrote transform parameters that nothing
 read — a drag that appeared to do nothing while quietly filling the feature with
 values. The Move, Rotate and Snap buttons are disabled for them too.
+
+## Nesting off the main thread — **shipped**
+
+`runNestJob` joins the slice and preview jobs in `src/core/pipeline.ts`, and
+`useSheets` talks to the same shared worker. True-shape costs about half a
+second on a real lamp and the webview makes that closer to a second — a freeze
+in exactly the mode where somebody is deciding whether to buy material, and
+made worse by the resolution dial not being monotonic, so the honest workflow is
+to try two or three settings before cutting.
+
+### The boundary is a placement table, not parts
+
+Slicing and the preview are handed the **tree**, because a field is a chain of
+closures and closures do not survive `postMessage`. Nesting is the opposite
+case: parts are polygons, circles and strings, which is to say plain JSON, and
+they travel as themselves.
+
+What comes back is deliberately **not** parts. Neither packer touches geometry —
+both end at `{ ...part, bbox, pivot, dx, dy, labelAt, labelHeight }` — so the
+only thing the nester decides is where each part goes. Sending the geometry back
+would be sending it home again, and it would quietly invite a future packer to
+modify it in transit, which nothing downstream expects. Rotation is the proof of
+the rule: it is baked into geometry, and it happens in `applyPlacements` on the
+main thread, after this.
+
+`rehydrateNest` puts the geometry back under the placements, and must be given
+the parts the table was computed from. Those two travel together in `useSheets`,
+which is also what lets the previous layout stay on screen while a new one is
+packed: it stays consistent with itself rather than becoming a set of positions
+for parts that no longer exist.
+
+### Dragging no longer re-packs the sheet
+
+`partPlacements` was a dependency of the memo that did the packing, so **every
+drag of a part re-nested the whole job** — half a second with true shape on, and
+the layout redrawn from scratch underneath the hand doing the dragging. Manual
+placement is applied *after* the pack now, which is where it always belonged.
+
+This is a relative of the failure mode this project keeps meeting, but a
+different one: not silence read as a bug, but **work nobody asked for**. The
+program was not quiet about what it refused; it was quiet about what it kept
+redoing. Both are cured by the same habit of saying what is happening — the
+panel now carries `busy` and the time the last pack took.
+
+### What stays on this thread, and why
+
+`applyPlacements` and `rotatePart` are interactive and cheap, and routing them
+through a message would trade one freeze for something worse — a part that lags
+the cursor.
+
+`analyseSheet` stays too, and that is a decision rather than laziness. The
+collision reading is feedback to that dragging, so it has to be on screen while
+the part is in the wrong place rather than a round trip later. It only examines
+pairs whose boxes overlap and thins dense outlines to 400 points, so the cost is
+already bounded.
+
+Pinned parts are safe against a reply landing mid-drag, because placements live
+in the store and are read after the reply, never sent with the job. The drag
+always wins, which is right.
+
+### What the validator can and cannot prove
+
+`tools/validate-pipeline.mjs` asserts that `rehydrateNest(runNestJob(job),
+parts)` is exactly what calling `nestByMaterial` directly gives, for both
+packers, and that both directions survive `structuredClone`. A precondition
+check comes with it: the two packers must *disagree* on the test job, or a
+dropped `trueShape` option would pass both equivalence checks unnoticed.
+
+There is deliberately **no test claiming the worker and the inline fallback nest
+identically**. Node has no worker, so such a test would run the fallback twice
+and assert something other than what it says. The guarantee is structural — the
+worker holds no packing logic at all, both paths call the same function — and
+the equivalence check is what pins it.
+
+The test job needed one part that is neither round nor centred on the origin.
+Without it every pivot was `[0, 0]` by coincidence and a rehydration that lost
+the pivot entirely still passed, which is what the first version did.
 
 ## LAYOUT — **shipped** (M4)
 
@@ -1558,6 +1720,17 @@ Preview resolution is user-selectable (32 / 48 / 64 / 96 / 128, default 64)
 and re-evaluation is debounced by 120 ms so dragging a value stays smooth.
 Slicing gets its own, finer grid in M2, and moves to a Web Worker there.
 
+**Marching cubes would not fix the rounded edges, and the note above is
+wrong about that.** Both extractors place their vertices on cell *edges*, so a
+sharp edge comes out chamfered by one and rounded by the other; neither can
+produce a corner the grid does not contain. The only thing that does is putting
+the vertex *inside* the cell, at the point that best fits the planes through its
+crossings — dual contouring with a QEF. That fits behind the same
+`GridLike -> SurfaceNetsResult` interface and needs no new imports, so the
+architecture allows it whenever the prisms and cones start to mislead. Slicing
+is unaffected either way: it samples the field directly and never reads this
+mesh.
+
 ### Feature tree — M0, extended M1
 
 `src/core/store.ts` — ordered list with add, remove, reorder,
@@ -1586,7 +1759,10 @@ Run all of them with `npm run check`.
   operation identities (smooth ops with `k = 0` must equal their hard
   counterparts), the EMPTY sentinel, module registry integrity, rotation
   matrix orthonormality, the Rz·Ry·Rx composition that the gizmo depends on,
-  feature picking, bit-identical re-evaluation, and blend padding.
+  feature picking, bit-identical re-evaluation, and blend padding. The prism
+  and the cone additionally get a **unit-gradient check over thousands of
+  points**, because a zero level in the right place is not the same as a
+  distance field, and it is the gradient that blends and kerf depend on.
 - `tools/validate-rig-export.mjs` — kerf compensation measured as actual
   radius change on a sliced tube (outer +kerf/2, hole −kerf/2) and the
   sub-kerf wall case; the rod clearance table, span inclusivity at both ends,
