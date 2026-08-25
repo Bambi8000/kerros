@@ -7,6 +7,7 @@ import type {
   Stage,
   StackSettings,
 } from './types';
+import { layerPitch } from './types';
 import { DEFAULT_MACHINE, DEFAULT_MATERIAL, DEFAULT_STACK } from './profiles';
 import {
   defaultModifierParams,
@@ -686,7 +687,17 @@ export const useKerros = create<KerrosState>((set, get) => ({
       const bounds = modelBounds(s.features.filter(isFieldFeature));
       const id = `f${s.nextFeatureNumber}`;
       const count = s.features.filter((f) => f.kind === `fixture:${kind}`).length + 1;
-      const pitch = s.material.thickness + s.stack.spacerHeight;
+      /*
+       * A fixture's default band is one layer tall, so it needs a pitch. This
+       * used to add the two numbers inline, which is the arithmetic
+       * `layerPitch` exists to own — and it gave the requested gap rather than
+       * the buildable one, so a 4 mm gap of 3 mm rings sized the band on 7 mm
+       * of a stack pitched at 6.
+       *
+       * The pitch at the bottom, since a default is a starting value the person
+       * then aims. A graded stack has no single pitch to use here.
+       */
+      const pitch = layerPitch(s.material, s.stack);
 
       // Attached to the last shape by default, so a socket hole follows the form
       // it is drilled into. Detachable, since an off-centre cable exit that holds
@@ -1552,9 +1563,17 @@ export function composeField(
   kerf: number,
   seed: number,
   thickness: number,
-  pitch: number,
+  /**
+   * The stack, not a pitch.
+   *
+   * The pipeline's version took one pitch until gaps could vary; per-layer
+   * windows key on which sheet a height falls in, so the field has to know the
+   * whole plan. Passed straight through here — this wrapper exists only to
+   * supply the main thread's baked imports.
+   */
+  stack: { spacerHeight: number; spacerHeightTop?: number; spacerThickness?: number },
 ) {
-  return composeFieldWith(features, kerf, seed, thickness, pitch, mainVolumes());
+  return composeFieldWith(features, kerf, seed, thickness, stack, mainVolumes());
 }
 
 /**

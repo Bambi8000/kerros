@@ -91,6 +91,7 @@ export function useSheets(
   const thickness = useKerros((s) => s.material.thickness);
   const kerf = useKerros((s) => s.material.kerf);
   const spacerHeight = useKerros((s) => s.stack.spacerHeight);
+  const spacerThickness = useKerros((s) => s.stack.spacerThickness);
   const partGap = useKerros((s) => s.partGap);
   const labelHeight = useKerros((s) => s.labelHeight);
   const ringWidth = useKerros((s) => s.ringWidth);
@@ -101,7 +102,9 @@ export function useSheets(
   const built = useMemo<BuiltJob | null>(() => {
     if (!slices || slices.slices.length === 0) return null;
 
-    const spacerOptions = { thickness, spacerHeight, kerf, ringWidth };
+    // Rings are their own material, so the ring count comes from their
+    // thickness rather than the stock's — 372 rings on a rod versus 62.
+    const spacerOptions = { thickness, spacerHeight, kerf, ringWidth, spacerThickness };
     const spacers = makeSpacers
       ? spacerPlans(rodsFromFeatures(features), slices.slices, spacerOptions)
       : [];
@@ -131,6 +134,7 @@ export function useSheets(
     thickness,
     kerf,
     spacerHeight,
+    spacerThickness,
     partGap,
     labelHeight,
     ringWidth,

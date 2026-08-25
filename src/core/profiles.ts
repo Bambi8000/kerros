@@ -21,6 +21,14 @@ export const DEFAULT_MATERIAL: MaterialProfile = {
 
 export const DEFAULT_STACK: StackSettings = {
   spacerHeight: 6,
+  /*
+   * Both spelled out even though both are optional, so the default profile
+   * describes a uniform stack of rings cut from the stock — which is what it
+   * has always been. Omitting them would mean the same thing; saying them means
+   * the panel has something to show before anything is touched.
+   */
+  spacerHeightTop: 6,
+  spacerThickness: 0,
 };
 
 /** Metric clearance holes, mm. Overridable per rod once RIG lands in M3. */

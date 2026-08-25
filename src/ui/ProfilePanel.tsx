@@ -200,6 +200,32 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
    * and can differ between the bottom and the top. `layerPitch` is the fallback
    * for before anything has been sliced, and it quantises the same way.
    */
+  /**
+   * The gap a ring count actually produces.
+   *
+   * A gap is whole rings and a ring is one sheet of its own material, so these
+   * are the numbers the stack will be built from — not the ones typed in.
+   */
+  const ringT = (stack.spacerThickness ?? 0) > 0 ? (stack.spacerThickness as number) : material.thickness;
+  const ringsAt = (mm: number) => (ringT > 0 ? Math.max(Math.round(Math.max(mm, 0) / ringT), 0) : 0);
+  const ringsLow = ringsAt(stack.spacerHeight);
+  const ringsHigh = ringsAt(stack.spacerHeightTop ?? stack.spacerHeight);
+  /*
+   * Three states, not two.
+   *
+   * Asking for different gaps and getting different gaps are not the same
+   * thing: 3 mm and 4 mm are both one 3 mm ring, so the stack comes out uniform
+   * while the two numbers on screen say it should not. That case needs its own
+   * sentence — it is the one where a control appears to do something and does
+   * nothing, which is the failure this panel exists to prevent.
+   */
+  const gapTop = stack.spacerHeightTop ?? stack.spacerHeight;
+  const asked = Math.abs(gapTop - stack.spacerHeight) > 1e-9;
+  const graded = ringsLow !== ringsHigh;
+  const gradeLow = (Math.min(ringsLow, ringsHigh) * ringT).toFixed(2);
+  const gradeHigh = (Math.max(ringsLow, ringsHigh) * ringT).toFixed(2);
+  const gradeSteps = Math.abs(ringsHigh - ringsLow) + 1;
+
   const gaps = slices?.planes.map((plane) => plane.gapAbove) ?? [];
   const pitchLow = gaps.length > 0 ? material.thickness + Math.min(...gaps) : layerPitch(material, stack);
   const pitchHigh = gaps.length > 0 ? material.thickness + Math.max(...gaps) : pitchLow;
@@ -324,13 +350,60 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
       <div className="group">
         <div className="group-head">Stack</div>
         <NumberField
-          label="Spacer height"
+          label="Ring thickness"
+          value={stack.spacerThickness ?? 0}
+          unit="mm"
+          step={0.5}
+          min={0}
+          onChange={(spacerThickness) => setStack({ spacerThickness })}
+        />
+        <div className="derived">
+          {(stack.spacerThickness ?? 0) === 0
+            ? `0 follows the stock, so rings are ${material.thickness} mm.`
+            : ringT === material.thickness
+              ? `Rings are ${ringT} mm, the same as the stock.`
+              : `Rings are cut from ${ringT} mm material, not the ${material.thickness} mm stock.`}
+        </div>
+        <NumberField
+          label={asked ? 'Gap at the bottom' : 'Spacer height'}
           value={stack.spacerHeight}
           unit="mm"
           step={0.5}
           min={0}
           onChange={(spacerHeight) => setStack({ spacerHeight })}
         />
+        <NumberField
+          label="Gap at the top"
+          value={stack.spacerHeightTop ?? stack.spacerHeight}
+          unit="mm"
+          step={0.5}
+          min={0}
+          onChange={(spacerHeightTop) => setStack({ spacerHeightTop })}
+        />
+        {/*
+          A gradient is only as smooth as the ring material lets it be, and the
+          number of steps it can actually take is not something anyone can work
+          out from two millimetre readings. Saying it here is the difference
+          between a dial that works and one that appears not to.
+        */}
+        {graded ? (
+          <div className="derived">
+            {`${ringT} mm rings, so the gap goes ${gradeLow} → ${gradeHigh} mm in ${gradeSteps} steps.`}
+          </div>
+        ) : asked ? (
+          <div className="warn">
+            {`${stack.spacerHeight} mm and ${gapTop} mm are both ${ringsLow} ${
+              ringsLow === 1 ? 'ring' : 'rings'
+            } of ${ringT} mm, so the stack comes out uniform at ${gradeLow} mm. Rings of ${Math.abs(
+              gapTop - stack.spacerHeight,
+            ).toFixed(2)} mm or thinner would grade it, and so would gaps further apart.`}
+          </div>
+        ) : (
+          <div className="derived">
+            Both gaps the same, so the stack is uniform. Set them apart to open
+            it out or close it up as it rises.
+          </div>
+        )}
         <div className="derived derived-strong">
           {pitchVaries
             ? `Layer pitch ${pitchLow.toFixed(2)}–${pitchHigh.toFixed(2)} mm`
@@ -595,12 +668,19 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
             fill. Check each rod&rsquo;s Z position and length.
           </div>
         ) : null}
+        {/*
+          This used to threaten that the stack would not close on the rods, and
+          that threat is no longer true: the model is planned on the gap the
+          rings can make, so what gets cut and what gets built agree. What is
+          left is worth saying anyway — the lamp is not quite the one that was
+          asked for, and a number typed in came back different.
+        */}
         {spacerMismatch ? (
-          <div className="warn">
-            Rings can only be a whole sheet thick. {stack.spacerHeight} mm was
-            asked for; {sheets.spacerAchieved} mm is what {material.thickness} mm
-            material gives. Set the spacer height to a multiple of the thickness
-            or the stack will not close on the rods.
+          <div className="derived">
+            {stack.spacerHeight} mm was asked for and {sheets.spacerAchieved} mm
+            is what whole {ringT} mm rings make, so that is what the layers are
+            planned on. Use a multiple of {ringT} mm, or thinner rings, to get
+            the gap you meant.
           </div>
         ) : null}
         {sheets.unplaced.length > 0 ? (

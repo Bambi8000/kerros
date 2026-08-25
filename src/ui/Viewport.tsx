@@ -217,6 +217,26 @@ function makeSelectionOutline(feature: Feature): THREE.Object3D | null {
 }
 
 export function Viewport({ slices }: ViewportProps) {
+  /**
+   * Pitch for the stack readout.
+   *
+   * `slices.pitch` is the pitch at the bottom, which is the whole answer only
+   * while every gap is the same. A graded stack has a range, and the readout
+   * sits above a picture of exactly those gaps — showing one number there would
+   * contradict what is on screen.
+   */
+  const stackPitch = (() => {
+    if (!slices || slices.planes.length === 0) return '0.00';
+    let low = Infinity;
+    let high = -Infinity;
+    for (const plane of slices.planes) {
+      const pitch = plane.thickness + plane.gapAbove;
+      if (pitch < low) low = pitch;
+      if (pitch > high) high = pitch;
+    }
+    return high - low > 1e-9 ? `${low.toFixed(2)}–${high.toFixed(2)}` : low.toFixed(2);
+  })();
+
   const view = useKerros((s) => s.view);
   const mode = useKerros((s) => s.mode);
   const currentLayer = useKerros((s) => s.currentLayer);
@@ -1083,8 +1103,7 @@ export function Viewport({ slices }: ViewportProps) {
         </span>
         {mode === 'stack' && slices ? (
           <span className="hud-stats">
-            {slices.slices.length} layers · pitch {slices.pitch.toFixed(2)} mm ·
-            {' '}
+            {slices.slices.length} layers · pitch {stackPitch} mm ·{' '}
             {slices.thickness.toFixed(2)} mm sheet
           </span>
         ) : null}

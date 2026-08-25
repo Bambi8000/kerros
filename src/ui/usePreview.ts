@@ -32,6 +32,10 @@ export function usePreview(enabled: boolean): PreviewResult {
   const kerf = useKerros((s) => s.material.kerf);
   const thickness = useKerros((s) => s.material.thickness);
   const spacerHeight = useKerros((s) => s.stack.spacerHeight);
+  // The whole stack, not just the bottom gap: per-layer windows key on which
+  // sheet a height falls in, so the field needs the plan and not a spacing.
+  const spacerHeightTop = useKerros((s) => s.stack.spacerHeightTop);
+  const spacerThickness = useKerros((s) => s.stack.spacerThickness);
   const seed = useKerros((s) => s.seed);
   const importRevision = useKerros((s) => s.importRevision);
 
@@ -55,6 +59,8 @@ export function usePreview(enabled: boolean): PreviewResult {
         seed,
         thickness,
         spacerHeight,
+        spacerHeightTop,
+        spacerThickness,
       };
 
       void requestPreview(job, importRevision).then((output) => {
@@ -64,7 +70,18 @@ export function usePreview(enabled: boolean): PreviewResult {
     }, PREVIEW_DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [enabled, features, resolution, kerf, thickness, spacerHeight, seed, importRevision]);
+  }, [
+    enabled,
+    features,
+    resolution,
+    kerf,
+    thickness,
+    spacerHeight,
+    spacerHeightTop,
+    spacerThickness,
+    seed,
+    importRevision,
+  ]);
 
   return result;
 }

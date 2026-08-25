@@ -27,6 +27,10 @@ export function useSlices(enabled: boolean): SliceResult {
   const thickness = useKerros((s) => s.material.thickness);
   const kerf = useKerros((s) => s.material.kerf);
   const spacerHeight = useKerros((s) => s.stack.spacerHeight);
+  // The whole stack, not just the bottom gap: per-layer windows key on which
+  // sheet a height falls in, so the field needs the plan and not a spacing.
+  const spacerHeightTop = useKerros((s) => s.stack.spacerHeightTop);
+  const spacerThickness = useKerros((s) => s.stack.spacerThickness);
   const resolution = useKerros((s) => s.sliceRes);
   const tolerance = useKerros((s) => s.sliceTolerance);
   const smoothing = useKerros((s) => s.sliceSmoothing);
@@ -52,6 +56,8 @@ export function useSlices(enabled: boolean): SliceResult {
         thickness,
         kerf,
         spacerHeight,
+        spacerHeightTop,
+        spacerThickness,
         resolution,
         tolerance,
         smoothing,
@@ -72,6 +78,8 @@ export function useSlices(enabled: boolean): SliceResult {
     thickness,
     kerf,
     spacerHeight,
+    spacerHeightTop,
+    spacerThickness,
     resolution,
     tolerance,
     smoothing,
