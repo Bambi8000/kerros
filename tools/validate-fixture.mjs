@@ -15,7 +15,6 @@ import {
   SOCKET_PRESETS,
   socketDiameter,
   cutRadius,
-  fixtureSpansZ,
   fixtureHolesAt,
   fixtureExtent,
   roundedRect,
@@ -88,24 +87,27 @@ console.log('fixture: kerf');
   check('an absurd kerf clamps', cutRadius(1, 8) > 0);
 }
 
-console.log('fixture: the band');
-{
-  const spec = fix({ z: 10, length: 9 });
-  check('inside the band', fixtureSpansZ(spec, 10));
-  check('at the edges', fixtureSpansZ(spec, 5.5) && fixtureSpansZ(spec, 14.5));
-  check('outside it', !fixtureSpansZ(spec, 15));
-  check('a band shorter than a pitch reaches one layer', fixtureHolesAt(fix({ z: 10, length: 1 }), 10).circles.length === 1);
-  check('and nothing on the next', fixtureHolesAt(fix({ z: 10, length: 1 }), 19).circles.length === 0);
-}
+/*
+ * The band block used to sit here.
+ *
+ * Deciding which layers a fixture reaches is no longer this module's job — it
+ * is `LayerSelector` in `layers.ts`, one mechanism where there were four, and
+ * the band assertions moved to `validate-layers.mjs` with it. What is left here
+ * is what a fixture actually knows: the shape of the hole.
+ *
+ * The band could not stay. A fixture's z is resolved through its attachment
+ * frame, so which layers it reaches depends on where its parent has moved to,
+ * and that is knowledge the pipeline has and this module cannot.
+ */
 
 console.log('fixture: socket mount');
 {
-  const plain = fixtureHolesAt(fix({ screws: 0 }), 10);
+  const plain = fixtureHolesAt(fix({ screws: 0 }));
   check('one hole with no screws', plain.circles.length === 1);
   check('and it is the nipple clearance, kerf-compensated', near(plain.circles[0].r, cutRadius(10.5, 0.2), 1e-12));
   check('no polygons', plain.polygons.length === 0);
 
-  const screwed = fixtureHolesAt(fix({ screws: 4, boltCircle: 30, screwDiameter: 3.2 }), 10);
+  const screwed = fixtureHolesAt(fix({ screws: 4, boltCircle: 30, screwDiameter: 3.2 }));
   check('four screws add four holes', screwed.circles.length === 5);
 
   const ring30 = screwed.circles.slice(1);
@@ -119,30 +121,30 @@ console.log('fixture: socket mount');
   );
   check('and are the screw size', ring30.every((c) => near(c.r, cutRadius(3.2, 0.2), 1e-12)));
 
-  const turned = fixtureHolesAt(fix({ screws: 4, rot: 45 }), 10);
+  const turned = fixtureHolesAt(fix({ screws: 4, rot: 45 }));
   check(
     'rot turns the bolt circle',
     Math.abs(turned.circles[1].x - screwed.circles[1].x) > 1,
   );
 
-  const offset = fixtureHolesAt(fix({ screws: 2, x: 100, y: -50 }), 10);
+  const offset = fixtureHolesAt(fix({ screws: 2, x: 100, y: -50 }));
   check('the whole set follows the position', near(offset.circles[0].x, 100, 1e-12) && near(offset.circles[0].y, -50, 1e-12));
   check(
     'including the screws',
     offset.circles.slice(1).every((c) => near(Math.hypot(c.x - 100, c.y + 50), 15, 1e-9)),
   );
 
-  const bodyMount = fixtureHolesAt(fix({ preset: 'body' }), 10);
+  const bodyMount = fixtureHolesAt(fix({ preset: 'body' }));
   check('the body preset gives a much bigger hole', bodyMount.circles[0].r > 19);
 }
 
 console.log('fixture: cable channel');
 {
-  const round = fixtureHolesAt(fix({ kind: 'cable', label: 'Cable', shape: 'round', diameter: 8 }), 10);
+  const round = fixtureHolesAt(fix({ kind: 'cable', label: 'Cable', shape: 'round', diameter: 8 }));
   check('a round channel is a circle', round.circles.length === 1 && round.polygons.length === 0);
   check('at the cable size', near(round.circles[0].r, cutRadius(8, 0.2), 1e-12));
 
-  const slot = fixtureHolesAt(fix({ kind: 'cable', shape: 'slot', diameter: 8, slotLength: 24 }), 10);
+  const slot = fixtureHolesAt(fix({ kind: 'cable', shape: 'slot', diameter: 8, slotLength: 24 }));
   check('a slot is a polygon', slot.polygons.length === 1 && slot.circles.length === 0);
   check('wound as a hole', signedArea(slot.polygons[0]) < 0, `area ${signedArea(slot.polygons[0]).toFixed(1)}`);
 
@@ -160,7 +162,7 @@ console.log('fixture: cable channel');
   check('the slot is cut a kerf narrow', near(maxY - minY, 8 - 0.2, 1e-9), `${(maxY - minY).toFixed(3)} mm`);
   check('and a kerf short', near(maxX - minX, 24 - 0.2, 1e-9));
 
-  const across = fixtureHolesAt(fix({ kind: 'cable', shape: 'slot', diameter: 8, slotLength: 24, rot: 90 }), 10);
+  const across = fixtureHolesAt(fix({ kind: 'cable', shape: 'slot', diameter: 8, slotLength: 24, rot: 90 }));
   const apts = across.polygons[0];
   let aMinX = Infinity;
   let aMaxX = -Infinity;
@@ -173,7 +175,7 @@ console.log('fixture: cable channel');
 
 console.log('fixture: wago chamber');
 {
-  const pocket = fixtureHolesAt(fix({ kind: 'chamber', label: 'Wago', width: 30, depth: 20, corner: 3 }), 10);
+  const pocket = fixtureHolesAt(fix({ kind: 'chamber', label: 'Wago', width: 30, depth: 20, corner: 3 }));
   check('a chamber is one polygon', pocket.polygons.length === 1 && pocket.circles.length === 0);
   check('wound as a hole', signedArea(pocket.polygons[0]) < 0);
 
@@ -191,7 +193,7 @@ console.log('fixture: wago chamber');
   check('cut a kerf under size on both axes', near(maxX - minX, 29.8, 1e-9) && near(maxY - minY, 19.8, 1e-9));
   check('the corners are rounded, not clipped', pts.length / 2 > 8);
 
-  const sharp = fixtureHolesAt(fix({ kind: 'chamber', corner: 0 }), 10);
+  const sharp = fixtureHolesAt(fix({ kind: 'chamber', corner: 0 }));
   check('a zero radius gives four corners', sharp.polygons[0].length / 2 === 4);
 
   const rect = roundedRect(0, 0, 20, 10, 20, 0);
@@ -206,7 +208,7 @@ console.log('fixture: does it fit the layer it landed on');
     { points: ring(0, 0, 52).slice().reverse(), area: -1, isHole: true },
   ]);
 
-  const chamber = fixtureHolesAt(fix({ kind: 'chamber', width: 30, depth: 20 }), 10).polygons[0];
+  const chamber = fixtureHolesAt(fix({ kind: 'chamber', width: 30, depth: 20 })).polygons[0];
 
   check('a chamber fits a solid disc', polygonFitsInPart(solidDisc[0], chamber, 2));
   check(
@@ -214,10 +216,10 @@ console.log('fixture: does it fit the layer it landed on');
     !polygonFitsInPart(narrowRing[0], chamber, 2),
   );
 
-  const huge = fixtureHolesAt(fix({ kind: 'chamber', width: 200, depth: 200 }), 10).polygons[0];
+  const huge = fixtureHolesAt(fix({ kind: 'chamber', width: 200, depth: 200 })).polygons[0];
   check('a chamber bigger than the part does not fit', !polygonFitsInPart(solidDisc[0], huge, 0));
 
-  const offCentre = fixtureHolesAt(fix({ kind: 'chamber', width: 30, depth: 20, x: 55 }), 10).polygons[0];
+  const offCentre = fixtureHolesAt(fix({ kind: 'chamber', width: 30, depth: 20, x: 55 })).polygons[0];
   check('one hanging over the rim does not fit', !polygonFitsInPart(solidDisc[0], offCentre, 0));
 
   // The chamber's furthest vertex is about 18 mm from the centre of a 60 mm

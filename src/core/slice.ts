@@ -24,6 +24,21 @@ export interface Contour {
   /** Signed area in mm². Positive is an outer boundary, negative a hole. */
   area: number;
   isHole: boolean;
+  /**
+   * The feature that put this here, when something did.
+   *
+   * Absent on contours that came out of the field — those belong to the whole
+   * accumulated form and no single feature owns them. Present on holes cut per
+   * slice, which is what lets a person point at one in the slice view and have
+   * the program know whose it is.
+   *
+   * Stamped at the moment the hole is made rather than worked out later. The
+   * model view has to ask every feature for its distance, because a merged
+   * surface cannot say who owns a patch of it; a hole cut per slice was made by
+   * exactly one feature, and it is cheaper and more truthful to remember that
+   * than to reconstruct it.
+   */
+  owner?: string;
 }
 
 /** A circular cut, kept as a circle rather than polygonised. */
@@ -34,6 +49,8 @@ export interface CircleHole {
   r: number;
   /** What put it there, e.g. 'M5 rod'. */
   label: string;
+  /** The id of the feature that put it there, for pointing at it. */
+  owner?: string;
 }
 
 export interface Slice {

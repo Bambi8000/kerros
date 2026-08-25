@@ -214,6 +214,18 @@ console.log('rig: cut radius and holes');
   check('both rods are drilled where their spans overlap', overlap.length === 2);
   check('the holes carry their size in the label', overlap.some((h) => h.label.startsWith('M8')));
 
+  /*
+   * And who made them.
+   *
+   * The slice view lets a person point at a hole and move the thing that cut
+   * it, which only works if the hole remembers its author. Worked out from
+   * geometry afterwards it would be a guess; stamped when the hole is made it
+   * is a fact, and this is what keeps it one.
+   */
+  check('every hole knows which rod made it', overlap.every((h) => typeof h.owner === 'string'));
+  check('and names the right one', overlap.map((h) => h.owner).sort().join(',') === 'a,b');
+
+
   const high = rodHolesAt(rods, 90, 0.4);
   check('above the first rod only the second is drilled', high.length === 1 && near(high[0].x, -30, 1e-12));
 
@@ -222,7 +234,16 @@ console.log('rig: cut radius and holes');
   check('applying rods does not mutate the input', slices.every((s) => s.circles.length === 0));
   check('each slice gets its own holes', annotated.map((s) => s.circles.length).join(',') === '1,2,1');
 
+  check(
+    'and every hole on a slice knows its rod',
+    annotated.every((slice) => slice.circles.every((h) => typeof h.owner === 'string')),
+  );
+
   const rerun = applyRods(annotated, rods, 0.4);
+  check(
+    'the owner survives re-running, like the holes themselves',
+    rerun.every((slice) => slice.circles.every((h) => typeof h.owner === 'string')),
+  );
   check(
     're-running replaces holes instead of accumulating them',
     rerun.map((s) => s.circles.length).join(',') === '1,2,1',

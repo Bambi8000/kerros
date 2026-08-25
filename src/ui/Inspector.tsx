@@ -29,7 +29,173 @@ import { FIXTURE_LABELS, SOCKET_PRESETS, fixtureExtent } from '../core/fixture';
 import type { FixtureKind } from '../core/fixture';
 import type { PatternKind } from '../core/pattern';
 import type { Feature } from '../core/types';
+import {
+  DEFAULT_LAYER_SELECTOR,
+  LAYER_SELECTOR_KINDS,
+  describeSelector,
+  resolveLayers,
+  selectorFromParams,
+} from '../core/layers';
+import type { LayerSelectorKind } from '../core/layers';
+import type { SliceSet } from '../core/slice';
 import { NumberField } from './NumberField';
+
+const SELECTOR_LABELS: Record<LayerSelectorKind, string> = {
+  all: 'Every layer',
+  band: 'A band, in mm',
+  range: 'A run of layers',
+  every: 'Every nth layer',
+};
+
+/**
+ * Which layers a per-slice feature applies to.
+ *
+ * Shared between fixtures and perforation, and the same control the interleaved
+ * pins and the leg holes will use — which is the point of there being one
+ * selector rather than four spellings of the question.
+ *
+ * `band` shows no fields of its own for a fixture: the band **is** the
+ * fixture's position and length, which it already has controls for. The other
+ * kinds ignore the position entirely.
+ */
+function LayerSelectorFields({
+  feature,
+  slices,
+  bandIsPosition = false,
+}: {
+  feature: Feature;
+  slices: SliceSet | null;
+  bandIsPosition?: boolean;
+}) {
+  const setParam = useKerros((s) => s.setParam);
+  const list = slices?.slices ?? [];
+  const fallback = bandIsPosition ? { kind: 'band' as LayerSelectorKind } : {};
+  const selector = selectorFromParams(feature.params, fallback);
+
+  /*
+   * Switching away from a band takes the feature with it.
+   *
+   * A fixture draws a ghost of the volume it will remove, and the ghost stands
+   * at `pz`. Choose layers by number and leave `pz` alone and the ghost points
+   * at one place while the holes are cut in another — the exact silent lie M9.1
+   * existed to remove. So the position follows the choice.
+   */
+  const moveTo = (kind: LayerSelectorKind, next: typeof selector) => {
+    if (!bandIsPosition || kind === 'band' || list.length === 0) return;
+    const picked = resolveLayers({ ...next, kind }, list);
+    if (picked.length === 0) return;
+    const zs = list.filter((s) => picked.includes(s.index)).map((s) => s.z);
+    const mid = (Math.min(...zs) + Math.max(...zs)) / 2;
+    setParam(feature.id, 'pz', Math.round(mid * 10) / 10);
+  };
+
+  return (
+    <div className="group">
+      <div className="group-head">Layers</div>
+      <label className="field">
+        <span className="field-label">Choose by</span>
+        <span className="field-input">
+          <select
+            value={selector.kind}
+            onChange={(e) => {
+              const kind = e.target.value as LayerSelectorKind;
+              setParam(feature.id, 'selKind', kind);
+              moveTo(kind, selector);
+            }}
+          >
+            {LAYER_SELECTOR_KINDS.map((kind) => (
+              <option key={kind} value={kind}>
+                {bandIsPosition && kind === 'band' ? 'A band around the position' : SELECTOR_LABELS[kind]}
+              </option>
+            ))}
+          </select>
+        </span>
+      </label>
+
+      {selector.kind === 'band' && !bandIsPosition ? (
+        <>
+          <NumberField
+            label="Middle"
+            value={num(feature.params, 'selZ', DEFAULT_LAYER_SELECTOR.z)}
+            unit="mm"
+            step={1}
+            onChange={(v) => setParam(feature.id, 'selZ', v)}
+          />
+          <NumberField
+            label="Height"
+            value={num(feature.params, 'selLength', DEFAULT_LAYER_SELECTOR.length)}
+            unit="mm"
+            step={1}
+            min={0}
+            onChange={(v) => setParam(feature.id, 'selLength', v)}
+          />
+        </>
+      ) : null}
+
+      {selector.kind === 'range' ? (
+        <>
+          <NumberField
+            label="First layer"
+            value={selector.from}
+            step={1}
+            min={1}
+            onChange={(v) => {
+              setParam(feature.id, 'selFrom', Math.round(v));
+              moveTo('range', { ...selector, from: Math.round(v) });
+            }}
+          />
+          <NumberField
+            label="Last layer"
+            value={selector.to}
+            step={1}
+            min={1}
+            onChange={(v) => {
+              setParam(feature.id, 'selTo', Math.round(v));
+              moveTo('range', { ...selector, to: Math.round(v) });
+            }}
+          />
+        </>
+      ) : null}
+
+      {selector.kind === 'every' ? (
+        <>
+          <NumberField
+            label="One layer in"
+            value={selector.n}
+            step={1}
+            min={1}
+            onChange={(v) => {
+              setParam(feature.id, 'selN', Math.round(v));
+              moveTo('every', { ...selector, n: Math.round(v) });
+            }}
+          />
+          <NumberField
+            label="Starting at"
+            value={selector.offset}
+            step={1}
+            min={0}
+            onChange={(v) => {
+              setParam(feature.id, 'selOffset', Math.round(v));
+              moveTo('every', { ...selector, offset: Math.round(v) });
+            }}
+          />
+        </>
+      ) : null}
+
+      {/*
+        A selection that comes to nothing has to say what it refused and why.
+        Not shown for a fixture's own band, where the position is resolved
+        through an attachment frame this panel cannot see — the fixture's own
+        "reaches N layers" line covers that case without guessing.
+      */}
+      {selector.kind !== 'band' || !bandIsPosition ? (
+        <div className={resolveLayers(selector, list).length === 0 ? 'warn' : 'derived'}>
+          {describeSelector(selector, list)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function RodInspector({ feature }: { feature: Feature }) {
   const setParam = useKerros((s) => s.setParam);
@@ -793,10 +959,11 @@ function WindowInspector({ feature }: { feature: Feature }) {
 
 interface FixtureProps {
   feature: Feature;
+  slices: SliceSet | null;
   misses: number | undefined;
 }
 
-function FixtureInspector({ feature, misses }: FixtureProps) {
+function FixtureInspector({ feature, slices, misses }: FixtureProps) {
   const setParam = useKerros((s) => s.setParam);
   const renameFeature = useKerros((s) => s.renameFeature);
   const centreOnModel = useKerros((s) => s.centreOnModel);
@@ -811,6 +978,7 @@ function FixtureInspector({ feature, misses }: FixtureProps) {
   const shape = text(feature.params, 'shape', 'round');
   const pitch = thickness + spacer;
   const band = num(feature.params, 'length', pitch);
+  const selectorKind = selectorFromParams(feature.params, { kind: 'band' }).kind;
   const layers = Math.max(Math.floor(band / Math.max(pitch, 0.01)) + 1, 1);
 
   const spec = {
@@ -1062,14 +1230,16 @@ function FixtureInspector({ feature, misses }: FixtureProps) {
           step={1}
           onChange={(v) => setParam(feature.id, 'pz', v)}
         />
-        <NumberField
-          label="Band"
-          value={band}
-          unit="mm"
-          step={1}
-          min={0}
-          onChange={(v) => setParam(feature.id, 'length', v)}
-        />
+        {selectorKind === 'band' ? (
+          <NumberField
+            label="Band"
+            value={band}
+            unit="mm"
+            step={1}
+            min={0}
+            onChange={(v) => setParam(feature.id, 'length', v)}
+          />
+        ) : null}
         <NumberField
           label="Rotation"
           value={num(feature.params, 'rot', 0)}
@@ -1087,11 +1257,15 @@ function FixtureInspector({ feature, misses }: FixtureProps) {
           Centre on model
         </button>
         <div className="derived">
-          Reaches {layers} {layers === 1 ? 'layer' : 'layers'} at the current{' '}
-          {pitch.toFixed(1)} mm pitch. Holes are cut {kerf} mm under size so they
-          open out to the numbers above.
+          {selectorKind === 'band'
+            ? `Reaches ${layers} ${layers === 1 ? 'layer' : 'layers'} at the current ${pitch.toFixed(1)} mm pitch. `
+            : 'The position follows the layers chosen below, so the ghost stands where the holes are cut. '}
+          Holes are cut {kerf} mm under size so they open out to the numbers
+          above.
         </div>
       </div>
+
+      <LayerSelectorFields feature={feature} slices={slices} bandIsPosition />
     </>
   );
 }
@@ -1189,10 +1363,11 @@ function ShellInspector({ feature }: { feature: Feature }) {
 interface PatternProps {
   feature: Feature;
   placed: number | undefined;
+  slices: SliceSet | null;
   sliced: boolean;
 }
 
-function PatternInspector({ feature, placed, sliced }: PatternProps) {
+function PatternInspector({ feature, placed, slices, sliced }: PatternProps) {
   const setParam = useKerros((s) => s.setParam);
   const renameFeature = useKerros((s) => s.renameFeature);
   const kerf = useKerros((s) => s.material.kerf);
@@ -1346,6 +1521,8 @@ function PatternInspector({ feature, placed, sliced }: PatternProps) {
           holes that break out of it.
         </div>
       </div>
+
+      <LayerSelectorFields feature={feature} slices={slices} />
     </>
   );
 }
@@ -1500,6 +1677,8 @@ function ShapeInspector({ feature }: { feature: Feature }) {
 }
 
 interface InspectorProps {
+  /** The sliced stack, so a layer selector can say what it picked. */
+  slices: SliceSet | null;
   /** Holes each pattern feature placed, from the last slicing run. */
   patternCounts: Record<string, number>;
   /** Fixture holes that did not fit, by feature id. */
@@ -1508,7 +1687,7 @@ interface InspectorProps {
   sliced: boolean;
 }
 
-export function Inspector({ patternCounts, fixtureMisses, sliced }: InspectorProps) {
+export function Inspector({ slices, patternCounts, fixtureMisses, sliced }: InspectorProps) {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
 
@@ -1522,12 +1701,26 @@ export function Inspector({ patternCounts, fixtureMisses, sliced }: InspectorPro
     );
   }
 
-  if (feature.stage === 'RIG') return <RodInspector feature={feature} />;
+  /*
+   * Fixtures before rods, and by kind rather than by stage.
+   *
+   * A fixture's stage is RIG, so `stage === 'RIG'` caught it three lines before
+   * the fixture branch and `FixtureInspector` was unreachable — from the day it
+   * was written. Every socket, cable channel and Wago chamber has been edited
+   * through the rod panel, which is why a fixture's band arrived here labelled
+   * "Length" with a rod's tooltip under it.
+   *
+   * The rod test is on the kind now. Matching a whole stage was always going to
+   * catch whatever else moved into that stage next, and something did.
+   */
+  if (feature.kind.startsWith('fixture:')) {
+    return <FixtureInspector feature={feature} slices={slices} misses={fixtureMisses[feature.id]} />;
+  }
+  if (feature.kind === 'rod' || feature.stage === 'RIG') {
+    return <RodInspector feature={feature} />;
+  }
   if (feature.kind === 'import') return <ImportInspector feature={feature} />;
   if (feature.kind === 'sculpt') return <SculptInspector feature={feature} />;
-  if (feature.kind.startsWith('fixture:')) {
-    return <FixtureInspector feature={feature} misses={fixtureMisses[feature.id]} />;
-  }
   if (feature.kind === 'window') return <WindowInspector feature={feature} />;
   if (feature.stage === 'CARVE') return <ShellInspector feature={feature} />;
   if (feature.stage === 'PATTERN') {
@@ -1535,6 +1728,7 @@ export function Inspector({ patternCounts, fixtureMisses, sliced }: InspectorPro
       <PatternInspector
         feature={feature}
         placed={patternCounts[feature.id]}
+        slices={slices}
         sliced={sliced}
       />
     );

@@ -43,6 +43,15 @@ export interface CircleHole {
   y: number;
   r: number;
   label: string;
+  /**
+   * The feature that put it there.
+   *
+   * Stamped when the hole is made, not worked out afterwards. A hole cut per
+   * slice was made by exactly one feature, so remembering which is both cheaper
+   * and more honest than reconstructing it from geometry the way the model view
+   * has to.
+   */
+  owner?: string;
 }
 
 /** Finished hole diameter for a rod, table value unless overridden. */
@@ -88,6 +97,7 @@ export function rodHolesAt(rods: RodSpec[], z: number, kerf: number): CircleHole
       y: rod.y,
       r: rodCutRadius(rodDiameter(rod), kerf),
       label: `${rod.size} ${rod.label}`,
+      owner: rod.id,
     });
   }
   return holes;

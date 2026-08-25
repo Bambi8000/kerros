@@ -359,6 +359,125 @@ console.log('pipeline: fixtures follow the shape they are attached to');
   check('and is accounted for', typeof output.fixtureMisses.fx === 'number');
 }
 
+console.log('pipeline: one way to say which layers');
+{
+  /*
+   * A solid body, not the shelled one used elsewhere.
+   *
+   * A socket hole in the middle of a shelled sphere lands in the cavity, does
+   * not fit the ring it is asked to sit in, and is counted as a miss rather
+   * than cut — which is correct behaviour and exactly the "a socket mount needs
+   * a solid layer" note in the handoff. The first version of this block used
+   * the shell and measured zero holes everywhere, which said nothing about
+   * selectors at all.
+   */
+  const plain = runSliceJob(baseJob([body]), new Map());
+  const zs = plain.set.slices.map((slice) => slice.z);
+  const numbers = plain.set.slices.map((slice) => slice.index);
+  check('the test body slices into enough layers to choose between', numbers.length >= 8, `${numbers.length}`);
+
+  const socket = (extra) =>
+    feature('fx', 'fixture:socket', 'RIG', {
+      fixture: 'socket',
+      px: 0,
+      py: 0,
+      // Aimed at a real mid-plane rather than a guessed height: a band between
+      // two sheets reaches neither, which is right and makes a poor test.
+      pz: zs[2],
+      length: 1,
+      rot: 0,
+      preset: 'nipple',
+      diameter: 10.5,
+      screws: 0,
+      boltCircle: 30,
+      screwDiameter: 3.2,
+      ...extra,
+    });
+
+  const drilledLayers = (out) =>
+    out.set.slices.filter((slice) => slice.circles.length > 0).map((s) => s.index);
+
+  // No selector at all: the band the fixture has always had, on the sheet it
+  // has always landed on. This is the check that lets the mechanism change.
+  const band = runSliceJob(baseJob([body, socket({})]), new Map());
+  check(
+    'a fixture with no selector still uses its band',
+    JSON.stringify(drilledLayers(band)) === JSON.stringify([numbers[2]]),
+    JSON.stringify(drilledLayers(band)),
+  );
+
+  const spelled = runSliceJob(baseJob([body, socket({ selKind: 'band' })]), new Map());
+  check(
+    'saying "band" out loud changes nothing',
+    JSON.stringify(drilledLayers(spelled)) === JSON.stringify(drilledLayers(band)),
+  );
+
+  // A run of layers, chosen by number rather than aimed at a height.
+  const from = numbers[1];
+  const to = numbers[3];
+  const ranged = runSliceJob(
+    baseJob([body, socket({ selKind: 'range', selFrom: from, selTo: to })]),
+    new Map(),
+  );
+  check(
+    'a range puts the holes on exactly those sheets',
+    JSON.stringify(drilledLayers(ranged)) === JSON.stringify(numbers.slice(1, 4)),
+    JSON.stringify(drilledLayers(ranged)),
+  );
+  check(
+    'which is more sheets than the band had',
+    drilledLayers(ranged).length > drilledLayers(band).length,
+  );
+
+  const everyThird = runSliceJob(
+    baseJob([body, socket({ selKind: 'every', selN: 3, selOffset: 0 })]),
+    new Map(),
+  );
+  const nth = drilledLayers(everyThird);
+  check('every third sheet gets one', nth.length >= 3, nth.join(','));
+  check(
+    'and they are three apart in the stack',
+    nth.every((n, i) => i === 0 || numbers.indexOf(n) - numbers.indexOf(nth[i - 1]) === 3),
+    nth.join(','),
+  );
+  check('starting at the bottom', nth[0] === numbers[0]);
+
+  // Perforation had no way of saying anything and went everywhere. `all` is
+  // that behaviour written down, and a range is the new thing.
+  const pattern = (extra) =>
+    feature('pt', 'pattern', 'PATTERN', {
+      patternKind: 'grid',
+      radius: 1.2,
+      pitch: 6,
+      minBridge: 1.2,
+      density: 1,
+      band: 0,
+      rotatePerLayer: 0,
+      ...extra,
+    });
+
+  const everywhere = runSliceJob(baseJob([body, shell, pattern({})]), new Map());
+  const perforated = (out) =>
+    out.set.slices.filter((slice) => slice.circles.length > 0).map((s) => s.index);
+  check('perforation with no selector still goes on every layer it can', perforated(everywhere).length > 4);
+
+  const someLayers = runSliceJob(
+    baseJob([body, shell, pattern({ selKind: 'range', selFrom: 3, selTo: 5 })]),
+    new Map(),
+  );
+  check(
+    'and a range holds it to those',
+    perforated(someLayers).every((n) => n >= 3 && n <= 5),
+    perforated(someLayers).join(','),
+  );
+  check('while still placing some', perforated(someLayers).length > 0);
+  check(
+    'the counts follow the selection',
+    everywhere.patternCounts.pt > someLayers.patternCounts.pt,
+    `${everywhere.patternCounts.pt} vs ${someLayers.patternCounts.pt}`,
+  );
+}
+
 console.log('pipeline: the stack reaches the field, not just the slicer');
 {
   const uniform = runSliceJob(baseJob([body, shell]), new Map());

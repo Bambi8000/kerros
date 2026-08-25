@@ -116,7 +116,6 @@ export interface FixtureHoles {
 }
 
 const DEG = Math.PI / 180;
-const EMPTY: FixtureHoles = { circles: [], polygons: [] };
 
 /** Finished diameter of a socket's main hole. */
 export function socketDiameter(spec: FixtureSpec): number {
@@ -129,11 +128,20 @@ export function cutRadius(diameter: number, kerf: number): number {
   return Math.max(diameter / 2 - Math.max(kerf, 0) / 2, 0.05);
 }
 
-/** Does this fixture reach the plane a slice was taken on? */
-export function fixtureSpansZ(spec: FixtureSpec, z: number): boolean {
-  const half = Math.max(spec.length, 0) / 2;
-  return z >= spec.z - half && z <= spec.z + half;
-}
+/*
+ * `fixtureSpansZ` used to live here and decide which layers a fixture reached.
+ *
+ * It was one of four spellings of "which layers" — a window's band, this one, a
+ * rod's span, and perforation, which had no way of saying anything. They are one
+ * mechanism now, `LayerSelector` in `layers.ts`, resolved once in the pipeline
+ * and handed down as a finished set. A band is still the default and still means
+ * exactly what it meant: `{ kind: 'band', z: the fixture's own z, length }`.
+ *
+ * The band could not stay here even if it wanted to. A fixture's z is resolved
+ * through its attachment frame, so the layers it reaches depend on where its
+ * parent has moved to — which is knowledge the pipeline has and this module,
+ * with no imports, cannot.
+ */
 
 /**
  * A rounded rectangle as a closed ring, wound clockwise.
@@ -193,9 +201,7 @@ export function roundedRect(
  * end up, because the beam widens it. Circles shrink by half a kerf on the
  * radius; pockets shrink by a whole kerf on each overall dimension.
  */
-export function fixtureHolesAt(spec: FixtureSpec, z: number): FixtureHoles {
-  if (!fixtureSpansZ(spec, z)) return EMPTY;
-
+export function fixtureHolesAt(spec: FixtureSpec): FixtureHoles {
   const kerf = Math.max(spec.kerf, 0);
 
   if (spec.kind === 'socket') {

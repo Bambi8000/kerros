@@ -41,6 +41,8 @@ import { surfaceNets } from './surfaceNets.ts';
 import { sampleMeshGrid } from './voxelise.ts';
 import type { MeshGrid } from './voxelise.ts';
 import { generatePattern } from './pattern.ts';
+import { resolveLayerSet, selectorFromParams } from './layers.ts';
+import type { LayerSelector } from './layers.ts';
 import { nestByMaterial } from './nest.ts';
 import type {
   BBox,
@@ -277,6 +279,22 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
   const fixtureMisses: Record<string, number> = {};
   for (const spec of fixtures) fixtureMisses[spec.id] = 0;
 
+  /*
+   * Which layers each fixture reaches, decided once rather than per slice.
+   *
+   * A band's z is the fixture's **resolved** z — after its attachment frame —
+   * which is why this is built here and not in `fixture.ts`: that module has no
+   * imports and no idea where a parent has moved to. Defaulting to a band of
+   * the fixture's own length is exactly what `fixtureSpansZ` did, so a project
+   * that has never heard of selectors lands on the same sheets.
+   */
+  const fixtureLayers = new Map<string, Set<number>>();
+  for (const spec of fixtures) {
+    const feature = features.find((f) => f.id === spec.id);
+    const selector = selectorForFixture(feature?.params, spec.z, spec.length);
+    fixtureLayers.set(spec.id, resolveLayerSet(selector, sliced.slices));
+  }
+
   const fitted =
     fixtures.length === 0
       ? drilled
@@ -285,20 +303,26 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
           const contours = slice.contours.slice();
 
           for (const spec of fixtures) {
-            const holes = fixtureHolesAt(spec, slice.z);
+            if (!fixtureLayers.get(spec.id)?.has(slice.index)) continue;
+            const holes = fixtureHolesAt(spec);
             if (holes.circles.length === 0 && holes.polygons.length === 0) continue;
 
             const groups = groupContours(contours);
 
             for (const circle of holes.circles) {
-              if (groups.some((g) => circleFitsInPart(g, circle))) circles.push(circle);
-              else fixtureMisses[spec.id] += 1;
+              // Stamped with the feature that made it, so the slice view can
+              // point back at it. A hole cut per slice has exactly one author.
+              if (groups.some((g) => circleFitsInPart(g, circle))) {
+                circles.push({ ...circle, owner: spec.id });
+              } else {
+                fixtureMisses[spec.id] += 1;
+              }
             }
 
             for (const polygon of holes.polygons) {
               if (groups.some((g) => polygonFitsInPart(g, polygon))) {
                 const area = signedArea(polygon);
-                contours.push({ points: polygon, area, isHole: area < 0 });
+                contours.push({ points: polygon, area, isHole: area < 0, owner: spec.id });
               } else {
                 fixtureMisses[spec.id] += 1;
               }
@@ -314,12 +338,23 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
   const patternCounts: Record<string, number> = {};
   for (const feature of patterns) patternCounts[feature.id] = 0;
 
+  // Perforation had no way of saying which layers at all, so it went on every
+  // one. `all` is still the default, which is that behaviour written down.
+  const patternLayers = new Map<string, Set<number>>();
+  for (const feature of patterns) {
+    patternLayers.set(
+      feature.id,
+      resolveLayerSet(selectorFromParams(feature.params), sliced.slices),
+    );
+  }
+
   const perforated =
     patterns.length === 0
       ? fitted
       : fitted.map((slice) => {
           const circles = slice.circles.slice();
           for (const feature of patterns) {
+            if (!patternLayers.get(feature.id)?.has(slice.index)) continue;
             const holes = generatePattern(
               {
                 z: slice.z,
@@ -337,7 +372,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
               patternOptionsOf(feature, kerf, job.seed),
             );
             patternCounts[feature.id] += holes.length;
-            circles.push(...holes);
+            for (const hole of holes) circles.push({ ...hole, owner: feature.id });
           }
           return { ...slice, circles };
         });
@@ -616,6 +651,23 @@ export function windowsFromFeatures(
 }
 
 /** Fixture specs of a tree, as the fixture module wants them. */
+/**
+ * A fixture's layer selector.
+ *
+ * `band` is the default and its z is not stored — it **is** the fixture's own
+ * resolved z, because for a fixture the band and the position are the same
+ * thing. The other kinds ignore z entirely, which is what lets a socket be put
+ * on "the bottom two sheets" instead of aimed at a height and hoped for.
+ */
+export function selectorForFixture(
+  params: Record<string, number | string | boolean> | undefined,
+  z: number,
+  length: number,
+): LayerSelector {
+  const selector = selectorFromParams(params, { kind: 'band', z, length });
+  return selector.kind === 'band' ? { ...selector, z, length } : selector;
+}
+
 export function fixturesFromFeatures(features: Feature[], kerf: number): FixtureSpec[] {
   const out: FixtureSpec[] = [];
   for (const f of features) {

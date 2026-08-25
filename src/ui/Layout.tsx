@@ -270,6 +270,7 @@ export function Layout() {
                 <PartInspector sheets={sheets} />
               ) : (
                 <Inspector
+                  slices={slices}
                   patternCounts={patternCounts}
                   fixtureMisses={fixtureMisses}
                   sliced={slices !== null}
