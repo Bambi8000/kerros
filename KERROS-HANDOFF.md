@@ -2,29 +2,34 @@
 
 Read this first when picking up Kerros development. It is the **map**: what the
 program is, how it is built, which of the original plan's decisions were
-overturned and why, and what is left. `docs/KERROS-FEATURES.md` is the
-**territory** — the module-by-module catalogue, kept current in the same batch as
-the code it describes. When the two disagree, FEATURES is right and this file is
-stale.
+overturned and why, what is left, and how these sessions run.
+`docs/KERROS-FEATURES.md` is the **territory** — the module-by-module catalogue,
+kept current in the same batch as the code it describes. When the two disagree,
+FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.12.1.** The MVP as originally scoped is
-complete, plus two feature families that were not in the plan at all. Kerros has
+**State at the time of writing: version 0.16.0.** The MVP as originally scoped is
+complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
 ## What Kerros is
 
 A desktop application for designing **sliced lamps**. Build a blob-like form,
-hollow it, carve it, slice it along Z into sheets of real material, and export
-laser-ready DXF. The physical result is a stack of cut slices on threaded rods
-with spacers between them so light escapes through the gaps.
+hollow it, carve it, slice it along Z into sheets of real material, nest the parts
+on the laser bed, and export laser-ready DXF. The physical result is a stack of
+cut slices on threaded rods with spacers between them so light escapes through the
+gaps.
 
 Daniel (Helsinki, AV/video systems and hardware maker) is the developer. Working
 language of dev sessions is **Finnish**; all code identifiers, GUI text and
 documentation are **English**. All randomness is seeded.
 
-The UI paradigm is a **CAD-style feature tree**, not a node graph: an ordered
-list of operations, each editable, the whole model re-evaluated deterministically
-from the tree.
+The UI paradigm is a **CAD-style feature tree**, not a node graph: an ordered list
+of operations, each editable, the whole model re-evaluated deterministically from
+the tree.
+
+- Repo: `github.com/Bambi8000/kerros`, local at `/Users/daniel/kerros`
+- React + TypeScript + three.js + zustand, Vite, Tauri 2 native shell
+- Z up, 1 unit = 1 mm, dev server pinned to port 5180, Node 25.8.2
 
 ## The one architectural idea
 
@@ -40,10 +45,8 @@ every performance problem:
   instead of 0 and outer boundaries grow while holes shrink, because the field's
   sign already knows which side the material is on. This is why Kerros needs no
   polygon offsetting library, which the original plan required.
-- **Nothing has a resolution.** Sculpt strokes, imports aside, give the same
-  surface whether the preview samples at 32 or the slicer at 300. The plan
-  expected to have to record grid resolutions in features to keep replays stable;
-  there is nothing to record.
+- **Nothing has a resolution**, imports aside. Sculpt strokes give the same
+  surface whether the preview samples at 32 or the slicer at 300.
 - **Slicing is sampling a plane.** No mesh intersection.
 - **The cost is per-sample work.** Every feature that cannot be rejected cheaply
   is walked at every sample, which is why sculpt strokes and mesh imports both
@@ -52,9 +55,9 @@ every performance problem:
 
 ## Where the plan was wrong
 
-These are the decisions the original handoff got backwards. Each cost real
-debugging, and each is documented at length in FEATURES. Do not quietly revert
-them.
+Decisions the original handoff got backwards, or that later work overturned. Each
+cost real debugging, and each is documented at length in FEATURES. **Do not
+quietly revert them.**
 
 | Plan | What shipped | Why |
 | --- | --- | --- |
@@ -66,30 +69,39 @@ them.
 | bake sculpt strokes to the grid, record the resolution | evaluate strokes analytically | removes the drift instead of managing it |
 | shell as `abs(d) - t/2` | `max(d, -(d + t))` | the abs form quietly shrinks the silhouette by half a wall |
 | pattern region by offsetting contours | in-plane distance to the slice's own rings | the 3D field under-reports depth near a curved top and empties the middle of a solid slice |
+| no-fit polygons for true-shape nesting | raster occupancy | NFP's failure modes are subtly wrong polygons that look plausible until cut; a raster is coarse in a way that is measurable and always conservative |
+| no scale parameter, ever | **uniform** scale on imports | uniform scaling preserves the distance property; a mesh arrives at whatever size the exporter left it |
+| `npx tsc --noEmit` as the type check | `npm run verify` | the root tsconfig is a solution file with `"files": []`, so `--noEmit` against it checks **nothing** and exits happily |
 
 ## The recurring failure mode
 
-**Silence read as a bug, four times.** Spacers with no rods. A perforation with
-no room. A gizmo writing parameters nothing read. An import with no gizmo at all.
-Every time the program did the correct thing and said nothing, and every time it
-was reported as broken.
+**Silence read as a bug, five times.** Spacers with no rods. A perforation with no
+room. A gizmo writing parameters nothing read. An import with no gizmo at all. A
+type check that checked nothing.
 
-The rule that came out of it, and which is now honoured throughout: **a check
-that refuses to do something is obliged to say what it refused and why.** Counts
-of what was placed, what did not fit, and what it would have needed.
+The rule that came out of it, and which is now honoured throughout: **a check that
+refuses to do something is obliged to say what it refused and why.** Counts of what
+was placed, what did not fit, and what it would have needed.
 
-## The other recurring one
+## The other recurring one, now closed
 
-**Things that do not follow the form when the form moves**, three times: windows,
-sculpt strokes, imports. A shell follows for free because it acts on the
-accumulated field. Anything that is its own volume needs either a position of its
-own or a frame to live in.
+**Things that do not follow the form when the form moves**, four times: windows,
+sculpt strokes, imports, fixtures. A shell follows for free because it acts on the
+accumulated field. Anything that is its own volume needs a frame to live in.
 
 The general answer is **attachment**: geometry stored in a parent's coordinates,
-with the query point transformed into that frame at evaluation. Sculpt strokes
-and windows use it. Fixtures still do not — they are the last thing that stays
-behind, and if you find yourself dragging a socket hole after a moved shape, that
-is the fix, not a new feature.
+with the query point transformed into that frame at evaluation. All four now use
+it, and shapes use it too, which is what grouping is.
+
+Two flavours, and the difference is load-bearing:
+
+- **Shapes and sculpt strokes inherit the whole transform.** They are volumes;
+  tipping over is a move they can make.
+- **Windows and fixtures inherit translation and Z rotation only.** They live in
+  horizontal sheets. A socket hole inheriting an X rotation would tip out of the
+  sheet it is drilled in, and there is nowhere for it to go. A validator asserts
+  that X and Y rotation are *not* inherited — the unusual case of a test that
+  exists to pin down what deliberately does not happen.
 
 ## Module map
 
@@ -99,84 +111,92 @@ the real thing, never stubs. That constraint is load-bearing: keep it.
 ```
 src/core/
   sdf.ts          the field: primitives, ops, modifiers, sculpt strokes,
-                  import steps, frames, grid evaluation          [no imports]
+                  import steps, frames, rigid algebra, grid eval   [no imports]
   slice.ts        marching squares, simplify, smooth, grouping,
-                  kerf iso-level, thin-feature and fit checks    [no imports]
-  surfaceNets.ts  isosurface extraction for the preview mesh     [no imports]
-  window.ts       angular sector wedges, per-layer rolls         [no imports]
-  fixture.ts      E27 mount, cable channel, Wago chamber         [no imports]
-  pattern.ts      perforation generators, EdgeIndex              [no imports]
-  rig.ts          rod clearances, spans, spacer ring planning    [no imports]
-  nest.ts         shelf packing, placement, collision, rotation  [no imports]
-  font.ts         stroke font for engraved labels                [no imports]
-  dxf.ts          DXF R12 writer, kerf test figure               [no imports]
-  project.ts      .kerros.json read and write                    [no imports]
-  meshImport.ts   STL binary/ASCII and OBJ parsing               [no imports]
-  voxelise.ts     triangle soup to signed grid                   [no imports]
-  types.ts        Feature, stages, layer pitch
+                  kerf iso-level, thin-feature and fit checks      [no imports]
+  surfaceNets.ts  isosurface extraction for the preview mesh       [no imports]
+  window.ts       angular sector wedges, per-layer rolls, frames   [no imports]
+  fixture.ts      E27 mount, cable channel, Wago chamber, frames   [no imports]
+  pattern.ts      perforation generators, EdgeIndex                [no imports]
+  rig.ts          rod clearances, spans, spacer ring planning      [no imports]
+  nest.ts         shelf packing, raster true-shape packing,
+                  placement, collision, rotation, labels           [no imports]
+  font.ts         stroke font for engraved labels                  [no imports]
+  dxf.ts          DXF R12 writer, kerf test figure                 [no imports]
+  project.ts      .kerros.json read and write                      [no imports]
+  meshImport.ts   STL binary/ASCII and OBJ parsing                 [no imports]
+  voxelise.ts     triangle soup to signed grid                     [no imports]
+  types.ts        Feature, SculptStroke, stages, layer pitch
   profiles.ts     machine and material defaults
   mesh.ts         surface nets output to three.js geometry
-  job.ts          composition: parts, sheets, manifest           (imports freely)
-  store.ts        zustand state and all feature actions          (imports freely)
+  pipeline.ts     the whole slice and preview path, pure           (.ts imports)
+  job.ts          composition: parts, sheets, manifest             (imports freely)
+  store.ts        zustand state and all feature actions            (imports freely)
+
+src/ui/
+  kerros.worker.ts  thin shell around the pipeline
+  workerBridge.ts   owns the one worker, the import cache, the fallback
+  useSlices.ts      slicing, 250 ms debounce
+  usePreview.ts     preview surface, 90 ms debounce
+  useSheets.ts      nesting — still on the main thread
 ```
 
-`job.ts` and `store.ts` are the wiring layers and the only ones that import
-across the others. `job.ts` is deliberately thin; every algorithm it calls is
-validated on its own.
+`pipeline.ts` names its imports with **explicit `.ts` extensions**. That is what
+lets Node load it, and therefore validate the whole slicing path in one call
+rather than one algorithm at a time. It deliberately does not import `store.ts`,
+which imports zustand, which Node cannot resolve — the helpers it needs were moved
+out of the store for exactly this reason and are re-exported from there.
 
 ## Conventions, binding
 
 - **Z up, 1 unit = 1 mm.** three.js defaults to Y-up, so every camera sets `up`
-  explicitly. Rotations use R = Rz·Ry·Rx, which is three.js Euler order `ZYX` —
-  pinned by a validator, because the gizmo and the field must agree or a rotated
-  part jumps the moment its value round-trips.
-- **Layer pitch is derived in one place**, `layerPitch()` in `types.ts`. Nothing
-  else computes it.
+  explicitly. Rotations use R = Rz·Ry·Rx, three.js Euler order `ZYX` — pinned by a
+  validator, because the gizmo and the field must agree or a rotated part jumps the
+  moment its value round-trips. `eulerFromMatrix` is its exact inverse, also
+  pinned, because grouping depends on the round trip.
+- **`npm run verify`, never `npx tsc --noEmit`.** See the table above. `verify` is
+  the thirteen validators plus a real type check.
+- **Layer pitch is derived in one place**, `layerPitch()` in `types.ts`.
 - **Bed size and kerf come from profiles**, never hardcoded in geometry code.
-- **All randomness seeded**, and seeded so that adjusting a setting does not
-  reroll a choice. Per-layer window rolls key on the layer number; scatter keys
-  on part index; changing a count must not change which layers were chosen.
-- **`npm run verify`, never `npx tsc --noEmit`.** The root `tsconfig.json` in a
-  Vite react-ts project is a solution file with `"files": []`, so
-  `tsc --noEmit` against it checks **nothing** and exits happily. It gave green
-  light for the whole project until `npm run build` — which runs `tsc -b`, and
-  therefore follows the project references — found two type errors on its first
-  run. `verify` is the thirteen validators plus a real type check.
+- **All randomness seeded**, and seeded so that adjusting a setting does not reroll
+  a choice. Per-layer window rolls key on the layer number; scatter keys on part
+  index; changing a count must not change which layers were chosen.
 - **Every geometry module gets a validator** in `tools/validate-<name>.mjs`,
-  importing the real module. Twelve of them, run by `npm run check`.
+  importing the real module. Thirteen checks, run by `npm run check`.
 - **Version lives in one place.** `src/version.ts` and `package.json` must agree;
-  `tauri.conf.json` reads `"../package.json"` by reference so there is no third
-  copy. `check-version.mjs` asserts the reference is still there.
+  `tauri.conf.json` reads `"../package.json"` by reference. `check-version.mjs`
+  asserts the reference is still there.
+- **Import grids live outside the store**, in a module-level map, because a grid is
+  megabytes of Float32 and has no business in state that gets compared on every
+  render. `importRevision` is what tells the memos to recompute.
 - **Docs batch immediately after every push**, never deferred: this file plus
   `docs/KERROS-FEATURES.md`.
 - **Command blocks copy-paste ready**, zsh-safe, expected output stated, no `#`
   comments in interactive commands.
 - **Design before code**: plan the feature completely, then implement.
-- **No error boundary means one throw whites out the app.** There are four,
-  around the app, the viewport, the feature tree and the right-hand panel.
+- **No error boundary means one throw whites out the app.** There are four, around
+  the app, the viewport, the feature tree and the right-hand panel.
 
 ## Pipeline as built
 
 Feature tree stages evaluate in order. A shell or a window applies where it sits,
 so sculpting a spout and then shelling hollows the spout too.
 
-1. **SHAPE** — six SDF primitives (sphere, rounded box, capsule, torus,
-   ellipsoid, superellipsoid) with six combine ops; sculpt strokes; mesh
-   imports. No scale parameter on primitives, deliberately; imports carry a
-   **uniform** scale, which preserves the field.
-2. **CARVE** — shell with optional solid caps; windows, which subtract a wedge
-   and emit the removed piece as a part in another material.
+1. **SHAPE** — six SDF primitives with six combine ops; sculpt strokes; mesh
+   imports. No scale on primitives, deliberately; imports carry a uniform one.
+   Shapes can be grouped under other shapes.
+2. **CARVE** — shell with optional solid caps; windows, which subtract a wedge and
+   emit the removed piece as a part in another material.
 3. **RIG** — rods with Z-span and clearance holes, spacer rings, and the lamp
    fixtures.
-4. **SLICE** — mid-plane sampling, marching squares, Chaikin then RDP, kerf at
-   the iso-level, thin-feature check.
-5. **PATTERN** — perforation per slice, four generators, one bridge-width test
-   they all funnel through.
-6. **LAYOUT** — shelf nesting per material, stroke-font layer numbers engraved,
-   manual placement with pinning and rotation, true-shape collision reporting.
-7. **EXPORT** — DXF R12 per sheet, build manifest, kerf test figure, project
-   file. Native save dialogs through Tauri; the browser download path still
-   works.
+4. **SLICE** — mid-plane sampling, marching squares, Chaikin then RDP, kerf at the
+   iso-level, thin-feature check.
+5. **PATTERN** — perforation per slice, four generators, one bridge test.
+6. **LAYOUT** — nesting per material, either bounding-box shelves or raster
+   true-shape; stroke-font layer numbers engraved; manual placement with pinning
+   and rotation; true-shape collision reporting.
+7. **EXPORT** — DXF R12 per sheet, build manifest, kerf test figure, project file.
+   Native save dialogs through Tauri; the browser download path still works.
 
 Four workspace modes: **Model** (preview, direct manipulation, sculpting),
 **Slice** (one layer in 2D, fixed scale), **Stack** (exploded at real pitch),
@@ -184,33 +204,80 @@ Four workspace modes: **Model** (preview, direct manipulation, sculpting),
 
 ## Known limits
 
+- **Nesting still runs on the main thread.** True-shape costs about 0.5 s per
+  layout and freezes the UI for it. The worker infrastructure exists; moving it is
+  straightforward and is the obvious next piece of housekeeping.
 - **WKWebView is 1.5–2× slower than Chrome** at the numeric work, and the native
   shell uses it. `npm run dev` in a browser is still the faster way to develop.
-- **Slicing and import baking are synchronous** and freeze the UI for up to a
-  second or two. The Web Worker has been promised since M2 and is the only real
-  fix. This is the largest outstanding piece of work.
-- **An import's field is exact only to `reach × scale`** from the surface,
-  clamped beyond. A shell thicker than that puts its cavity on the clamp. The
-  inspector warns; raising the resolution or the scale fixes it.
-- **Project files record an import's path, not its geometry.** A grid is
-  megabytes and the project file is meant to stay readable, so imports must be
-  located again after opening.
-- **Nesting is bounding-box shelf packing** and does not rotate parts. True-shape
-  nesting would let a small part sit inside a large ring's waste; manual
-  placement covers that case by hand today.
-- **Fixtures do not follow a moved shape** — see attachment, above.
+- **True-shape nesting resolution is not monotonic.** Greedy bottom-left packing
+  can do better at 1.5 mm than at 1 mm. The panel offers the dial and says so.
+- **An import's field is exact only to `reach × scale`** from the surface, clamped
+  beyond. A shell thicker than that puts its cavity on the clamp. The inspector
+  warns; raising the resolution or the scale fixes it.
+- **Project files record an import's path, not its geometry.** A grid is megabytes
+  and the project file is meant to stay readable, so imports must be located again
+  after opening.
+- **No cross-slicing.** Everything is horizontal layers. See the plan below.
+- **The bundle is unsigned.** It runs on the machine that built it; another Mac
+  quarantines it. Proper notarising needs a paid Apple Developer account.
+
+## Local state that is not in the repo
+
+**One local fix has been overwritten twice by file bundles.** In
+`src/ui/Viewport.tsx`, the `dragging-changed` handler must narrow the event
+payload:
+
+```ts
+const onDraggingChanged = (event: { value: unknown }) => {
+  const dragging = event.value === true;
+  draggingRef.current = dragging;
+  controls.enabled = !dragging;
+};
+```
+
+three types a control event's payload as `unknown`. Only `tsc -b` catches it, so it
+comes back whenever `Viewport.tsx` is replaced wholesale. If a bundle includes that
+file, check this first.
+
+## Physically untested
+
+Everything here is validated in code and unproven in material. Test cuts were
+about to happen when this handoff was written; ask before assuming.
+
+- **True-shape nesting.** The validator proves no collisions, but that is code
+  proving code. Look at the DXF on screen before burning a sheet: a part inside a
+  ring's hole is correct and looks alarming.
+- **Per-layer random windows.** Whether they look good in a finished stack is
+  unknown. The maths is proven; the aesthetics are not.
+- **Plexi window fit.** `fit` defaults to 0.4 mm. Loose is fixable with glue,
+  tight is not fixable at all, so start loose. Plexi needs its own kerf test.
+- **Wago chamber and cable channel** dimensions are defaults, not measurements.
 
 ## Candidates, in the order I would take them
 
-1. **Web Worker for slicing and baking.** Fixes the only complaint that is about
-   the program rather than a feature it lacks.
-2. **`npm run tauri build`** and a first `.app`, with an icon that is not the
-   Tauri default.
-3. **Attachment for fixtures**, the last thing that stays behind.
-4. Roadmap, unranked: true-shape nesting, per-gap spacer heights, polygon-shaped
-   perforation, a lamp preview with an emissive source in the cavity,
-   cross-slicing / eggcrate mode, SVG export, a folder of user generator modules,
-   an assembly PDF, material usage and cost, registration notches for glue-stack
+1. **Nesting into the worker.** Removes the last main-thread freeze, and the
+   infrastructure is already there.
+2. **Assembly PDF.** A numbered stack is not self-explanatory once it is a pile of
+   parts on a bench.
+3. **Cross-slicing (fin / eggcrate mode)**, discussed and scoped:
+   - **Phase A: generalised slice planes.** `sliceModel` assumes `z = const`, but
+     marching squares, Chaikin, RDP, kerf and grouping all work in the plane's own
+     coordinates and do not care which plane it is. Generalise to an origin plus
+     two plane axes and everything downstream — DXF, nesting, engraved numbers,
+     the thin-feature check — continues unchanged, because it all works on 2D
+     polygons. Roughly a third of the work, and mechanical. Useful alone: you can
+     see what fins your form gives before committing to joints.
+   - **Phase B: cross joints.** Notches, half the overlap from each part, width the
+     other part's thickness, computed per fin-and-disc pair. Same kerf lesson as
+     windows but inverted — the notch is a hole, so it is cut narrow and opens to
+     size, while the tongue entering it is uncut material. Get that backwards and
+     all two dozen notch pairs are wrong the same way.
+   - **Phase C: assembly.** A fin stack holds nothing up before it is assembled,
+     so it needs an order and new refusals: a fin crossing no disc, a disc too
+     narrow for a notch, a notch that eats a fin thin enough to snap.
+4. Roadmap, unranked: per-gap spacer heights, polygon-shaped perforation, a lamp
+   preview with an emissive source in the cavity, SVG export, a folder of user
+   generator modules, material usage and cost, registration notches for glue-stack
    mode.
 
 ## Practical notes from cutting actual lamps
@@ -218,13 +285,41 @@ Four workspace modes: **Model** (preview, direct manipulation, sculpting),
 - **Cut the kerf test into the real material before anything else**, and measure
   the outer square and inner square separately. If they disagree the beam is not
   perpendicular and no single kerf value will save the fit.
-- **Plexi needs its own kerf**, and it is usually much smaller than cardboard's.
-  Window fit depends on both directly.
+- **Plexi needs its own kerf**, usually much smaller than cardboard's. Window fit
+  depends on both directly, and they pull in opposite directions.
 - **Corrugated board's flutes show in the cut edge.** Turning parts against the
-  grain is what makes a stack look alive rather than like twelve identical
-  lines — hence part rotation, seeded scatter, and the flute preview.
+  grain is what makes a stack look alive rather than like twelve identical lines —
+  hence part rotation, seeded scatter, and the flute preview. This is also why the
+  nester does not rotate parts to save material: it would silently overwrite an
+  aesthetic choice.
 - **Start with a wider bridge than seems necessary** in corrugated stock: 2 mm
-  rather than 1.5. The vertical flute between the liners does not carry like
-  solid material.
+  rather than 1.5. The vertical flute between the liners does not carry like solid
+  material.
 - **A socket mount needs a solid layer**, not a ring. Make one with the shell's
   solid cap and aim the fixture's band at it.
+- **Watch for layers that come apart into separate pieces.** A form with two lobes
+  gives layers in two groups, and each group needs a rod through it or the smaller
+  piece has nothing holding it. It is easy to miss because the Model view looks
+  continuous.
+
+## How these sessions run
+
+Worth knowing, because it is a working agreement rather than a preference.
+
+- **Finnish conversation, English code.** Explanations, reasoning and commands in
+  Finnish; every identifier, comment and string in English.
+- **Numbered command blocks, copy-paste ready, with the expected output stated.**
+  Daniel runs them and pastes the result. When something fails, the failure is the
+  useful information — read it rather than guessing around it.
+- **Work arrives as a zip of changed files only**, unpacked to `/tmp` and rsynced
+  over the repo. That is why local edits get overwritten: say so when you have made
+  one, and it will be carried into the next bundle.
+- **Every geometry change comes with validator checks in the same batch**, and the
+  checks are written to fail for the right reason. Several times a red check has
+  been the test being wrong rather than the code, and saying so plainly is part of
+  the job — a test that asserts something the algorithm has no reason to do is
+  worse than no test.
+- **Physical feedback outranks everything.** The best design decisions in this
+  project came from cuts that did not behave: flute direction, bridge width, the
+  socket needing a solid layer. When a cut disagrees with the program, the program
+  is wrong.
