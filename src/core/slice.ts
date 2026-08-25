@@ -52,6 +52,8 @@ export interface SliceSet {
   slices: Slice[];
   /** Layer pitch used, mm (material thickness + spacer height). */
   pitch: number;
+  /** Every plane examined, in order from the bottom. */
+  planes: LayerPlane[];
   thickness: number;
   /** Z where the stack starts, mm. */
   z0: number;
@@ -63,6 +65,29 @@ export interface SliceSet {
   kerf: number;
 }
 
+/**
+ * One sheet's plane.
+ *
+ * The stack used to be described by a single pitch, which is true only while
+ * every gap is the same. A list says the same thing when the gaps are equal and
+ * keeps saying it when they are not.
+ *
+ * `index` counts planes **examined** from the bottom of the model, from 0 —
+ * not slices produced. A model with a gap along Z skips a slice but not a
+ * plane, and per-layer window rolls are seeded from this number, so it has to
+ * mean the same thing it has always meant.
+ */
+export interface LayerPlane {
+  index: number;
+  /** Bottom of the sheet, mm. */
+  z0: number;
+  /** Mid-plane: where the field is sampled, splitting the error on a steep wall. */
+  z: number;
+  thickness: number;
+  /** Gap to the sheet above, mm. */
+  gapAbove: number;
+}
+
 export interface Bounds {
   min: [number, number, number];
   max: [number, number, number];
@@ -71,8 +96,12 @@ export interface Bounds {
 export interface SliceOptions {
   /** Material thickness, mm. */
   thickness: number;
-  /** Gap between sheets, mm. 0 is a tight stack. */
+  /** Gap between sheets at the bottom of the stack, mm. 0 is a tight stack. */
   spacerHeight: number;
+  /** Gap at the top, mm. Omitted or equal to `spacerHeight` means uniform. */
+  spacerHeightTop?: number;
+  /** Thickness of one spacer ring, mm. Defaults to the sheet thickness. */
+  spacerThickness?: number;
   /** Samples along the longest XY axis. */
   resolution: number;
   /** RDP tolerance, mm. Larger drops more points. */
@@ -556,18 +585,115 @@ export function polygonFitsInPart(
  * error evenly between over- and under-cut; top/bottom-plane union is on the
  * roadmap for stepped accuracy.
  */
-export function planeZs(bounds: Bounds, options: SliceOptions): number[] {
-  const pitch = options.thickness + options.spacerHeight;
-  if (!(pitch > 0)) return [];
+/** Whole rings that fit a requested gap. A ring is one sheet of its own material. */
+export function ringsForGap(gap: number, spacerThickness: number): number {
+  if (!(spacerThickness > 0)) return 0;
+  return Math.max(Math.round(Math.max(gap, 0) / spacerThickness), 0);
+}
+
+/**
+ * Where every sheet sits.
+ *
+ * Gaps are counted in **rings**, not millimetres, because a ring is one sheet
+ * of spacer material and half a ring does not exist. Planning on the requested
+ * gap rather than the achievable one designs a lamp that will not close on its
+ * rods once everything is cut.
+ *
+ * A gradient interpolates the ring count by **height**, not by gap number: the
+ * number of gaps depends on the gradient, so a gradient defined per gap would
+ * be defined in terms of its own result. Height also matches what a gradient
+ * physically means — the gap depends on where in the form you are.
+ */
+export function planLayers(
+  bounds: Bounds,
+  options: Pick<
+    SliceOptions,
+    'thickness' | 'spacerHeight' | 'spacerHeightTop' | 'spacerThickness' | 'maxLayers'
+  >,
+): LayerPlane[] {
+  const thickness = options.thickness;
+  if (!(thickness > 0)) return [];
+
+  const ringT =
+    options.spacerThickness !== undefined && options.spacerThickness > 0
+      ? options.spacerThickness
+      : thickness;
+
+  const ringsLow = ringsForGap(options.spacerHeight, ringT);
+  const ringsHigh =
+    options.spacerHeightTop === undefined
+      ? ringsLow
+      : ringsForGap(options.spacerHeightTop, ringT);
 
   const z0 = bounds.min[2];
   const height = bounds.max[2] - z0;
   const cap = options.maxLayers ?? DEFAULT_MAX_LAYERS;
-  const count = Math.min(Math.max(Math.ceil(height / pitch), 1), cap);
 
-  const out: number[] = [];
-  for (let k = 0; k < count; k++) out.push(z0 + k * pitch);
+  /*
+   * Uniform stays a closed form.
+   *
+   * Marching `z += pitch` accumulates rounding, and `z0 + k * pitch` does not.
+   * They agree to about 1e-12, which is not the same as agreeing, and a uniform
+   * stack is the case that must come out bit-identical to what it always has.
+   * So a gradient is not a generalisation of uniform here — uniform is its own
+   * branch, on purpose.
+   */
+  if (ringsLow === ringsHigh) {
+    const pitch = thickness + ringsLow * ringT;
+    if (!(pitch > 0)) return [];
+    const count = Math.min(Math.max(Math.ceil(height / pitch), 1), cap);
+    const out: LayerPlane[] = [];
+    for (let k = 0; k < count; k++) {
+      const bottom = z0 + k * pitch;
+      out.push({
+        index: k,
+        z0: bottom,
+        z: bottom + thickness / 2,
+        thickness,
+        gapAbove: ringsLow * ringT,
+      });
+    }
+    return out;
+  }
+
+  const out: LayerPlane[] = [];
+  let bottom = z0;
+  for (let k = 0; k < cap; k++) {
+    const u = height > 1e-9 ? Math.min(Math.max((bottom - z0) / height, 0), 1) : 0;
+    const rings = Math.max(Math.round(ringsLow + (ringsHigh - ringsLow) * u), 0);
+    const gap = rings * ringT;
+    out.push({ index: k, z0: bottom, z: bottom + thickness / 2, thickness, gapAbove: gap });
+    bottom += thickness + gap;
+    if (bottom >= z0 + height) break;
+  }
   return out;
+}
+
+/**
+ * Pitch at a height: the sheet there plus the gap above it.
+ *
+ * The one thing a caller outside the slicer still legitimately wants a single
+ * pitch for — sizing a fixture's band, for instance — and the honest answer
+ * once gaps vary is "which pitch, where".
+ */
+export function pitchAt(planes: LayerPlane[], z: number): number {
+  if (planes.length === 0) return 0;
+  let best = planes[0];
+  for (const plane of planes) {
+    if (Math.abs(plane.z - z) < Math.abs(best.z - z)) best = plane;
+  }
+  return best.thickness + best.gapAbove;
+}
+
+/**
+ * Plane bottoms only.
+ *
+ * Kept because it is what the layer-planning validator measures, and because
+ * the arithmetic it pins — one pitch apart, first at the bottom, the cap, the
+ * zero-pitch case — is still the arithmetic `planLayers` performs.
+ */
+export function planeZs(bounds: Bounds, options: SliceOptions): number[] {
+  return planLayers(bounds, options).map((plane) => plane.z0);
 }
 
 /**
@@ -582,8 +708,19 @@ export function sliceModel(
   bounds: Bounds,
   options: SliceOptions,
 ): SliceSet {
-  const pitch = options.thickness + options.spacerHeight;
-  const zBottoms = planeZs(bounds, options);
+  const planes = planLayers(bounds, options);
+
+  /*
+   * The pitch this set reports.
+   *
+   * Taken from the plan rather than from `thickness + spacerHeight`, so it is
+   * the pitch that will actually be built: gaps are whole rings, and 4 mm of
+   * 3 mm rings is 3 mm. On a graded stack one number cannot be the whole
+   * answer, so this is the pitch at the **bottom** — `planes` carries the rest,
+   * and a readout that wants the range takes it from there.
+   */
+  const pitch =
+    planes.length > 0 ? planes[0].thickness + planes[0].gapAbove : options.thickness;
 
   const sizeX = bounds.max[0] - bounds.min[0];
   const sizeY = bounds.max[1] - bounds.min[1];
@@ -619,8 +756,9 @@ export function sliceModel(
   const field = new Float64Array(nx * ny);
   const slices: Slice[] = [];
 
-  for (const zBottom of zBottoms) {
-    const z = zBottom + options.thickness / 2;
+  for (const plane of planes) {
+    const zBottom = plane.z0;
+    const z = plane.z;
 
     let index = 0;
     for (let j = 0; j < ny; j++) {
@@ -667,7 +805,8 @@ export function sliceModel(
     pitch,
     thickness: options.thickness,
     z0: bounds.min[2],
-    planesExamined: zBottoms.length,
+    planes,
+    planesExamined: planes.length,
     step,
     kerf,
   };

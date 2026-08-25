@@ -54,6 +54,7 @@ import {
   circleFitsInPart,
   groupContours,
   minFeatureGap,
+  planLayers,
   polygonFitsInPart,
   signedArea,
   sliceModel,
@@ -85,6 +86,10 @@ export interface SliceJob {
   thickness: number;
   kerf: number;
   spacerHeight: number;
+  /** Gap at the top of the stack, mm. Omitted means uniform. */
+  spacerHeightTop?: number;
+  /** Thickness of one spacer ring, mm. Omitted means the stock's. */
+  spacerThickness?: number;
   resolution: number;
   tolerance: number;
   smoothing: number;
@@ -144,6 +149,8 @@ export interface PreviewJob {
   seed: number;
   thickness: number;
   spacerHeight: number;
+  spacerHeightTop?: number;
+  spacerThickness?: number;
 }
 
 export interface PreviewOutput {
@@ -178,7 +185,11 @@ export function runPreviewJob(job: PreviewJob, volumes: Map<string, MeshVolume>)
     job.kerf,
     job.seed,
     job.thickness,
-    job.thickness + job.spacerHeight,
+    {
+      spacerHeight: job.spacerHeight,
+      spacerHeightTop: job.spacerHeightTop,
+      spacerThickness: job.spacerThickness,
+    },
     volumes,
   );
   if (!field.bounds) return EMPTY_PREVIEW;
@@ -211,21 +222,39 @@ export function runPreviewJob(job: PreviewJob, volumes: Map<string, MeshVolume>)
  *   7. the thin-feature check, on the finished result
  */
 export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): SliceOutput {
-  const { features, thickness, kerf, spacerHeight, resolution, tolerance, smoothing } = job;
+  const {
+    features,
+    thickness,
+    kerf,
+    spacerHeight,
+    spacerHeightTop,
+    spacerThickness,
+    resolution,
+    tolerance,
+    smoothing,
+  } = job;
 
   const field = composeField(
     features,
     kerf,
     job.seed,
     thickness,
-    thickness + spacerHeight,
+    { spacerHeight, spacerHeightTop, spacerThickness },
     volumes,
   );
   const bounds = field.bounds;
   if (!bounds) return EMPTY_OUTPUT;
 
   const started = Date.now();
-  const layerOptions = { thickness, spacerHeight, resolution, tolerance, smoothing };
+  const layerOptions = {
+    thickness,
+    spacerHeight,
+    spacerHeightTop,
+    spacerThickness,
+    resolution,
+    tolerance,
+    smoothing,
+  };
 
   const sliced = sliceModel(field.sample, bounds, { ...layerOptions, kerf });
 
@@ -234,7 +263,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
   // offset only by the fit clearance. Their own kerf, being another material.
   const windows = field.windows.map((spec) => ({
     label: spec.label,
-    set: sliceModel(windowField(field.solid, spec, field.plan, field.thickness), bounds, {
+    set: sliceModel(windowField(field.solid, spec, field.plan), bounds, {
       ...layerOptions,
       kerf: spec.kerf,
     }),
@@ -690,7 +719,14 @@ export function composeField(
   kerf: number,
   seed: number,
   thickness: number,
-  pitch: number,
+  /**
+   * The stack, not a pitch.
+   *
+   * `composeField` used to take one pitch, which is all a uniform stack needs.
+   * Per-layer windows key on the layer a height falls in, so once gaps vary the
+   * field has to know the whole plan rather than a single spacing.
+   */
+  stack: { spacerHeight: number; spacerHeightTop?: number; spacerThickness?: number },
   /**
    * Where to find baked import grids.
    *
@@ -709,15 +745,16 @@ export function composeField(
   const bounds = modelBounds(fieldFeatures);
 
   // Per-layer windows have to land on the same planes the slicer will take, so
-  // the layer plan is built from the same numbers: the bottom of the model and
-  // the pitch.
-  const plan: LayerPlan = { z0: bounds ? bounds.min[2] : 0, pitch: Math.max(pitch, 0.01) };
+  // the plan is built by the same function, from the same numbers. It is the
+  // list of planes rather than a pitch, which is what lets the gaps differ
+  // later without the windows losing track of which sheet they are on.
+  const plan: LayerPlan = bounds ? planLayers(bounds, { thickness, ...stack }) : [];
 
   const solid = (x: number, y: number, z: number) => evaluatePoint(prepared, x, y, z);
 
   return {
     solid,
-    sample: stockField(solid, windows, plan, thickness),
+    sample: stockField(solid, windows, plan),
     windows,
     plan,
     thickness,

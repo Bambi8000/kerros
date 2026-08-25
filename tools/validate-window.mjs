@@ -38,6 +38,23 @@ import {
   shellModifier,
 } from '../src/core/sdf.ts';
 
+/**
+ * The plan the slicer builds for a uniform stack.
+ *
+ * A layer plan is a list of planes rather than a pitch, so that gaps can vary.
+ * For equal gaps it says exactly what `{ z0, pitch }` used to say, and these
+ * tests are unchanged in what they assert because of that.
+ */
+function uniformPlan(z0, thickness, spacerHeight, count = 64) {
+  const pitch = thickness + spacerHeight;
+  const out = [];
+  for (let k = 0; k < count; k++) {
+    const bottom = z0 + k * pitch;
+    out.push({ index: k, z0: bottom, z: bottom + thickness / 2, thickness, gapAbove: spacerHeight });
+  }
+  return out;
+}
+
 let failures = 0;
 
 function check(name, condition, detail = '') {
@@ -391,7 +408,7 @@ console.log('window: attachment carries the placement');
   check('while the band stays where it was', Math.abs(turned.z - 45) < 1e-9);
 
   // Layer planes are horizontal, and a Z rotation must not disturb them.
-  const plan = { z0: 0, pitch: 9 };
+  const plan = uniformPlan(0, 3, 6);
   const perLayer = win({ mode: 'perLayer', chance: 1, minCount: 1, maxCount: 1, minWidth: 40, maxWidth: 40, z: 45, length: 90 });
   const spun = resolveWindow(perLayer, { x: 0, y: 0, z: 0, rz: 33 });
   // The rolls themselves — which layers, how many windows, how wide — must not
@@ -410,15 +427,15 @@ console.log('window: attachment carries the placement');
   );
   check(
     'and the layers a window reaches do not move',
-    JSON.stringify(windowedLayers(perLayer, plan, 3, 12)) ===
-      JSON.stringify(windowedLayers(spun, plan, 3, 12)),
+    JSON.stringify(windowedLayers(perLayer, plan, 12)) ===
+      JSON.stringify(windowedLayers(spun, plan, 12)),
   );
 
   const raised = resolveWindow(perLayer, { x: 0, y: 0, z: 18, rz: 0 });
   check(
     'but moving the frame up does move which layers are reached',
-    JSON.stringify(windowedLayers(perLayer, plan, 3, 20)) !==
-      JSON.stringify(windowedLayers(raised, plan, 3, 20)),
+    JSON.stringify(windowedLayers(perLayer, plan, 20)) !==
+      JSON.stringify(windowedLayers(raised, plan, 20)),
   );
 }
 
@@ -449,17 +466,17 @@ console.log('window: the axis has a position');
     Math.abs(sectorDistance(50, 10, 45, spec) - sectorDistance(250, 10, 45, moved)) < 1e-9,
   );
 
-  const plan = { z0: 0, pitch: 9 };
+  const plan = uniformPlan(0, 3, 6);
   const perLayerHere = win({ mode: 'perLayer', chance: 1, minCount: 1, maxCount: 1, minWidth: 40, maxWidth: 40, z: 45, length: 90 });
   const perLayerThere = win({ ...perLayerHere, x: -150, y: 60 });
-  const mid = layerMidZ(plan, 4, 3);
+  const mid = layerMidZ(plan, 4);
   const wedge = wedgesForLayer(perLayerHere, 4)[0];
   const dir = wedge.angle * DEG;
 
   check(
     'per-layer windows move with the axis too',
     Math.abs(
-      sectorDistance(55 * Math.cos(dir), 55 * Math.sin(dir), mid, perLayerHere, plan, 3) -
+      sectorDistance(55 * Math.cos(dir), 55 * Math.sin(dir), mid, perLayerHere, plan) -
         sectorDistance(
           -150 + 55 * Math.cos(dir),
           60 + 55 * Math.sin(dir),
@@ -477,9 +494,68 @@ console.log('window: the axis has a position');
   );
 }
 
+console.log('window: layer indexing is not free to change');
+{
+  const thickness = 3;
+  const pitch = 9;
+  const plan = uniformPlan(0, thickness, 6);
+
+  /**
+   * The arithmetic the list replaced.
+   *
+   * Per-layer window rolls are seeded from this number, so a lookup that
+   * disagreed anywhere would reroll the windows of every project already
+   * saved. This is the test that makes the change safe to make at all.
+   */
+  const arithmetic = (z) => Math.round((z - thickness / 2) / pitch);
+
+  let disagree = 0;
+  let firstBad = null;
+  for (let i = -600; i <= 5000; i++) {
+    const z = i * 0.05;
+    if (layerIndexAt(plan, z) !== arithmetic(z)) {
+      disagree++;
+      if (firstBad === null) firstBad = z;
+    }
+  }
+  check(
+    'the list agrees with the arithmetic over the whole sampling window',
+    disagree === 0,
+    disagree > 0 ? `${disagree} of 5601, first at z=${firstBad}` : '',
+  );
+
+  // Mid-planes sit at 1.5 + 9k, so 6.0 is exactly halfway between the first
+  // two. Math.round sends a half toward +infinity, and anything that did not
+  // would move every window that happens to sit on a boundary.
+  check('a height exactly between two mid-planes belongs to the upper', layerIndexAt(plan, 6) === 1);
+  check('and a hair below it to the lower', layerIndexAt(plan, 5.99) === 0);
+
+  /**
+   * The sampling grid pads well past the stack, so heights outside it are
+   * asked about in the ordinary course of slicing. Clamping them to the ends
+   * would change the field there — and the stock field is a max against the
+   * sector, so a changed value outside the band is not always harmless.
+   */
+  check('below the stack the index goes negative rather than clamping', layerIndexAt(plan, -20) === arithmetic(-20));
+  check('and it is actually negative', layerIndexAt(plan, -20) < 0);
+  check('above the top plane it keeps counting', layerIndexAt(plan, 700) === arithmetic(700));
+
+  // The inverse has to extrapolate the same way, or a window's slab lands
+  // somewhere its index does not.
+  let worst = 0;
+  for (let k = -5; k <= 80; k++) {
+    worst = Math.max(worst, Math.abs(layerMidZ(plan, k) - (k * pitch + thickness / 2)));
+  }
+  check('mid-planes extrapolate to match, past both ends', worst < 1e-9, `worst ${worst}`);
+  check(
+    'index and mid-plane are inverses, including outside the stack',
+    [-4, -1, 0, 7, 63, 70].every((k) => layerIndexAt(plan, layerMidZ(plan, k)) === k),
+  );
+}
+
 console.log('window: per-layer rolls');
 {
-  const plan = { z0: 0, pitch: 9 };
+  const plan = uniformPlan(0, 3, 6);
   const thickness = 3;
   const spec = win({
     mode: 'perLayer',
@@ -493,8 +569,8 @@ console.log('window: per-layer rolls');
     seed: 7,
   });
 
-  check('the layer index follows the pitch', layerIndexAt(plan, layerMidZ(plan, 5, thickness), thickness) === 5);
-  check('and the mid-plane is where the slicer puts it', Math.abs(layerMidZ(plan, 0, thickness) - 1.5) < 1e-9);
+  check('the layer index follows the pitch', layerIndexAt(plan, layerMidZ(plan, 5)) === 5);
+  check('and the mid-plane is where the slicer puts it', Math.abs(layerMidZ(plan, 0) - 1.5) < 1e-9);
 
   const rolls = [];
   for (let k = 0; k < 40; k++) rolls.push(wedgesForLayer(spec, k).length);
@@ -551,12 +627,12 @@ console.log('window: per-layer rolls');
 console.log('window: per-layer field');
 {
   const model = tube();
-  const plan = { z0: 0, pitch: 9 };
+  const plan = uniformPlan(0, 3, 6);
   const thickness = 3;
   const spec = win({ mode: 'perLayer', chance: 1, minCount: 1, maxCount: 1, minWidth: 40, maxWidth: 40, z: 45, length: 90 });
 
   const layer = 4;
-  const mid = layerMidZ(plan, layer, thickness);
+  const mid = layerMidZ(plan, layer);
   const wedges = wedgesForLayer(spec, layer);
   check('the test layer has a window', wedges.length === 1);
 
@@ -564,7 +640,7 @@ console.log('window: per-layer field');
   const inWindow = [55 * Math.cos(dir), 55 * Math.sin(dir)];
   check(
     'the field is open there on that layer',
-    sectorDistance(inWindow[0], inWindow[1], mid, spec, plan, thickness) < 0,
+    sectorDistance(inWindow[0], inWindow[1], mid, spec, plan) < 0,
   );
 
   // Each layer rolls independently, so the windows walk around the stack
@@ -580,13 +656,13 @@ console.log('window: per-layer field');
   const quiet = win({ ...spec, chance: 0 });
   check(
     'a layer with no windows is left whole',
-    sectorDistance(inWindow[0], inWindow[1], mid, quiet, plan, thickness) > 0,
+    sectorDistance(inWindow[0], inWindow[1], mid, quiet, plan) > 0,
   );
 
-  const outsideBand = sectorDistance(inWindow[0], inWindow[1], 200, spec, plan, thickness);
+  const outsideBand = sectorDistance(inWindow[0], inWindow[1], 200, spec, plan);
   check('nothing is cut outside the band', outsideBand > 0);
 
-  const stock = stockField(model.solid, [spec], plan, thickness);
+  const stock = stockField(model.solid, [spec], plan);
   check('the stock is open at the window', stock(inWindow[0], inWindow[1], mid) > 0);
   check('and solid a quarter turn away', stock(
     55 * Math.cos(dir + Math.PI / 2),
@@ -594,7 +670,7 @@ console.log('window: per-layer field');
     mid,
   ) < 0);
 
-  const plug = windowField(model.solid, spec, plan, thickness);
+  const plug = windowField(model.solid, spec, plan);
   check('the plug exists where the window is', plug(inWindow[0], inWindow[1], mid) < 0);
   check(
     'the plug face sits half the fit inside the hole face',
@@ -608,9 +684,9 @@ console.log('window: per-layer field');
   );
 
   // Band 0..90 at pitch 9 with mid-planes at 1.5 + 9k puts ten of them inside.
-  const layers = windowedLayers(spec, plan, thickness, 12);
+  const layers = windowedLayers(spec, plan, 12);
   check('every layer whose mid-plane is in the band is reported', layers.length === 10, `${layers.length}`);
-  check('and none whose mid-plane is above it', layers.every((k) => layerMidZ(plan, k, thickness) <= 90));
+  check('and none whose mid-plane is above it', layers.every((k) => layerMidZ(plan, k) <= 90));
 
   const sparse = windowedLayers(win({ ...spec, chance: 0.2 }), plan, thickness, 40);
   check('a low chance reports only a few', sparse.length > 0 && sparse.length < 20, `${sparse.length} of 40`);

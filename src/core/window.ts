@@ -33,12 +33,34 @@ const DEG = Math.PI / 180;
  */
 export type WindowMode = 'band' | 'perLayer';
 
-/** Where the layers are, so per-layer windows can land on them exactly. */
-export interface LayerPlan {
-  /** Bottom of the stack, mm. */
+/**
+ * One sheet's plane. Structurally identical to `LayerPlane` in `slice.ts`,
+ * which builds it — duplicated deliberately, as `WindowFrame` and `PlaneFrame`
+ * are, because neither module may import the other.
+ */
+export interface LayerPlane {
+  /**
+   * Ordinal from the bottom of the model, from 0, counting planes examined
+   * rather than planes that produced geometry.
+   *
+   * Per-layer window rolls are seeded from this, so it is not free to change:
+   * renumbering would reroll every window in every saved project.
+   */
+  index: number;
   z0: number;
-  /** Layer pitch: material thickness plus spacer, mm. */
-  pitch: number;
+  /** Mid-plane, the height the slice is taken at. */
+  z: number;
+  thickness: number;
+  /** Gap to the sheet above, mm. */
+  gapAbove: number;
+}
+
+/** Where the layers are, so per-layer windows can land on them exactly. */
+export type LayerPlan = LayerPlane[];
+
+/** Pitch of the plane at `i`: its own thickness plus the gap above it. */
+function pitchOf(plan: LayerPlan, i: number): number {
+  return Math.max(plan[i].thickness + plan[i].gapAbove, 1e-6);
 }
 
 /** One wedge on one layer. */
@@ -199,15 +221,70 @@ function hashId(id: string): number {
   return h >>> 0;
 }
 
-/** Which layer a height belongs to, by nearest mid-plane. */
-export function layerIndexAt(plan: LayerPlan, z: number, thickness: number): number {
-  const pitch = Math.max(plan.pitch, 1e-6);
-  return Math.round((z - plan.z0 - thickness / 2) / pitch);
+/**
+ * Which layer a height belongs to, by nearest mid-plane.
+ *
+ * No thickness argument: a plane carries its own, which is the point of the
+ * plan being a list. Leaving the parameter in place would have been a lie the
+ * moment sheets could differ.
+ *
+ * Two properties are load-bearing and neither is obvious:
+ *
+ * **Ties go up.** The old arithmetic was `Math.round`, which rounds a half
+ * toward +infinity, so a height exactly between two mid-planes belongs to the
+ * upper one. Get this backwards and every window sitting on a boundary moves a
+ * layer.
+ *
+ * **It extrapolates rather than clamping.** The sampling grid pads well beyond
+ * the stack, so heights below the bottom sheet legitimately produce negative
+ * indices and heights above the top produce indices past the end. Clamping them
+ * would change the field outside the stack, and the stock field is a `max`
+ * against the sector, so a changed value there is not always harmless.
+ */
+export function layerIndexAt(plan: LayerPlan, z: number): number {
+  const n = plan.length;
+  if (n === 0) return 0;
+
+  const first = plan[0];
+  if (z <= first.z) return first.index + Math.round((z - first.z) / pitchOf(plan, 0));
+
+  const last = plan[n - 1];
+  if (z >= last.z) return last.index + Math.round((z - last.z) / pitchOf(plan, n - 1));
+
+  // Inside the stack: the first plane whose upper boundary is past z. The
+  // boundary is the midpoint between neighbouring mid-planes, and `<` rather
+  // than `<=` is what sends a tie upward.
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (z < (plan[mid].z + plan[mid + 1].z) / 2) hi = mid;
+    else lo = mid + 1;
+  }
+  return plan[lo].index;
 }
 
-/** Mid-plane of a layer. */
-export function layerMidZ(plan: LayerPlan, index: number, thickness: number): number {
-  return plan.z0 + index * plan.pitch + thickness / 2;
+/** Mid-plane of a layer, extrapolated past the ends the same way. */
+export function layerMidZ(plan: LayerPlan, index: number): number {
+  const n = plan.length;
+  if (n === 0) return 0;
+  const first = plan[0];
+  if (index <= first.index) return first.z + (index - first.index) * pitchOf(plan, 0);
+  const last = plan[n - 1];
+  if (index >= last.index) return last.z + (index - last.index) * pitchOf(plan, n - 1);
+  const at = plan[index - first.index];
+  return at && at.index === index ? at.z : first.z + (index - first.index) * pitchOf(plan, 0);
+}
+
+/** Half the distance to the neighbouring mid-planes, i.e. this sheet's own slab. */
+function halfSlabAt(plan: LayerPlan, index: number): number {
+  const n = plan.length;
+  if (n === 0) return 0.5;
+  const first = plan[0].index;
+  const at = index - first;
+  if (at < 0) return pitchOf(plan, 0) / 2;
+  if (at >= n) return pitchOf(plan, n - 1) / 2;
+  return pitchOf(plan, at) / 2;
 }
 
 /**
@@ -293,17 +370,16 @@ function perLayerDistance(
   z: number,
   spec: WindowSpec,
   plan: LayerPlan,
-  thickness: number,
 ): number {
   const halfLength = Math.max(spec.length, 0.01) / 2;
   const band = Math.max(z - (spec.z + halfLength), spec.z - halfLength - z);
 
-  const layer = layerIndexAt(plan, z, thickness);
+  const layer = layerIndexAt(plan, z);
   const wedges = wedgesForLayer(spec, layer);
   if (wedges.length === 0) return Math.abs(band) + 1e3;
 
-  const mid = layerMidZ(plan, layer, thickness);
-  const halfPitch = Math.max(plan.pitch, 1e-6) / 2;
+  const mid = layerMidZ(plan, layer);
+  const halfPitch = halfSlabAt(plan, layer);
   const slab = Math.max(z - (mid + halfPitch), mid - halfPitch - z);
 
   let d = Infinity;
@@ -318,7 +394,6 @@ export function sectorDistance(
   z: number,
   spec: WindowSpec,
   plan?: LayerPlan,
-  thickness = 3,
 ): number {
   // Everything below works in the wedge's own frame, so the axis can stand
   // wherever the form does.
@@ -327,7 +402,7 @@ export function sectorDistance(
 
   if (spec.mode === 'perLayer') {
     if (!plan) return 1e3;
-    return perLayerDistance(x, y, z, spec, plan, thickness);
+    return perLayerDistance(x, y, z, spec, plan);
   }
 
   const count = Math.max(Math.round(spec.count), 1);
@@ -374,11 +449,10 @@ export function windowField(
   solid: (x: number, y: number, z: number) => number,
   spec: WindowSpec,
   plan?: LayerPlan,
-  thickness = 3,
 ): (x: number, y: number, z: number) => number {
   const inset = Math.max(spec.fit, 0) / 2;
   return (x, y, z) =>
-    Math.max(solid(x, y, z), sectorDistance(x, y, z, spec, plan, thickness)) + inset;
+    Math.max(solid(x, y, z), sectorDistance(x, y, z, spec, plan)) + inset;
 }
 
 /**
@@ -392,13 +466,12 @@ export function stockField(
   solid: (x: number, y: number, z: number) => number,
   windows: WindowSpec[],
   plan?: LayerPlan,
-  thickness = 3,
 ): (x: number, y: number, z: number) => number {
   if (windows.length === 0) return solid;
   return (x, y, z) => {
     let d = solid(x, y, z);
     for (const spec of windows) {
-      d = Math.max(d, -sectorDistance(x, y, z, spec, plan, thickness));
+      d = Math.max(d, -sectorDistance(x, y, z, spec, plan));
     }
     return d;
   };
@@ -408,13 +481,12 @@ export function stockField(
 export function windowedLayers(
   spec: WindowSpec,
   plan: LayerPlan,
-  thickness: number,
   layerCount: number,
 ): number[] {
   const out: number[] = [];
   const halfLength = Math.max(spec.length, 0) / 2;
   for (let k = 0; k < layerCount; k++) {
-    const z = layerMidZ(plan, k, thickness);
+    const z = layerMidZ(plan, k);
     if (z < spec.z - halfLength || z > spec.z + halfLength) continue;
     if (spec.mode === 'band' || wedgesForLayer(spec, k).length > 0) out.push(k);
   }

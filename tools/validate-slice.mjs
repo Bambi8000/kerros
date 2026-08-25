@@ -10,6 +10,7 @@
  *   node tools/validate-slice.mjs
  */
 
+import { layerPitch } from '../src/core/types.ts';
 import {
   signedArea,
   perimeter,
@@ -19,6 +20,8 @@ import {
   contoursFromField,
   groupContours,
   planeZs,
+  planLayers,
+  ringsForGap,
   sliceModel,
 } from '../src/core/slice.ts';
 
@@ -382,6 +385,117 @@ console.log('slice: a carved shape produces holes');
       const hole = s.contours.find((c) => c.isHole);
       return Math.abs(Math.abs(hole.area) - Math.PI * 144) / (Math.PI * 144) < 0.05;
     }),
+  );
+}
+
+console.log('slice: the layer plan is a list of planes');
+{
+  const bounds = { min: [-50, -50, 0], max: [50, 50, 100] };
+  const options = { thickness: 3, spacerHeight: 6, resolution: 100, tolerance: 0.05, smoothing: 1 };
+  const planes = planLayers(bounds, options);
+
+  check('a plane per layer', planes.length === planeZs(bounds, options).length);
+  check('bottoms agree with planeZs', planes.every((p, i) => p.z0 === planeZs(bounds, options)[i]));
+  check('numbered from zero', planes[0].index === 0 && planes[planes.length - 1].index === planes.length - 1);
+  check('the mid-plane is half a sheet above the bottom', planes.every((p) => Math.abs(p.z - p.z0 - 1.5) < 1e-12));
+  check('every gap is the spacer height', planes.every((p) => p.gapAbove === 6));
+  check('and the sheets are their own thickness', planes.every((p) => p.thickness === 3));
+
+  // The number a per-layer window rolls against. It counts planes examined
+  // from the bottom of the model, not slices produced, so a model with a void
+  // along Z skips a slice without shifting anybody's layer number.
+  check(
+    'consecutive planes are one pitch apart',
+    planes.every((p, i) => i === 0 || Math.abs(p.z - planes[i - 1].z - 9) < 1e-12),
+  );
+
+  // The real zero-pitch hazard is a mistyped thickness. A negative spacer
+  // height used to reach it too, by cancelling the thickness out; gaps are
+  // counted in whole rings now and a ring count cannot go below zero, so that
+  // route is closed by construction rather than guarded against.
+  const empty = planLayers(bounds, { ...options, thickness: 0 });
+  check('a zero thickness plans nothing rather than looping', empty.length === 0);
+  const tight = planLayers(bounds, { ...options, spacerHeight: -3 });
+  check('a negative gap is a tight stack, not an absent one', tight.length > 0);
+  check('and its sheets touch', tight.every((p) => p.gapAbove === 0));
+
+  // Gaps are whole rings of the spacer material, which is not the stock's.
+  const thin = planLayers(bounds, { ...options, spacerThickness: 1 });
+  check('a 6 mm gap from 1 mm rings is still 6 mm', thin.every((p) => p.gapAbove === 6));
+  const coarse = planLayers(bounds, { ...options, spacerHeight: 4, spacerThickness: 3 });
+  check(
+    'a 4 mm gap from 3 mm rings is planned as the 3 mm it will be',
+    coarse.every((p) => p.gapAbove === 3),
+  );
+
+  const graded = planLayers(bounds, {
+    ...options,
+    spacerHeight: 3,
+    spacerHeightTop: 9,
+    spacerThickness: 3,
+  });
+  check('a gradient opens the stack out', graded[0].gapAbove < graded[graded.length - 1].gapAbove,
+    `${graded[0].gapAbove} at the bottom, ${graded[graded.length - 1].gapAbove} at the top`);
+  check('every gap is a whole number of rings', graded.every((p) => Math.abs(p.gapAbove % 3) < 1e-12));
+  check('gaps never shrink going up', graded.every((p, i) => i === 0 || p.gapAbove >= graded[i - 1].gapAbove));
+  check('sheets still sit on top of the gap below', graded.every((p, i) =>
+    i === 0 || Math.abs(p.z0 - (graded[i - 1].z0 + graded[i - 1].thickness + graded[i - 1].gapAbove)) < 1e-9));
+  check('the mid-plane is still half a sheet up', graded.every((p) => Math.abs(p.z - p.z0 - 1.5) < 1e-12));
+
+  // Uniform is its own branch, not the gradient with equal ends, because the
+  // marching form accumulates rounding the closed form does not.
+  // types.ts cannot import the slicer, so it carries its own copy of the ring
+  // arithmetic for the readouts. If the two ever drift, a panel reports a pitch
+  // the stack does not have.
+  for (const [t, gap, ringT] of [[3, 6, 3], [3, 4, 3], [3, 6, 1], [0.5, 6, 3], [3, 0, 3]]) {
+    const viaTypes = layerPitch({ name: 'm', thickness: t, kerf: 0.2, notes: '' }, {
+      spacerHeight: gap,
+      spacerThickness: ringT,
+    });
+    const viaPlan = t + ringsForGap(gap, ringT) * ringT;
+    check(
+      `layerPitch agrees with the plan at ${t} mm stock, ${gap} mm of ${ringT} mm rings`,
+      Math.abs(viaTypes - viaPlan) < 1e-12,
+      `${viaTypes} vs ${viaPlan}`,
+    );
+  }
+
+  const asGradient = planLayers(bounds, { ...options, spacerHeightTop: options.spacerHeight });
+  check(
+    'equal ends give exactly the uniform stack',
+    JSON.stringify(asGradient) === JSON.stringify(planes),
+  );
+
+  const capped = planLayers(bounds, { ...options, maxLayers: 4 });
+  check('the cap holds', capped.length === 4);
+
+  const set = (() => {
+    const box = findModule('roundBox');
+    const tree = [
+      {
+        kind: 'roundBox',
+        enabled: true,
+        params: { ...defaultParams(box), op: 'union', sx: 60, sy: 60, sz: 60, r: 0, pz: 30 },
+      },
+    ];
+    const prepared = prepareFeatures(tree);
+    return sliceModel(
+      (x, y, z) => evaluatePoint(prepared, x, y, z),
+      modelBounds(tree),
+      options,
+    );
+  })();
+  check('the slice set carries its planes', Array.isArray(set.planes) && set.planes.length > 0);
+  // The one number the set still reports has to be a number the stack has.
+  check(
+    'the reported pitch is the one at the bottom of the plan',
+    Math.abs(set.pitch - (set.planes[0].thickness + set.planes[0].gapAbove)) < 1e-12,
+    `${set.pitch}`,
+  );
+  check('and one plane per plane examined', set.planes.length === set.planesExamined);
+  check(
+    'every slice sits on a plane',
+    set.slices.every((slice) => set.planes.some((p) => Math.abs(p.z - slice.z) < 1e-12)),
   );
 }
 
