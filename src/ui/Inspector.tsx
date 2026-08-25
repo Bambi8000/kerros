@@ -82,6 +82,9 @@ function LayerSelectorFields({
    */
   const moveTo = (kind: LayerSelectorKind, next: typeof selector) => {
     if (!bandIsPosition || kind === 'band' || list.length === 0) return;
+    // list.length === 0 means nothing has been sliced yet, and the message
+    // below says so — moving the ghost to a layer nobody has computed would be
+    // a guess dressed as a placement.
     const picked = resolveLayers({ ...next, kind }, list);
     if (picked.length === 0) return;
     const zs = list.filter((s) => picked.includes(s.index)).map((s) => s.z);
@@ -189,9 +192,16 @@ function LayerSelectorFields({
         "reaches N layers" line covers that case without guessing.
       */}
       {selector.kind !== 'band' || !bandIsPosition ? (
-        <div className={resolveLayers(selector, list).length === 0 ? 'warn' : 'derived'}>
-          {describeSelector(selector, list)}
-        </div>
+        list.length === 0 ? (
+          <div className="warn">
+            Nothing sliced yet, so there are no layers to choose between and the
+            ghost cannot be placed. Open Slice or Stack once and come back.
+          </div>
+        ) : (
+          <div className={resolveLayers(selector, list).length === 0 ? 'warn' : 'derived'}>
+            {describeSelector(selector, list)}
+          </div>
+        )
       ) : null}
     </div>
   );

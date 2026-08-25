@@ -43,7 +43,22 @@ export function useSlices(enabled: boolean): SliceResult {
 
   useEffect(() => {
     if (!enabled) {
-      setResult(IDLE);
+      /*
+       * Keep the last slice rather than throwing it away.
+       *
+       * Model mode does not slice, and should not — nobody should pay for it
+       * while modelling. But it still needs to know what the stack looks like:
+       * a fixture's ghost stands where its holes will be cut, and choosing "the
+       * bottom three sheets" cannot place anything without knowing the sheets.
+       * Dropping the result meant the ghost stayed put and the panel said
+       * "nothing sliced yet" in the one view where you can see either.
+       *
+       * The data is already in memory and costs nothing to hold. Anything in
+       * flight is dropped by bumping the generation, and `pending` is cleared
+       * so the view does not sit claiming to be working.
+       */
+      generation.current++;
+      setResult((prev) => (prev.pending ? { ...prev, pending: false } : prev));
       return;
     }
 
