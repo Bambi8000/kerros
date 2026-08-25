@@ -490,7 +490,11 @@ export function SheetView({ sheets, pending }: Props) {
         <canvas ref={canvasRef} />
         {!sheet ? (
           <div className="slice-placeholder">
-            {pending ? 'Slicing…' : 'Nothing to nest yet. Add a shape first.'}
+            {pending
+              ? 'Slicing…'
+              : sheets.busy
+                ? 'Nesting…'
+                : 'Nothing to nest yet. Add a shape first.'}
           </div>
         ) : null}
       </div>
@@ -624,9 +628,14 @@ export function SheetView({ sheets, pending }: Props) {
                   · {sheets.unplaced.length} too big for the bed
                 </span>
               ) : null}
+              {/* Packing happens off the main thread, so the sheet on screen is
+                  the previous one until the new one lands. Saying so is the
+                  difference between a considered wait and a layout that looks
+                  stuck. */}
+              {sheets.busy ? <span className="slice-note"> · nesting…</span> : null}
             </>
           ) : (
-            'No sheets'
+            sheets.busy ? 'Nesting…' : 'No sheets'
           )}
         </span>
       </div>

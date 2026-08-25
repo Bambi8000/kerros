@@ -50,7 +50,7 @@ export interface ProjectData {
   name: string;
   machine: { name: string; bedWidth: number; bedHeight: number; margin: number };
   material: { name: string; thickness: number; kerf: number; notes: string };
-  stack: { spacerHeight: number };
+  stack: { spacerHeight: number; spacerHeightTop?: number; spacerThickness?: number };
   seed: number;
   features: ProjectFeature[];
   slicing: {
@@ -148,7 +148,9 @@ const DEFAULTS: ProjectData = {
   name: 'Untitled',
   machine: { name: 'Laser 730x410', bedWidth: 730, bedHeight: 410, margin: 5 },
   material: { name: 'Material', thickness: 3, kerf: 0.15, notes: '' },
-  stack: { spacerHeight: 6 },
+  // 0 for the ring thickness means "follow the stock", which is what a file
+  // written before rings had their own material meant by saying nothing.
+  stack: { spacerHeight: 6, spacerHeightTop: 6, spacerThickness: 0 },
   seed: 1,
   features: [],
   slicing: {
@@ -357,6 +359,17 @@ export function parseProject(text: string): ParseResult {
     },
     stack: {
       spacerHeight: Math.max(asNumber(stack.spacerHeight, DEFAULTS.stack.spacerHeight), 0),
+      /*
+       * Both default to the uniform stack a file written before them described:
+       * the top gap to the bottom one, and the ring thickness to the stock's.
+       * An older project therefore opens as exactly the lamp it was, which is
+       * the whole reason the defaults are these and not something tidier.
+       */
+      spacerHeightTop: Math.max(
+        asNumber(stack.spacerHeightTop, asNumber(stack.spacerHeight, DEFAULTS.stack.spacerHeight)),
+        0,
+      ),
+      spacerThickness: Math.max(asNumber(stack.spacerThickness, 0), 0),
     },
     seed: Math.max(Math.round(asNumber(file.seed, DEFAULTS.seed)), 0),
     features,

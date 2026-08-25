@@ -193,7 +193,17 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
     );
   };
 
-  const pitch = layerPitch(material, stack);
+  /**
+   * The pitch to show.
+   *
+   * The planned stack is the truth once it exists, because gaps are whole rings
+   * and can differ between the bottom and the top. `layerPitch` is the fallback
+   * for before anything has been sliced, and it quantises the same way.
+   */
+  const gaps = slices?.planes.map((plane) => plane.gapAbove) ?? [];
+  const pitchLow = gaps.length > 0 ? material.thickness + Math.min(...gaps) : layerPitch(material, stack);
+  const pitchHigh = gaps.length > 0 ? material.thickness + Math.max(...gaps) : pitchLow;
+  const pitchVaries = Math.abs(pitchHigh - pitchLow) > 1e-9;
   const usableW = machine.bedWidth - machine.margin * 2;
   const usableH = machine.bedHeight - machine.margin * 2;
 
@@ -322,9 +332,14 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
           onChange={(spacerHeight) => setStack({ spacerHeight })}
         />
         <div className="derived derived-strong">
-          Layer pitch {pitch.toFixed(2)} mm
+          {pitchVaries
+            ? `Layer pitch ${pitchLow.toFixed(2)}–${pitchHigh.toFixed(2)} mm`
+            : `Layer pitch ${pitchLow.toFixed(2)} mm`}
           <span className="derived-sub">
-            {material.thickness} mm material + {stack.spacerHeight} mm spacer
+            {material.thickness} mm material +{' '}
+            {pitchVaries
+              ? `${(pitchLow - material.thickness).toFixed(2)}–${(pitchHigh - material.thickness).toFixed(2)} mm spacer`
+              : `${(pitchLow - material.thickness).toFixed(2)} mm spacer`}
           </span>
         </div>
       </div>
@@ -552,8 +567,18 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
             <span className="derived-sub">
               {total} layers
               {spacerTotal > 0 ? ` + ${spacerTotal} spacer rings` : ''}
+              {sheets.busy
+                ? ' · nesting…'
+                : sheets.ms > 0
+                  ? ` · packed in ${sheets.ms} ms`
+                  : ''}
             </span>
           </div>
+        ) : sheets.busy ? (
+          // Packing runs in the worker, so an empty readout here means it has
+          // not landed yet, not that there is nothing to nest. True shape takes
+          // about half a second on a real lamp and longer in the native shell.
+          <div className="derived">Nesting the job onto the bed…</div>
         ) : (
           <div className="derived">Open Sheet to nest the job onto the bed.</div>
         )}
@@ -620,7 +645,7 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
         <button
           type="button"
           className="btn btn-wide"
-          disabled={sheetIndex === 0}
+          disabled={sheetIndex === 0 || sheets.busy}
           onClick={() => void exportSheet(sheetIndex)}
         >
           {sheetIndex > 0 ? `Export sheet ${sheetIndex} as DXF` : 'Export sheet as DXF'}
@@ -628,7 +653,7 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
         <button
           type="button"
           className="btn btn-wide"
-          disabled={sheetCount === 0}
+          disabled={sheetCount === 0 || sheets.busy}
           onClick={() => void exportAllSheets()}
         >
           {sheetCount > 1 ? `Export all ${sheetCount} sheets` : 'Export all sheets'}
@@ -636,7 +661,7 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
         <button
           type="button"
           className="btn btn-wide"
-          disabled={!slices}
+          disabled={!slices || sheets.busy}
           onClick={() => void exportManifest()}
         >
           Export build manifest
@@ -644,6 +669,15 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
         <button type="button" className="btn btn-wide" onClick={() => void exportKerfTest()}>
           Export kerf test
         </button>
+        {/* The kerf test is a fixed figure and owes nothing to the nesting, so
+            it stays live. The three above write the layout, and while a pack is
+            in flight the layout on screen is the previous one — exporting it
+            would put a file on disk that does not match the bed. */}
+        {sheets.busy ? (
+          <div className="derived">
+            Nesting in progress, so the sheet exports are held until it lands.
+          </div>
+        ) : null}
         <label className="field">
           <span className="field-label">Nesting</span>
           <span className="field-input">

@@ -188,9 +188,21 @@ export function manifestText(input: ManifestInput): string {
   lines.push('');
   lines.push(`Machine    ${input.machineName}`);
   lines.push(`Material   ${input.materialName}, ${input.thickness} mm, kerf ${input.kerf} mm`);
-  lines.push(
-    `Pitch      ${set.pitch.toFixed(2)} mm  (${input.thickness} mm sheet + ${input.spacerHeight} mm spacer)`,
-  );
+  // A graded stack has no single pitch, so the manifest prints what is there.
+  // The gaps come from the plan, which is what was cut, not from what was asked.
+  const gaps = set.planes.map((plane) => plane.gapAbove);
+  const gapLow = gaps.length > 0 ? Math.min(...gaps) : 0;
+  const gapHigh = gaps.length > 0 ? Math.max(...gaps) : 0;
+  if (Math.abs(gapHigh - gapLow) > 1e-9) {
+    lines.push(
+      `Pitch      ${(input.thickness + gapLow).toFixed(2)}-${(input.thickness + gapHigh).toFixed(2)} mm  ` +
+        `(${input.thickness} mm sheet + ${gapLow.toFixed(2)}-${gapHigh.toFixed(2)} mm spacer, graded)`,
+    );
+  } else {
+    lines.push(
+      `Pitch      ${set.pitch.toFixed(2)} mm  (${input.thickness} mm sheet + ${gapLow.toFixed(2)} mm spacer)`,
+    );
+  }
   if (Math.abs(input.spacerAchieved - input.spacerHeight) > 1e-6) {
     lines.push(
       `           WARNING: rings of ${input.thickness} mm give a ${input.spacerAchieved} mm gap, not ${input.spacerHeight} mm`,
@@ -228,9 +240,16 @@ export function manifestText(input: ManifestInput): string {
   if (spacers.length > 0) {
     lines.push('SPACERS');
     for (const plan of spacers) {
+      // The ring count per gap is a range now, not a number: a graded stack has
+      // more rings at one end than the other, and the count you have to lay out
+      // on the bench is the total.
+      const perGap =
+        plan.ringsMin === plan.ringsMax
+          ? `${plan.gaps} gaps x ${plan.ringsMin}`
+          : `${plan.gaps} gaps, ${plan.ringsMin}-${plan.ringsMax} each`;
       lines.push(
         `  ${plan.label}: ${plan.total} rings ` +
-          `(${plan.gaps} gaps x ${plan.ringsPerGap}), ` +
+          `(${perGap}), ` +
           `bore ${(plan.innerR * 2).toFixed(2)} mm, outside ${(plan.outerR * 2).toFixed(2)} mm`,
       );
     }

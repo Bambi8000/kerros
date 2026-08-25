@@ -34,7 +34,7 @@ const sample = {
   name: 'Blob Lamp 1',
   machine: { name: 'Laser 730x410', bedWidth: 730, bedHeight: 410, margin: 5 },
   material: { name: 'Cardboard 3 mm', thickness: 3, kerf: 0.22, notes: 'B flute' },
-  stack: { spacerHeight: 6 },
+  stack: { spacerHeight: 6, spacerHeightTop: 6, spacerThickness: 0 },
   seed: 7,
   features: [
     {
@@ -119,6 +119,60 @@ console.log('project: round trip');
     'the rod feature survives with its params',
     parsed.data.features.find((f) => f.kind === 'rod').params.length === 130,
   );
+}
+
+console.log('project: a stack written before gradients existed');
+{
+  /*
+   * The claim in `parseProject` is that an older file opens as exactly the lamp
+   * it was. It was a comment and nothing more until this test — which is the
+   * failure mode the round-trip check caught by going red when the fields were
+   * added: the fixture said one thing and the parser another.
+   */
+  const older = JSON.parse(JSON.stringify({ ...sample, stack: { spacerHeight: 6 } }));
+  const text = JSON.stringify({
+    format: PROJECT_FORMAT,
+    formatVersion: PROJECT_FORMAT_VERSION,
+    ...older,
+  });
+  const opened = parseProject(text);
+
+  check('it opens', opened.ok && opened.data !== null);
+  check('the gap it asked for survives', opened.data.stack.spacerHeight === 6);
+  check(
+    'the top gap defaults to the bottom one, so the stack stays uniform',
+    opened.data.stack.spacerHeightTop === 6,
+  );
+  check(
+    'and the ring thickness defaults to following the stock',
+    opened.data.stack.spacerThickness === 0,
+  );
+  check('with nothing to warn about', opened.warnings.length === 0, opened.warnings.join('; '));
+
+  // A file that does say so keeps what it says.
+  const graded = JSON.stringify({
+    format: PROJECT_FORMAT,
+    formatVersion: PROJECT_FORMAT_VERSION,
+    ...sample,
+    stack: { spacerHeight: 3, spacerHeightTop: 12, spacerThickness: 1 },
+  });
+  const openedGraded = parseProject(graded).data;
+  check(
+    'a graded stack survives the round trip',
+    openedGraded.stack.spacerHeight === 3 &&
+      openedGraded.stack.spacerHeightTop === 12 &&
+      openedGraded.stack.spacerThickness === 1,
+  );
+
+  const nonsense = JSON.stringify({
+    format: PROJECT_FORMAT,
+    formatVersion: PROJECT_FORMAT_VERSION,
+    ...sample,
+    stack: { spacerHeight: 6, spacerHeightTop: -4, spacerThickness: 'thick' },
+  });
+  const openedBad = parseProject(nonsense).data;
+  check('a negative top gap is clamped rather than inverting the stack', openedBad.stack.spacerHeightTop === 0);
+  check('a ring thickness that is not a number falls back', openedBad.stack.spacerThickness === 0);
 }
 
 console.log('project: filenames');

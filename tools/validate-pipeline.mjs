@@ -359,6 +359,47 @@ console.log('pipeline: fixtures follow the shape they are attached to');
   check('and is accounted for', typeof output.fixtureMisses.fx === 'number');
 }
 
+console.log('pipeline: the stack reaches the field, not just the slicer');
+{
+  const uniform = runSliceJob(baseJob([body, shell]), new Map());
+
+  // Same stack said two ways. Equal ends must be the uniform stack exactly,
+  // because a uniform stack is planned by a closed form and a graded one by
+  // marching, and the two agree to about 1e-12 rather than agreeing.
+  const spelledOut = runSliceJob(
+    { ...baseJob([body, shell]), spacerHeightTop: 6, spacerThickness: 3 },
+    new Map(),
+  );
+  check(
+    'spelling out an equal top gap changes nothing',
+    JSON.stringify(spelledOut.set.slices) === JSON.stringify(uniform.set.slices),
+  );
+
+  const graded = runSliceJob(
+    { ...baseJob([body, shell]), spacerHeight: 3, spacerHeightTop: 12, spacerThickness: 3 },
+    new Map(),
+  );
+  check('a graded stack slices', graded.set !== null && graded.set.slices.length > 4,
+    `${graded.set?.slices.length} layers`);
+  const gaps = graded.set.planes.map((p) => p.gapAbove);
+  check('its gaps open out going up', gaps[gaps.length - 1] > gaps[0], `${gaps[0]} to ${gaps[gaps.length - 1]}`);
+  check('every gap is a whole number of rings', gaps.every((g) => Math.abs(g % 3) < 1e-12));
+  check('and it is a different lamp from the uniform one', graded.set.slices.length !== uniform.set.slices.length);
+
+  // Rings of their own material: the plan changes because the quantisation does.
+  const fine = runSliceJob(
+    { ...baseJob([body, shell]), spacerHeight: 4, spacerThickness: 1 },
+    new Map(),
+  );
+  const coarse = runSliceJob(
+    { ...baseJob([body, shell]), spacerHeight: 4, spacerThickness: 3 },
+    new Map(),
+  );
+  check('a 4 mm gap is 4 mm from 1 mm rings', fine.set.planes.every((p) => Math.abs(p.gapAbove - 4) < 1e-12));
+  check('and 3 mm from 3 mm rings, planned as what it will be',
+    coarse.set.planes.every((p) => Math.abs(p.gapAbove - 3) < 1e-12));
+}
+
 console.log('pipeline: nesting goes through one entry point');
 {
   const circle = (r, n = 64, cx = 0, cy = 0) => {

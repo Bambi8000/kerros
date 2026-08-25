@@ -146,6 +146,9 @@ console.log('font: layout');
 
 console.log('spacers: ring counting');
 {
+  // 3 mm here is the thickness of the **spacer** material, not the stock's. The
+  // two used to be the same number; separating them is what makes thin sheet
+  // usable, and this block is now about the ring material throughout.
   const base = { thickness: 3, spacerHeight: 6, kerf: 0.2, ringWidth: 4 };
   check('a 6 mm gap in 3 mm material needs two rings', ringsPerGap(base) === 2);
   check('the achieved gap is exactly two sheets', near(spacerHeightAchieved(base), 6, 1e-12));
@@ -160,11 +163,23 @@ console.log('spacers: ring counting');
   check('a tight stack needs no rings', ringsPerGap({ ...base, spacerHeight: 0 }) === 0);
   check('a gap thinner than the material still needs one ring', ringsPerGap({ ...base, spacerHeight: 1 }) === 1);
 
+  // Rings out of their own material: the same 6 mm gap, six 1 mm rings.
+  const thin = { ...base, spacerThickness: 1 };
+  check('1 mm rings fill a 6 mm gap six deep', ringsPerGap(thin) === 6);
+  check('and the gap comes out the same', near(spacerHeightAchieved(thin), 6, 1e-12));
+  check(
+    'the stock thickness no longer decides the ring count',
+    ringsPerGap({ ...thin, thickness: 0.5 }) === 6,
+  );
+
   const rods = [
     { id: 'a', label: 'Rod 1', size: 'M5', x: 40, y: 0, zStart: 0, zEnd: 100, diameter: 0 },
     { id: 'b', label: 'Rod 2', size: 'M8', x: -40, y: 0, zStart: 0, zEnd: 20, diameter: 0 },
     { id: 'c', label: 'Rod 3', size: 'M5', x: 0, y: 40, zStart: 500, zEnd: 600, diameter: 0 },
   ];
+  // Sheets 10 mm apart at 3 mm thick leaves a 7 mm gap, which takes two 3 mm
+  // rings. Rings are counted from the gap that is there, not from the one that
+  // was asked for, so this is the number that matters.
   const slices = [0, 10, 20, 30, 40].map((z) => ({ z, circles: [] }));
 
   const plans = spacerPlans(rods, slices, base);
@@ -173,6 +188,7 @@ console.log('spacers: ring counting');
   const full = plans.find((p) => p.rodId === 'a');
   check('a rod through five layers has four gaps', full.gaps === 4);
   check('four gaps at two rings each is eight rings', full.total === 8);
+  check('and every gap takes the same two', full.ringsMin === 2 && full.ringsMax === 2);
   check(
     'the bore matches the clearance hole on the slices',
     near(full.innerR, rodCutRadius(5.3, 0.2), 1e-12),
@@ -187,13 +203,39 @@ console.log('spacers: ring counting');
   check('a rod through three layers has two gaps', short.gaps === 2);
   check('a rod that misses the stack gets no plan', !plans.some((p) => p.rodId === 'c'));
 
-  const single = spacerPlans(
-    [{ ...rods[0], zStart: 0, zEnd: 0 }],
-    slices,
-    base,
-  );
+  const single = spacerPlans([{ ...rods[0], zStart: 0, zEnd: 0 }], slices, base);
   check('a rod reaching one layer needs no spacers', single.length === 0);
-  check('tight stacking generates no spacers at all', spacerPlans(rods, slices, { ...base, spacerHeight: 0 }).length === 0);
+
+  /*
+   * A tight stack means the sheets touch, so the test has to say so with the
+   * slices as well as with the setting. The old version left the sheets 10 mm
+   * apart and set the spacer height to zero, which is not a tight stack — it is
+   * a stack with 7 mm gaps and a setting that disagrees with it. Counting from
+   * the measured gap is what made the inconsistency visible.
+   */
+  const touching = [0, 3, 6, 9, 12].map((z) => ({ z, circles: [] }));
+  check(
+    'tight stacking generates no spacers at all',
+    spacerPlans(rods, touching, { ...base, spacerHeight: 0 }).length === 0,
+  );
+
+  // A graded stack: gaps of 3, 6 and 9 mm from 3 mm rings.
+  const graded = [0, 6, 12, 21, 33].map((z) => ({ z, circles: [] }));
+  const gradedPlan = spacerPlans([rods[0]], graded, base)[0];
+  check('a graded stack still gets one plan per rod', gradedPlan !== undefined);
+  check('with a gap per pair of sheets', gradedPlan.gaps === 4);
+  check(
+    'rings counted per gap rather than multiplied out',
+    gradedPlan.total === 1 + 1 + 2 + 3,
+    `${gradedPlan.total} rings`,
+  );
+  check('and the range reported', gradedPlan.ringsMin === 1 && gradedPlan.ringsMax === 3);
+
+  // Two sheets three pitches apart need three pitches of rings.
+  const voided = [0, 27].map((z) => ({ z, circles: [] }));
+  const acrossVoid = spacerPlans([rods[0]], voided, base)[0];
+  check('a void along Z is filled rather than counted as one gap', acrossVoid.total === 8,
+    `${acrossVoid.total} rings for a 24 mm gap of 3 mm rings`);
 }
 
 console.log('spacers: circle points');

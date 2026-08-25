@@ -85,11 +85,52 @@ export interface MaterialProfile {
 }
 
 export interface StackSettings {
-  /** Default gap between slices in mm. 0 means tight stacking. */
+  /**
+   * Gap between sheets at the **bottom** of the stack, mm. 0 is tight stacking.
+   *
+   * Quantised in use: a gap is a whole number of spacer rings, and a ring is
+   * one `spacerThickness` tall. Asking for 4 mm from 3 mm rings gets 3 mm, and
+   * the model is planned on the 3 mm — a stack the program cannot build is
+   * worse than one it plans honestly.
+   */
   spacerHeight: number;
+  /**
+   * Gap at the **top**, mm. Omitted, or equal to `spacerHeight`, is uniform.
+   *
+   * Optional rather than required so that a profile written before gradients
+   * existed is still a valid stack, and so that "uniform" has one spelling
+   * rather than two.
+   */
+  spacerHeightTop?: number;
+  /**
+   * Thickness of one spacer ring, mm — its own material, not the stock's.
+   *
+   * Separating the two is what makes thin stock usable at all. A 200 mm lamp
+   * in 0.5 mm steel with 0.5 mm rings needs 372 rings per rod; with 3 mm rings
+   * it needs 62. Nobody stacks 372 washers by hand.
+   */
+  spacerThickness?: number;
 }
 
-/** Layer pitch is thickness plus spacer — the one number the whole stack hangs on. */
+/**
+ * Pitch at the **bottom** of the stack, mm.
+ *
+ * Once gaps can vary there is no single pitch, so this is no longer the number
+ * the whole stack hangs on — `planLayers()` in `slice.ts` builds the stack, and
+ * `pitchAt()` answers "which pitch, where". This stays for the readouts that
+ * want one number, and it now returns the pitch that will actually be built
+ * rather than the one that was asked for: a gap is a whole number of rings, so
+ * 4 mm of 3 mm rings is 3 mm.
+ *
+ * The ring arithmetic is duplicated from `ringsForGap()` in `slice.ts`, which
+ * this file may not import — the slicer has no imports at all, deliberately, so
+ * the dependency could only go the wrong way. A validator asserts the two agree.
+ */
 export function layerPitch(material: MaterialProfile, stack: StackSettings): number {
-  return material.thickness + stack.spacerHeight;
+  const ringT =
+    stack.spacerThickness !== undefined && stack.spacerThickness > 0
+      ? stack.spacerThickness
+      : material.thickness;
+  const rings = ringT > 0 ? Math.max(Math.round(Math.max(stack.spacerHeight, 0) / ringT), 0) : 0;
+  return material.thickness + rings * ringT;
 }
