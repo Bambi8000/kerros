@@ -318,9 +318,13 @@ console.log('slice: a sharp box keeps its corners');
 
   const middle = set.slices[Math.floor(set.slices.length / 2)];
   check('a box slices', set.slices.length > 3);
+  // 0.1%, not the 1% this started at. The measured error at these settings is
+  // 0.006%, so a hundredfold margin still leaves the check able to see the
+  // ordering bug it exists for — simplify-first eats over 15% of a small
+  // square, and even a fraction of that would trip this.
   check(
-    'the cross-section keeps its area within 1% of 80x80',
-    Math.abs(middle.contours[0].area - 6400) / 6400 < 0.01,
+    'the cross-section keeps its area within 0.1% of 80x80',
+    Math.abs(middle.contours[0].area - 6400) / 6400 < 0.001,
     `got ${middle.contours[0].area.toFixed(1)} mm2, expected 6400`,
   );
 
@@ -379,6 +383,65 @@ console.log('slice: a carved shape produces holes');
       return Math.abs(Math.abs(hole.area) - Math.PI * 144) / (Math.PI * 144) < 0.05;
     }),
   );
+}
+
+console.log('slice: prisms and cones through the real SDF core');
+{
+  const sliceOf = (params, kind) => {
+    const mod = findModule(kind);
+    const tree = [{ kind, enabled: true, params: { ...defaultParams(mod), op: 'union', ...params } }];
+    const prepared = prepareFeatures(tree);
+    const bounds = modelBounds(tree);
+    return sliceModel((x, y, z) => evaluatePoint(prepared, x, y, z), bounds, {
+      thickness: 3,
+      spacerHeight: 6,
+      resolution: 200,
+      tolerance: 0.05,
+      smoothing: 1,
+    });
+  };
+
+  // A regular polygon's area is known exactly, so this checks the field, the
+  // marching squares, the smoothing and the simplification in one number.
+  for (const [n, r] of [[3, 60], [5, 50], [6, 50], [8, 45]]) {
+    const set = sliceOf({ n, r, h: 60, corner: 0, pz: 30 }, 'prism');
+    const middle = set.slices[Math.floor(set.slices.length / 2)];
+    const exact = n * 0.5 * r * r * Math.sin((2 * Math.PI) / n);
+    const error = Math.abs(middle.contours[0].area - exact) / exact;
+    check(
+      `a ${n}-sided prism slices to its analytic area`,
+      error < 0.001,
+      `got ${middle.contours[0].area.toFixed(1)} mm2, expected ${exact.toFixed(1)}`,
+    );
+    check(
+      `and comes out as a polygon, not a circle`,
+      middle.contours[0].points.length / 2 < n * 6,
+      `${middle.contours[0].points.length / 2} points for ${n} corners`,
+    );
+  }
+
+  // Every layer of a cone is a different circle, which is the whole reason to
+  // have one: it checks the taper lands on the plane the slicer takes.
+  {
+    const set = sliceOf({ r1: 60, r2: 10, h: 90, pz: 45 }, 'cone');
+    let worst = 0;
+    for (const slice of set.slices) {
+      const t = slice.z / 90;
+      const radius = 60 + (10 - 60) * t;
+      const want = Math.PI * radius * radius;
+      worst = Math.max(worst, Math.abs(slice.contours[0].area - want) / want);
+    }
+    check('a cone gives layers', set.slices.length > 6, `${set.slices.length} layers`);
+    check(
+      'and every cross-section matches the taper',
+      worst < 0.005,
+      `worst ${(worst * 100).toFixed(3)}%`,
+    );
+    check(
+      'the layers shrink from bottom to top',
+      set.slices[0].contours[0].area > set.slices[set.slices.length - 1].contours[0].area,
+    );
+  }
 }
 
 console.log('slice: empty input');

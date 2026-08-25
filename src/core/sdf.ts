@@ -221,6 +221,98 @@ export function sdSuperellipsoid(
   return value / grad;
 }
 
+/**
+ * Regular n-sided prism, extruded along the local Z axis.
+ *
+ * A vertex sits on the +X axis, so `r` is the radius to a corner — the circle
+ * you would inscribe the polygon in, which is how one gets drawn.
+ *
+ * Exact, and the reason is the fold. The point is rotated into the sector
+ * belonging to one edge, and inside that sector the nearest boundary is either
+ * that edge or the vertex ending it — nothing else can be closer, because the
+ * polygon is convex and the sectors are symmetric. So one comparison answers
+ * it, at any number of sides.
+ *
+ * `corner` rounds the vertical edges by shrinking the apothem and offsetting
+ * back out, the same trick `sdRoundBox` uses: the flats stay exactly where they
+ * were and the corners come off, which is what rounding a corner means. The
+ * top and bottom rims stay sharp — a stack of sheets has no radius there.
+ */
+export function sdPrismZ(
+  x: number,
+  y: number,
+  z: number,
+  sides: number,
+  r: number,
+  h: number,
+  corner: number,
+): number {
+  // Rounded and floored here rather than trusted from the parameter, so a
+  // hand-edited project file asking for 5.5 sides gets 6 rather than NaN.
+  const n = Math.max(3, Math.round(sides));
+  const a = Math.PI / n;
+  const apothem = r * Math.cos(a);
+  const c = Math.min(Math.max(corner, 0), apothem * 0.999);
+  const apo = apothem - c;
+  const half = apo * Math.tan(a);
+
+  // A vertex is on +X, so the first edge midpoint is at angle a. Fold about
+  // that, not about zero.
+  const sector = 2 * a;
+  let ang = Math.atan2(y, x) - a;
+  ang -= sector * Math.round(ang / sector);
+
+  const radius = Math.sqrt(x * x + y * y);
+  const px = radius * Math.cos(ang);
+  const py = Math.abs(radius * Math.sin(ang));
+
+  const d2 = (py <= half ? px - apo : Math.hypot(px - apo, py - half)) - c;
+
+  const dz = Math.abs(z) - h / 2;
+  return Math.min(Math.max(d2, dz), 0) + Math.hypot(Math.max(d2, 0), Math.max(dz, 0));
+}
+
+/**
+ * Truncated cone along the local Z axis: radius r1 at the bottom, r2 at the
+ * top, total height h. r2 = 0 gives a plain cone, r1 = r2 a cylinder.
+ *
+ * Exact. Written truncated rather than pointed because the pointed case falls
+ * out of it for nothing, and because a tapered stack of sheets is the shape a
+ * lamp actually wants — the point is where you stop having material to cut.
+ */
+export function sdConeZ(
+  x: number,
+  y: number,
+  z: number,
+  h: number,
+  r1: number,
+  r2: number,
+): number {
+  const half = Math.max(h, 0) / 2;
+  const qx = Math.sqrt(x * x + y * y);
+  const qy = z;
+
+  // k1 is the top rim; k2 runs down the slanted side.
+  const k1x = r2;
+  const k1y = half;
+  const k2x = r2 - r1;
+  const k2y = 2 * half;
+
+  const cax = qx - Math.min(qx, qy < 0 ? r1 : r2);
+  const cay = Math.abs(qy) - half;
+
+  const dot2 = k2x * k2x + k2y * k2y;
+  let t = 0;
+  if (dot2 > 1e-12) t = ((k1x - qx) * k2x + (k1y - qy) * k2y) / dot2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+
+  const cbx = qx - k1x + k2x * t;
+  const cby = qy - k1y + k2y * t;
+
+  const inside = cbx < 0 && cay < 0;
+  return (inside ? -1 : 1) * Math.sqrt(Math.min(cax * cax + cay * cay, cbx * cbx + cby * cby));
+}
+
 /* ------------------------------------------------------------------ *
  * Module registry
  *
@@ -358,6 +450,40 @@ export const SHAPE_MODULES: ShapeModule[] = [
       const ry = num(p, 'ry', 50);
       const rz = num(p, 'rz', 50);
       return [-rx, -ry, -rz, rx, ry, rz];
+    },
+  },
+  {
+    key: 'prism',
+    name: 'Prism',
+    params: [
+      // The only integer parameter in the registry. The field rounds it as
+      // well, so a project file edited by hand cannot produce half a side.
+      { key: 'n', label: 'Sides', def: 6, min: 3, max: 24, step: 1 },
+      mm('r', 'Radius to vertex', 45, 1, 500),
+      mm('h', 'Height', 80, 1, 700),
+      mm('corner', 'Corner radius', 0, 0, 200, 0.5),
+    ],
+    sdf: (x, y, z, p) =>
+      sdPrismZ(x, y, z, num(p, 'n', 6), num(p, 'r', 45), num(p, 'h', 80), num(p, 'corner', 0)),
+    bounds: (p) => {
+      const r = num(p, 'r', 45);
+      const h = num(p, 'h', 80) / 2;
+      return [-r, -r, -h, r, r, h];
+    },
+  },
+  {
+    key: 'cone',
+    name: 'Cone',
+    params: [
+      mm('r1', 'Bottom radius', 50, 0, 500),
+      mm('r2', 'Top radius', 0, 0, 500),
+      mm('h', 'Height', 90, 1, 700),
+    ],
+    sdf: (x, y, z, p) => sdConeZ(x, y, z, num(p, 'h', 90), num(p, 'r1', 50), num(p, 'r2', 0)),
+    bounds: (p) => {
+      const r = Math.max(num(p, 'r1', 50), num(p, 'r2', 0));
+      const h = num(p, 'h', 90) / 2;
+      return [-r, -r, -h, r, r, h];
     },
   },
 ];

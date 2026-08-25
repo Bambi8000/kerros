@@ -28,6 +28,8 @@ import {
   prepareFeatures,
   evaluatePoint,
   sdSuperellipsoid,
+  sdPrismZ,
+  sdConeZ,
   shellModifier,
   findModifier,
   defaultModifierParams,
@@ -109,7 +111,7 @@ check('every op is handled', OPS.every((op) => Number.isFinite(opApply(op, 1, 2,
 check('additive ops are the two unions', OPS.filter(opIsAdditive).length === 2);
 
 console.log('sdf: modules');
-check('six shape modules registered', SHAPE_MODULES.length === 6, `got ${SHAPE_MODULES.length}`);
+check('eight shape modules registered', SHAPE_MODULES.length === 8, `got ${SHAPE_MODULES.length}`);
 check('module keys are unique', new Set(SHAPE_MODULES.map((m) => m.key)).size === SHAPE_MODULES.length);
 for (const mod of SHAPE_MODULES) {
   const p = defaultParams(mod);
@@ -128,6 +130,127 @@ for (const mod of SHAPE_MODULES) {
   );
 }
 check('torus is not solid at its centre', findModule('torus').sdf(0, 0, 0, defaultParams(findModule('torus'))) > 0);
+
+console.log('sdf: prism is an exact field');
+{
+  const n = 6;
+  const r = 50;
+  const h = 80;
+  const a = Math.PI / n;
+  const apothem = r * Math.cos(a);
+  const near = (got, want, tol = 1e-9) => Math.abs(got - want) < tol;
+
+  // A vertex sits on +X, so the first edge midpoint is at angle a. Both are on
+  // the surface, and getting the fold phase wrong moves one of them — which is
+  // exactly what happened on the first attempt, by up to 25 mm on a triangle.
+  check('a vertex is on the surface', near(sdPrismZ(r, 0, 0, n, r, h, 0), 0));
+  check(
+    'an edge midpoint is one apothem out',
+    near(sdPrismZ(apothem * Math.cos(a), apothem * Math.sin(a), 0, n, r, h, 0), 0),
+  );
+  check(
+    'and 7 mm past that edge is 7 mm',
+    near(sdPrismZ((apothem + 7) * Math.cos(a), (apothem + 7) * Math.sin(a), 0, n, r, h, 0), 7),
+  );
+  check('5 mm past a vertex is 5 mm', near(sdPrismZ(r + 5, 0, 0, n, r, h, 0), 5));
+  check('the centre is the apothem in', near(sdPrismZ(0, 0, 0, n, r, h, 0), -Math.min(apothem, h / 2)));
+  check('above the cap is the height above it', near(sdPrismZ(0, 0, h / 2 + 6, n, r, h, 0), 6));
+
+  // The property that matters downstream: blends and the kerf iso-level both
+  // assume a true Euclidean field, which means a unit gradient.
+  let worstGradient = 0;
+  for (let i = 0; i < 3000; i++) {
+    const t = i / 3000;
+    const x = Math.sin(t * 91.3) * 90;
+    const y = Math.cos(t * 57.7) * 90;
+    const z = Math.sin(t * 33.1) * 90;
+    const e = 1e-4;
+    const at = (px, py, pz) => sdPrismZ(px, py, pz, n, r, h, 0);
+    const g = Math.hypot(
+      (at(x + e, y, z) - at(x - e, y, z)) / (2 * e),
+      (at(x, y + e, z) - at(x, y - e, z)) / (2 * e),
+      (at(x, y, z + e) - at(x, y, z - e)) / (2 * e),
+    );
+    if (Number.isFinite(g)) worstGradient = Math.max(worstGradient, Math.abs(g - 1));
+  }
+  check('the gradient is unit everywhere sampled', worstGradient < 1e-3, `off by ${worstGradient.toExponential(2)}`);
+
+  // A hand-edited project file is not bound by the inspector's step of 1.
+  check('a fractional side count rounds', sdPrismZ(17, 9, 3, 6.4, r, h, 0) === sdPrismZ(17, 9, 3, 6, r, h, 0));
+  check('fewer than three sides clamps up', sdPrismZ(17, 9, 3, 1, r, h, 0) === sdPrismZ(17, 9, 3, 3, r, h, 0));
+
+  // Rounding takes the corner off and leaves the flats alone, as roundBox does.
+  check(
+    'rounding leaves the flats exactly where they were',
+    near(sdPrismZ(apothem * Math.cos(a), apothem * Math.sin(a), 0, n, r, h, 8), 0),
+  );
+  check('and pulls the vertex in', sdPrismZ(r, 0, 0, n, r, h, 8) > 1, `${sdPrismZ(r, 0, 0, n, r, h, 8).toFixed(3)}`);
+  check(
+    'a corner radius past the apothem is clamped rather than inverting',
+    sdPrismZ(0, 0, 0, n, r, h, 500) < 0,
+  );
+
+  for (const sides of [3, 5, 8, 12]) {
+    const ap = r * Math.cos(Math.PI / sides);
+    check(
+      `n=${sides}: vertex on the surface and centre one apothem in`,
+      near(sdPrismZ(r, 0, 0, sides, r, h, 0), 0) &&
+        near(sdPrismZ(0, 0, 0, sides, r, h, 0), -Math.min(ap, h / 2)),
+    );
+  }
+}
+
+console.log('sdf: cone is an exact field');
+{
+  const near = (got, want, tol = 1e-9) => Math.abs(got - want) < tol;
+
+  check('the apex is on the surface', near(sdConeZ(0, 0, 45, 90, 50, 0), 0));
+  check('5 mm above the apex is 5 mm', near(sdConeZ(0, 0, 50, 90, 50, 0), 5));
+  check('the base rim is on the surface', near(sdConeZ(50, 0, -45, 90, 50, 0), 0));
+  check('the centre of the base is on the surface', near(sdConeZ(0, 0, -45, 90, 50, 0), 0));
+
+  // Straight out along the slant's normal, which is the case a naive
+  // implementation gets wrong while still looking right on the axis.
+  const len = Math.hypot(90, 50);
+  check(
+    '10 mm off the slant is 10 mm',
+    near(sdConeZ(25 + (10 * 90) / len, 0, (10 * 50) / len, 90, 50, 0), 10),
+  );
+
+  // r1 = r2 has to degenerate to a cylinder rather than dividing by nothing.
+  let worst = 0;
+  for (let i = 0; i < 2000; i++) {
+    const t = i / 2000;
+    const x = Math.sin(t * 91) * 80;
+    const y = Math.cos(t * 57) * 80;
+    const z = Math.sin(t * 33) * 80;
+    const dr = Math.hypot(x, y) - 40;
+    const dz = Math.abs(z) - 40;
+    const want = Math.min(Math.max(dr, dz), 0) + Math.hypot(Math.max(dr, 0), Math.max(dz, 0));
+    worst = Math.max(worst, Math.abs(sdConeZ(x, y, z, 80, 40, 40) - want));
+  }
+  check('equal radii give exactly a cylinder', worst < 1e-9, `off by ${worst.toExponential(2)}`);
+
+  check('a zero height does not divide by nothing', Number.isFinite(sdConeZ(3, 4, 0, 0, 20, 10)));
+  check('an upside-down taper works too', near(sdConeZ(0, 0, -45, 90, 0, 50), 0));
+
+  let worstGradient = 0;
+  for (let i = 0; i < 3000; i++) {
+    const t = i / 3000;
+    const x = Math.sin(t * 71.3) * 90;
+    const y = Math.cos(t * 47.7) * 90;
+    const z = Math.sin(t * 29.1) * 90;
+    const e = 1e-4;
+    const at = (px, py, pz) => sdConeZ(px, py, pz, 90, 50, 15);
+    const g = Math.hypot(
+      (at(x + e, y, z) - at(x - e, y, z)) / (2 * e),
+      (at(x, y + e, z) - at(x, y - e, z)) / (2 * e),
+      (at(x, y, z + e) - at(x, y, z - e)) / (2 * e),
+    );
+    if (Number.isFinite(g)) worstGradient = Math.max(worstGradient, Math.abs(g - 1));
+  }
+  check('the gradient is unit everywhere sampled', worstGradient < 1e-3, `off by ${worstGradient.toExponential(2)}`);
+}
 
 console.log('sdf: transforms');
 {
