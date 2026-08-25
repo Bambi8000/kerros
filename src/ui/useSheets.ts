@@ -1,10 +1,13 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { rodsFromFeatures, useKerros } from '../core/store';
 import { spacerHeightAchieved, spacerPlans } from '../core/rig';
 import type { SpacerPlan } from '../core/rig';
 import { buildParts } from '../core/job';
-import { analyseSheet, applyPlacements, nestByMaterial } from '../core/nest';
-import type { NestResult, SheetReport } from '../core/nest';
+import { analyseSheet, applyPlacements } from '../core/nest';
+import type { NestOptions, NestResult, PartGeometry, SheetReport } from '../core/nest';
+import { rehydrateNest } from '../core/pipeline';
+import type { NestOutput } from '../core/pipeline';
+import { requestNest } from './workerBridge';
 import type { SliceSet } from '../core/slice';
 
 export interface SheetResult extends NestResult {
@@ -15,6 +18,10 @@ export interface SheetResult extends NestResult {
   /** True-shape collision and clearance report, per sheet index. */
   reports: Record<number, SheetReport>;
   pinnedCount: number;
+  /** A nest is in flight and what is on screen is the previous one. */
+  busy: boolean;
+  /** How long the last pack took, ms. */
+  ms: number;
 }
 
 const EMPTY: SheetResult = {
@@ -25,18 +32,57 @@ const EMPTY: SheetResult = {
   partCount: 0,
   reports: {},
   pinnedCount: 0,
+  busy: false,
+  ms: 0,
 };
+
+/**
+ * Stable stand-in for "no window plugs".
+ *
+ * A `= []` default builds a fresh array on every call, which would make the
+ * job memo below change identity on every render and dispatch a nest job on
+ * every render with it. Cheap when the work was a memo; not cheap now that it
+ * is a message to another thread.
+ */
+const NO_WINDOWS: { label: string; set: SliceSet }[] = [];
+
+/**
+ * Coalesce rapid changes to the bed settings.
+ *
+ * Shorter than the slice debounce, because the expensive wait already happened
+ * upstream: by the time parts exist, slicing has settled. This one only stops a
+ * dragged margin or part gap from queueing a pack per pixel.
+ */
+const NEST_DEBOUNCE = 120;
+
+interface BuiltJob {
+  parts: PartGeometry[];
+  spacers: SpacerPlan[];
+  spacerAchieved: number;
+  options: NestOptions;
+}
 
 /**
  * Nest the current job onto sheets.
  *
- * Cheap compared with slicing — it only moves bounding boxes around — so it
- * runs synchronously off a memo rather than a debounce, and re-runs whenever
- * the slices or the bed change.
+ * Packing runs in the shared worker. True-shape costs about half a second on a
+ * real lamp and the webview makes that closer to a second, which is a freeze in
+ * exactly the mode where a person is judging whether to buy material.
+ *
+ * Two things deliberately stay on this thread:
+ *
+ * - **Hand placements.** `applyPlacements` and `rotatePart` are interactive and
+ *   cheap, and they go on *after* the pack, so dragging a part no longer
+ *   re-packs the sheet. Before this the placements were a dependency of the
+ *   memo that did the packing, so every drag paid the full cost.
+ * - **`analyseSheet`.** The collision reading is feedback to that dragging, so
+ *   it has to be on screen when the part is in the wrong place rather than a
+ *   message round trip later. It only examines pairs whose boxes overlap and
+ *   thins dense outlines, so the cost is already bounded.
  */
 export function useSheets(
   slices: SliceSet | null,
-  windows: { label: string; set: SliceSet }[] = [],
+  windows: { label: string; set: SliceSet }[] = NO_WINDOWS,
 ): SheetResult {
   const features = useKerros((s) => s.features);
   const trueShape = useKerros((s) => s.trueShapeNesting);
@@ -51,45 +97,27 @@ export function useSheets(
   const makeSpacers = useKerros((s) => s.makeSpacers);
   const partPlacements = useKerros((s) => s.partPlacements);
 
-  return useMemo(() => {
-    if (!slices || slices.slices.length === 0) return EMPTY;
+  /** Everything the pack needs, assembled here because it is grouping, not packing. */
+  const built = useMemo<BuiltJob | null>(() => {
+    if (!slices || slices.slices.length === 0) return null;
 
     const spacerOptions = { thickness, spacerHeight, kerf, ringWidth };
     const spacers = makeSpacers
       ? spacerPlans(rodsFromFeatures(features), slices.slices, spacerOptions)
       : [];
 
-    const parts = buildParts(slices, spacers, windows);
-    const nested = nestByMaterial(parts, {
-      trueShape,
-      cell: nestCell,
-      sheetWidth: Math.max(machine.bedWidth - machine.margin * 2, 1),
-      sheetHeight: Math.max(machine.bedHeight - machine.margin * 2, 1),
-      gap: partGap,
-      labelHeight,
-    });
-
-    // Manual placements go on last, so re-nesting rearranges everything except
-    // what a person deliberately put somewhere.
-    const placed = applyPlacements(nested, partPlacements);
-
-    // The real check: do the outlines actually meet, and is there enough room
-    // between them. Bounding boxes cannot tell you either — a part nested into
-    // another's concavity shares a box and cuts perfectly.
-    const reports: Record<number, SheetReport> = {};
-    let pinnedCount = 0;
-    for (const sheet of placed.sheets) {
-      reports[sheet.index] = analyseSheet(sheet, partGap);
-      for (const part of sheet.parts) if (part.pinned) pinnedCount++;
-    }
-
     return {
-      ...placed,
+      parts: buildParts(slices, spacers, windows),
       spacers,
       spacerAchieved: spacerHeightAchieved(spacerOptions),
-      partCount: parts.length,
-      reports,
-      pinnedCount,
+      options: {
+        trueShape,
+        cell: nestCell,
+        sheetWidth: Math.max(machine.bedWidth - machine.margin * 2, 1),
+        sheetHeight: Math.max(machine.bedHeight - machine.margin * 2, 1),
+        gap: partGap,
+        labelHeight,
+      },
     };
   }, [
     slices,
@@ -107,6 +135,83 @@ export function useSheets(
     labelHeight,
     ringWidth,
     makeSpacers,
-    partPlacements,
   ]);
+
+  /**
+   * The reply, kept with the job it answers.
+   *
+   * A placement table is only meaningful against the parts it was computed
+   * from, so the two travel together. That is also what lets the previous
+   * layout stay on screen while a new one is packed: it stays consistent with
+   * itself rather than becoming a set of positions for parts that no longer
+   * exist.
+   */
+  const [done, setDone] = useState<{ output: NestOutput; job: BuiltJob } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const token = useRef(0);
+
+  useEffect(() => {
+    if (!built) {
+      token.current++;
+      setDone(null);
+      setBusy(false);
+      return;
+    }
+
+    const mine = ++token.current;
+    setBusy(true);
+
+    const timer = setTimeout(() => {
+      requestNest({ parts: built.parts, options: built.options })
+        .then((output) => {
+          // During a drag several packs are in flight and only the last one
+          // asked for is worth showing.
+          if (mine !== token.current) return;
+          setDone({ output, job: built });
+          setBusy(false);
+        })
+        .catch((error: unknown) => {
+          if (mine !== token.current) return;
+          console.error('[Kerros] nesting failed:', error);
+          setBusy(false);
+        });
+    }, NEST_DEBOUNCE);
+
+    return () => clearTimeout(timer);
+  }, [built]);
+
+  return useMemo(() => {
+    if (!done) return busy ? { ...EMPTY, busy: true } : EMPTY;
+
+    const { output, job } = done;
+    const nested = rehydrateNest(output, job.parts);
+    if (nested.missing.length > 0) {
+      console.error('[Kerros] placements with no part:', nested.missing.join(', '));
+    }
+
+    // Manual placements go on last, so re-nesting rearranges everything except
+    // what a person deliberately put somewhere.
+    const placed = applyPlacements({ sheets: nested.sheets, unplaced: nested.unplaced }, partPlacements);
+
+    // The real check: do the outlines actually meet, and is there enough room
+    // between them. Bounding boxes cannot tell you either — a part nested into
+    // another's concavity shares a box and cuts perfectly.
+    const reports: Record<number, SheetReport> = {};
+    let pinnedCount = 0;
+    for (const sheet of placed.sheets) {
+      reports[sheet.index] = analyseSheet(sheet, job.options.gap);
+      for (const part of sheet.parts) if (part.pinned) pinnedCount++;
+    }
+
+    return {
+      ...placed,
+      spacers: job.spacers,
+      spacerAchieved: job.spacerAchieved,
+      partCount: job.parts.length,
+      reports,
+      pinnedCount,
+      busy,
+      ms: output.ms,
+    };
+  }, [done, busy, partPlacements]);
 }

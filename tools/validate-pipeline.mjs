@@ -12,12 +12,16 @@
 import {
   runSliceJob,
   runPreviewJob,
+  runNestJob,
+  rehydrateNest,
   attachFrameFor,
   fixturesFromFeatures,
   EMPTY_OUTPUT,
   EMPTY_PREVIEW,
+  EMPTY_NEST,
   volumeFromPayload,
 } from '../src/core/pipeline.ts';
+import { nestByMaterial } from '../src/core/nest.ts';
 import { defaultParams, defaultModifierParams, findModule, shellModifier } from '../src/core/sdf.ts';
 import { groupContours } from '../src/core/slice.ts';
 import { importMesh } from '../src/core/meshImport.ts';
@@ -32,6 +36,18 @@ function check(name, condition, detail = '') {
     failures++;
     console.log(`  FAIL  ${name}${detail ? ' — ' + detail : ''}`);
   }
+}
+
+/** Structural comparison, so a test cannot fail merely on key order. */
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  for (const k of ka) if (!deepEqual(a[k], b[k])) return false;
+  return true;
 }
 
 const sphere = findModule('sphere');
@@ -341,6 +357,154 @@ console.log('pipeline: fixtures follow the shape they are attached to');
   const output = runSliceJob(baseJob([moved, shell, socket('host')]), new Map());
   check('an attached fixture still slices', output.set !== null);
   check('and is accounted for', typeof output.fixtureMisses.fx === 'number');
+}
+
+console.log('pipeline: nesting goes through one entry point');
+{
+  const circle = (r, n = 64, cx = 0, cy = 0) => {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      out.push(cx + r * Math.cos(a), cy + r * Math.sin(a));
+    }
+    return out;
+  };
+
+  const ring = (id, label, outerR, innerR) => ({
+    id,
+    label,
+    kind: 'slice',
+    material: 'stock',
+    outer: circle(outerR),
+    holes: [circle(innerR)],
+    circles: [],
+    layer: 1,
+  });
+
+  /**
+   * One part that is neither round nor centred on the origin.
+   *
+   * Without it every part's bounding-box centre is [0, 0], the pivot is [0, 0]
+   * by coincidence, and a rehydration that lost the pivot entirely would still
+   * pass — which is what happened to the first version of this test.
+   */
+  const lopsided = {
+    id: 'slice-7-0',
+    label: 'L07',
+    kind: 'slice',
+    material: 'stock',
+    outer: [10, 4, 58, 4, 58, 20, 26, 20, 26, 46, 10, 46],
+    holes: [],
+    circles: [{ x: 18, y: 12, r: 2.65 }],
+    layer: 7,
+  };
+
+  const disc = (id, r) => ({
+    id,
+    label: 'SP',
+    kind: 'spacer',
+    material: 'stock',
+    outer: circle(r),
+    outerCircle: { x: 0, y: 0, r },
+    holes: [],
+    circles: [{ x: 0, y: 0, r: 2.65 }],
+  });
+
+  const parts = [];
+  for (let i = 0; i < 6; i++) parts.push(ring(`slice-${i + 1}-0`, `L0${i + 1}`, 45 - i * 2, 34 - i * 2));
+  for (let i = 0; i < 10; i++) parts.push(disc(`spacer-r1-${i}`, 8));
+  parts.push(lopsided);
+
+  check(
+    'the job has a part whose pivot is not the origin',
+    Math.abs((lopsided.outer[0] + lopsided.outer[2]) / 2) > 1,
+  );
+
+  // A small bed on purpose: on a big one both packers fit everything on one
+  // sheet and agree, and the checks below would have nothing to see.
+  const options = { sheetWidth: 200, sheetHeight: 200, gap: 3, labelHeight: 4 };
+  const shelf = { ...options, trueShape: false };
+  const truth = { ...options, trueShape: true, cell: 1.5 };
+
+  const a = runNestJob({ parts, options: shelf });
+  const b = runNestJob({ parts, options: shelf });
+  check(
+    'the same job packs the same way',
+    deepEqual({ ...a, ms: 0 }, { ...b, ms: 0 }),
+  );
+  check('and reports a time', a.ms >= 0);
+
+  // The reply is positions, not parts. Neither packer touches geometry, so
+  // sending it back would be sending it home again.
+  check(
+    'the placement table carries no geometry',
+    !JSON.stringify(a).includes('"outer"') && !JSON.stringify(a).includes('"holes"'),
+  );
+
+  check('and both directions survive a thread boundary', (() => {
+    try {
+      structuredClone({ parts, options: shelf });
+      structuredClone(a);
+      return true;
+    } catch {
+      return false;
+    }
+  })());
+
+  // The check that matters: the round trip through the job boundary must give
+  // exactly what calling the nester directly gives.
+  for (const [name, opts] of [['shelf packing', shelf], ['true shape', truth]]) {
+    const direct = nestByMaterial(parts, opts);
+    const round = rehydrateNest(runNestJob({ parts, options: opts }), parts);
+    check(
+      `${name}: the job boundary changes nothing`,
+      deepEqual(direct, { sheets: round.sheets, unplaced: round.unplaced }),
+    );
+    check(`${name}: nothing goes missing`, round.missing.length === 0);
+  }
+
+  // Precondition for the pair above: if the two packers agreed on this job, a
+  // dropped `trueShape` would slip through both of those checks unnoticed.
+  const shelfLayout = runNestJob({ parts, options: shelf });
+  const trueLayout = runNestJob({ parts, options: truth });
+  check(
+    'the two packers disagree on this job, so a dropped option would show',
+    trueLayout.sheets[0].placements.length > shelfLayout.sheets[0].placements.length,
+    `first sheet holds ${shelfLayout.sheets[0].placements.length} boxed, ` +
+      `${trueLayout.sheets[0].placements.length} true-shape`,
+  );
+
+  // Materials never share a sheet, and that has to survive the boundary too.
+  const mixed = [
+    ring('slice-9-0', 'L09', 40, 30),
+    { ...ring('window-w-9-0', 'W09', 20, 10), material: 'window' },
+  ];
+  const split = rehydrateNest(runNestJob({ parts: mixed, options: shelf }), mixed);
+  check(
+    'materials stay on their own sheets',
+    split.sheets.length === 2 && split.sheets.every((s) => s.ordinal === 1),
+    split.sheets.map((s) => `${s.index}:${s.material}`).join(' '),
+  );
+
+  const oversize = [ring('slice-1-0', 'L01', 45, 34), ring('huge', 'BIG', 300, 280)];
+  const big = rehydrateNest(runNestJob({ parts: oversize, options: shelf }), oversize);
+  check(
+    'a part too large for the bed is reported, not dropped',
+    big.unplaced.length === 1 && big.unplaced[0].id === 'huge',
+  );
+  check('and it comes back as the whole part', big.unplaced[0].outer.length > 0);
+
+  const empty = runNestJob({ parts: [], options: shelf });
+  check(
+    'an empty job gives an empty layout rather than throwing',
+    empty.sheets.length === 0 && empty.unplacedIds.length === 0,
+  );
+  check('and matches the idle shape', deepEqual({ ...empty, ms: 0 }, EMPTY_NEST));
+
+  // Rehydrating against the wrong parts is a caller bug, but a part vanishing
+  // off a sheet with no explanation is the failure this program keeps fixing.
+  const wrong = rehydrateNest(a, parts.slice(0, 3));
+  check('a placement with no part is reported', wrong.missing.length > 0, `${wrong.missing.length} ids`);
 }
 
 console.log('');

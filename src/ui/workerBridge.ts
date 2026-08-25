@@ -9,14 +9,18 @@
 
 import { importGrids } from '../core/store';
 import {
+  EMPTY_NEST,
   EMPTY_OUTPUT,
   EMPTY_PREVIEW,
+  runNestJob,
   runPreviewJob,
   runSliceJob,
 } from '../core/pipeline';
 import type {
   ImportPayload,
   MeshVolume,
+  NestJob,
+  NestOutput,
   PreviewJob,
   PreviewOutput,
   SliceJob,
@@ -151,4 +155,28 @@ export async function requestPreview(
   if (reply.kind === 'previewed') return reply.output;
   console.error('[Kerros] preview failed in the worker:', reply.kind === 'failed' ? reply.message : '');
   return EMPTY_PREVIEW;
+}
+
+/**
+ * Pack parts onto sheets, off the main thread.
+ *
+ * No `syncImports` here, and that is not an oversight: nesting is handed
+ * finished parts and never asks the field anything, so the megabytes of
+ * Float32 an import carries are of no use to it.
+ */
+export async function requestNest(job: NestJob): Promise<NestOutput> {
+  const active = ensureWorker();
+  if (!active) return runNestJob(job);
+
+  const token = nextToken++;
+
+  const reply = await new Promise<WorkerReply>((resolve) => {
+    pending.set(token, resolve);
+    const request: WorkerRequest = { kind: 'nest', token, job };
+    active.postMessage(request);
+  });
+
+  if (reply.kind === 'nested') return reply.output;
+  console.error('[Kerros] nesting failed in the worker:', reply.kind === 'failed' ? reply.message : '');
+  return EMPTY_NEST;
 }

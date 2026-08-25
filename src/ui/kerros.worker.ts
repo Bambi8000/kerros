@@ -10,10 +10,12 @@
  * Float32 and re-sending them with every job would cost more than the work does.
  */
 
-import { runPreviewJob, runSliceJob, volumeFromPayload } from '../core/pipeline';
+import { runNestJob, runPreviewJob, runSliceJob, volumeFromPayload } from '../core/pipeline';
 import type {
   ImportPayload,
   MeshVolume,
+  NestJob,
+  NestOutput,
   PreviewJob,
   PreviewOutput,
   SliceJob,
@@ -23,12 +25,14 @@ import type {
 export type WorkerRequest =
   | { kind: 'imports'; payloads: ImportPayload[] }
   | { kind: 'slice'; token: number; job: SliceJob }
-  | { kind: 'preview'; token: number; job: PreviewJob };
+  | { kind: 'preview'; token: number; job: PreviewJob }
+  | { kind: 'nest'; token: number; job: NestJob };
 
 export type WorkerReply =
   | { kind: 'imports'; count: number }
   | { kind: 'sliced'; token: number; output: SliceOutput }
   | { kind: 'previewed'; token: number; output: PreviewOutput }
+  | { kind: 'nested'; token: number; output: NestOutput }
   | { kind: 'failed'; token: number; message: string };
 
 const volumes = new Map<string, MeshVolume>();
@@ -56,6 +60,15 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       (self as unknown as {
         postMessage: (message: unknown, transfer?: Transferable[]) => void;
       }).postMessage(reply, [output.positions.buffer, output.indices.buffer]);
+      return;
+    }
+
+    if (request.kind === 'nest') {
+      // Nesting needs no field and therefore no import grids: it is handed
+      // finished parts and hands back where they go.
+      const output = runNestJob(request.job);
+      const reply: WorkerReply = { kind: 'nested', token: request.token, output };
+      self.postMessage(reply);
       return;
     }
 

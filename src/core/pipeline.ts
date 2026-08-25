@@ -41,6 +41,15 @@ import { surfaceNets } from './surfaceNets.ts';
 import { sampleMeshGrid } from './voxelise.ts';
 import type { MeshGrid } from './voxelise.ts';
 import { generatePattern } from './pattern.ts';
+import { nestByMaterial } from './nest.ts';
+import type {
+  BBox,
+  NestOptions,
+  NestResult,
+  PartGeometry,
+  PlacedPart,
+  Sheet,
+} from './nest.ts';
 import {
   circleFitsInPart,
   groupContours,
@@ -319,6 +328,148 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     fixtureMisses,
     ms: Date.now() - started,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Nesting
+ *
+ * The third job that can run off the main thread, and the one with the
+ * simplest boundary. Slicing and the preview both need the field, which cannot
+ * cross a thread — so both are handed the tree and rebuild it. Parts are not
+ * like that: they are polygons, circles and strings, which is to say plain
+ * JSON, and they travel as themselves.
+ *
+ * What comes back is deliberately **not** parts. Neither packer touches
+ * geometry — both end at `{ ...part, bbox, pivot, dx, dy, labelAt,
+ * labelHeight }` — so the only thing the nester decides is where each part
+ * goes. Sending the geometry back would be sending it home again, and it would
+ * quietly invite a future packer to modify it in transit, which nothing
+ * downstream expects. Rotation is the proof of the rule: it is baked into
+ * geometry, and it happens in `applyPlacements` on the main thread, after this.
+ * ------------------------------------------------------------------ */
+
+/** Where the nester put one part. No geometry, on purpose. */
+export interface Placement {
+  id: string;
+  dx: number;
+  dy: number;
+  bbox: BBox;
+  pivot: [number, number];
+  labelAt: [number, number] | null;
+  labelHeight: number;
+}
+
+export interface NestedSheet {
+  index: number;
+  material: string;
+  ordinal: number;
+  fill: number;
+  /** In packing order, which is the order the sheet view draws them. */
+  placements: Placement[];
+}
+
+export interface NestJob {
+  parts: PartGeometry[];
+  options: NestOptions;
+}
+
+export interface NestOutput {
+  sheets: NestedSheet[];
+  unplacedIds: string[];
+  ms: number;
+}
+
+export const EMPTY_NEST: NestOutput = { sheets: [], unplacedIds: [], ms: 0 };
+
+/** A rehydrated layout, plus anything the placement table named and we lack. */
+export interface RehydratedNest extends NestResult {
+  /**
+   * Ids in the table with no part to attach them to.
+   *
+   * Only reachable by rehydrating against a different set of parts than the one
+   * that was nested, which is a caller bug rather than a user one — but it is
+   * reported rather than dropped, because a part vanishing off a sheet with no
+   * explanation is the exact failure this program keeps having to fix.
+   */
+  missing: string[];
+}
+
+/** Pack parts onto sheets. Pure, and therefore the same on either thread. */
+export function runNestJob(job: NestJob): NestOutput {
+  const started = Date.now();
+  const nested = nestByMaterial(job.parts, job.options);
+
+  return {
+    sheets: nested.sheets.map((sheet) => ({
+      index: sheet.index,
+      material: sheet.material,
+      ordinal: sheet.ordinal,
+      fill: sheet.fill,
+      placements: sheet.parts.map((part) => ({
+        id: part.id,
+        dx: part.dx,
+        dy: part.dy,
+        bbox: part.bbox,
+        pivot: part.pivot,
+        labelAt: part.labelAt,
+        labelHeight: part.labelHeight,
+      })),
+    })),
+    unplacedIds: nested.unplaced.map((part) => part.id),
+    ms: Date.now() - started,
+  };
+}
+
+/**
+ * Put the geometry back under the placements.
+ *
+ * Must be given the parts the table was computed from. Holding those two
+ * together is the caller's job and is why `useSheets` keeps the whole job
+ * snapshot beside the reply rather than only the reply: a placement table read
+ * against a newer set of parts is meaningless, not merely stale.
+ */
+export function rehydrateNest(output: NestOutput, parts: PartGeometry[]): RehydratedNest {
+  const byId = new Map<string, PartGeometry>();
+  for (const part of parts) byId.set(part.id, part);
+
+  const missing: string[] = [];
+  const sheets: Sheet[] = output.sheets.map((sheet) => {
+    const placed: PlacedPart[] = [];
+    for (const at of sheet.placements) {
+      const part = byId.get(at.id);
+      if (!part) {
+        missing.push(at.id);
+        continue;
+      }
+      // Field order matches what the packers build, so a validator can compare
+      // the two results directly.
+      placed.push({
+        ...part,
+        bbox: at.bbox,
+        pivot: at.pivot,
+        dx: at.dx,
+        dy: at.dy,
+        labelAt: at.labelAt,
+        labelHeight: at.labelHeight,
+      });
+    }
+    return {
+      index: sheet.index,
+      material: sheet.material,
+      ordinal: sheet.ordinal,
+      parts: placed,
+      fill: sheet.fill,
+    };
+  });
+
+  const unplaced: PartGeometry[] = [];
+  for (const id of output.unplacedIds) {
+    const part = byId.get(id);
+    if (part) unplaced.push(part);
+    else missing.push(id);
+  }
+
+  return { sheets, unplaced, missing };
 }
 
 /* ------------------------------------------------------------------ *
