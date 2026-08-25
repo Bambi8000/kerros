@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.17.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.18.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -74,6 +74,9 @@ quietly revert them.**
 | `npx tsc --noEmit` as the type check | `npm run verify` | the root tsconfig is a solution file with `"files": []`, so `--noEmit` against it checks **nothing** and exits happily |
 | marching cubes if the preview's edges start to mislead | dual contouring, if anything | both put vertices on cell edges, so MC chamfers what surface nets rounds; only a vertex placed *inside* the cell gives a corner the grid does not contain |
 | teach Chaikin to keep sharp corners | leave Chaikin alone | measured: it does not round corners at slicing resolution once the order is right, and keeping them lands the corner *further* from true |
+| layer pitch derived in one place, `layerPitch()` | the **layer plan** built in one place, `planLayers()` | `layerPitch` was never called, once, anywhere, while `store.ts` computed the same sum inline — a rule written and never wired to anything. And with gaps that vary there is no single pitch to derive |
+| spacer rings cut from the stock | rings are their own material | 0.5 mm steel wants 372 rings per rod from 0.5 mm rings and 62 from 3 mm ones; and once they differ they cannot share a sheet |
+| a claim in a comment is documentation | a claim in a comment is a guess | `parseProject`'s backwards-compatibility promise was a comment until a broken round-trip test forced it to be proved |
 
 ## The recurring failure mode
 
@@ -84,6 +87,13 @@ type check that checked nothing.
 The rule that came out of it, and which is now honoured throughout: **a check that
 refuses to do something is obliged to say what it refused and why.** Counts of what
 was placed, what did not fit, and what it would have needed.
+
+A seventh, which is the same disease wearing the opposite coat: the gradient
+panel's "both gaps the same" was **said confidently and wrongly**. 3 mm and 4 mm
+are both one 3 mm ring, so the result was right and the reason was nonsense, and
+the warning written for exactly that case sat in a branch that could not open.
+Silence is one failure; a fluent wrong sentence is worse, because it stops the
+person looking.
 
 There is a sixth, kept separate because the cure is the same but the disease is
 not. `partPlacements` was a dependency of the memo that packed the sheets, so
@@ -181,6 +191,13 @@ out of the store for exactly this reason and are re-exported from there.
 - **Import grids live outside the store**, in a module-level map, because a grid is
   megabytes of Float32 and has no business in state that gets compared on every
   render. `importRevision` is what tells the memos to recompute.
+- **The layer plan is built in one place**, `planLayers()` in `slice.ts`. This
+  replaces the old rule about `layerPitch()`, which named a function nobody
+  called. `pitchAt()` answers "which pitch, where" for the one caller that wants
+  a local number.
+- **Gaps are whole rings of the spacer material**, and the plan is built on the
+  gap that can be made, never the one that was asked for. A program that plans a
+  lamp it cannot build is worse than one that rounds and says so.
 - **A worker returns decisions, not geometry.** Slicing and the preview are handed
   the tree, because a field is closures and closures do not cross a boundary.
   Nesting is handed parts and returns a placement table, because neither packer
@@ -303,7 +320,7 @@ once is the whole saving.
 
 | Foundation | What it unlocks |
 | --- | --- |
-| **An explicit layer plan** — a list of planes `{ index, z0, z1, thickness, gapAbove, rotation }` instead of one pitch | varying gaps; interleaved short pins; per-layer cable holes; per-layer sculpting |
+| ~~**An explicit layer plan**~~ — **shipped**, as `{ index, z0, z, thickness, gapAbove }` | varying gaps *(shipped)*; interleaved short pins; per-layer cable holes; per-layer sculpting |
 | **One `LayerSelector`** — a single way to say *which layers*, read by windows, fixtures, perforation and rods | the same four, and it tidies loft as well |
 | **`profile2d.ts`** — a 2D profile as a first-class thing, from SVG, a brush, or a slice of the field | SVG import; morph between key layers; per-layer editing |
 | **A material library** — calliper, flute pitch and profile, direction, phase | corrugated sheet as stock; stack pitch that depends on it |
@@ -316,11 +333,9 @@ survives. Everything that computes `k · pitch` reads the list instead.
 
 Two constraints that have to be said before anyone builds against them:
 
-- **A gap is always a whole number of spacer rings**, because a ring is one sheet
-  thick. Varying gaps are quantised to the spacer material, so 3 mm plexi gives
-  3, 6, 9 — not 3, 4.5, 6. `ringsPerGap()` already knows this; the panel has to
-  say it, because the failure mode is a stack that will not close on the rods
-  after everything is cut.
+- ~~A gap is always a whole number of spacer rings.~~ **Shipped**, and the ring
+  material is now separate from the stock, which is what makes 0.5 mm sheet
+  usable at all. The panel says how many steps a gradient can actually take.
 - **A slanted leg hole is not the mid-plane ellipse.** A 45° leg moves 3 mm
   sideways through a 3 mm sheet, so the shape to cut is the sweep between the
   ellipses at the sheet's top and bottom faces. Cut only the mid-plane ellipse
@@ -373,6 +388,13 @@ Worth knowing, because it is a working agreement rather than a preference.
 - **Work arrives as a zip of changed files only**, unpacked to `/tmp` and rsynced
   over the repo. That is why local edits get overwritten: say so when you have made
   one, and it will be carried into the next bundle.
+- **Grep for the symbol you changed, not the topic you changed.** Before removing
+  or resignaturing an export, search the whole tree for that identifier and paste
+  the result. This rule exists because it was adopted mid-session and then failed
+  anyway: `composeField` gained a parameter, the search was for `spacerHeight`
+  and `.pitch`, and `main` was pushed in a state that would not compile.
+- **Nothing is committed on a verify that was not seen.** The same push happened
+  because a commit was made between a red run and the fix for it.
 - **Every geometry change comes with validator checks in the same batch**, and the
   checks are written to fail for the right reason. Several times a red check has
   been the test being wrong rather than the code, and saying so plainly is part of

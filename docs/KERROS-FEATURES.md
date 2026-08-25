@@ -611,10 +611,69 @@ them reaches two layers.
 **The handoff says one ring per gap, and that is wrong.** A ring can only be a
 whole sheet thick, so a 6 mm gap cut from 3 mm plexi needs **two** rings
 stacked, not one. `ringsPerGap()` computes the count and
-`spacerHeightAchieved()` reports the gap you will actually get. When the
-requested spacer height is not a multiple of the material thickness the
-profiles panel says so plainly, because the failure mode is a stack that will
-not close on the rods after everything is already cut.
+`spacerHeightAchieved()` reports the gap you will actually get.
+
+### Rings are their own material
+
+Tying the ring thickness to the stock's is what makes thin sheet unusable, and
+the arithmetic is brutal. A 200 mm lamp in 0.5 mm steel, simulated:
+
+| stock | ring material | rings per rod |
+| --- | --- | --- |
+| 0.5 mm | 0.5 mm | **372** |
+| 0.5 mm | 3 mm | 62 |
+
+Nobody stacks 372 washers by hand. So `spacerThickness` is its own setting, 0
+meaning "follow the stock", which is what every profile written before it meant
+by saying nothing.
+
+Two things follow that were not obvious until they were said out loud.
+
+**Rings nest as their own material once they have their own thickness.** They
+are not even the same height of stuff; they cannot share a sheet. `spacer` goes
+through the same `nestByMaterial` path as the plexi window plugs and gets its
+own sheet and its own ordinal. At equal thickness they are the stock and share
+its sheets, exactly as before. This one came from Daniel mentioning in passing
+that of course he cuts them separately — not from anything failing.
+
+**Rings are counted from the gaps that are actually there.** `spacerPlans` walks
+the sheets a rod reaches and measures sheet to sheet, rather than multiplying a
+requested spacer height by a gap count. On a uniform stack the two agree; on a
+graded one only the measured gap can be right, since a rod does not care what was
+asked for. It also gets a void along Z right for free — two sheets three pitches
+apart need three pitches of rings, not one gap's worth. `SpacerPlan` lost
+`ringsPerGap` in the process, because a graded stack has no single number, and
+carries `ringsMin`, `ringsMax` and the total instead.
+
+### Three states in the panel, not two
+
+The gradient controls needed a sentence saying how many steps the ring material
+can actually take, because nobody can work that out from two millimetre readings.
+The first version got it wrong in the exact case it existed for.
+
+`graded` was computed from the **ring counts**, so 3 mm and 4 mm — both one 3 mm
+ring — came out as "both gaps the same". True about the result, wrong about the
+question, and the warning written for that case lived inside a branch that could
+never open.
+
+Asking for different gaps and getting different gaps are separate facts:
+
+| typed | rings | what the panel says |
+| --- | --- | --- |
+| 6 and 6 | same | uniform, and how to change that |
+| 3 and 4, 3 mm rings | same | **both are one ring, so the stack is uniform**; rings of 1.00 mm or thinner would grade it |
+| 3 and 9, 3 mm rings | differ | the gap goes 3 → 9 mm in 3 steps |
+
+The advice in the middle row is derived rather than guessed: when the ring
+thickness equals the difference between the two gaps, the counts differ by
+exactly one. A larger ring is not guaranteed to — 2 mm rings round both 3 and 4
+to two — so the sentence states the thing that is always true.
+
+The panel logic is the one part of this program that never runs before it runs
+in front of a person. The habit that came out of it: **when a panel grows
+conditions, write the truth table into the message, not only into the code.**
+Three rows and two branches would have shown the mismatch before the browser
+did.
 
 ### A rod hole has to fit
 
@@ -655,6 +714,78 @@ through the space.
 
 `maxLayers` (default 400) caps the count so a mistyped thickness cannot lock
 the app up. A pitch of zero returns no planes rather than looping forever.
+
+### The stack is a list of planes, not a pitch
+
+`planLayers()` returns `{ index, z0, z, thickness, gapAbove }` per sheet.
+`LayerPlan` in `window.ts` mirrors the type structurally — the same deliberate
+duplication as `WindowFrame` and `PlaneFrame`, because neither module may import
+the other.
+
+A single pitch is true only while every gap is the same. A list says the same
+thing when they are and keeps saying it when they are not.
+
+**The change was made identity-preserving on purpose**, and proved rather than
+asserted: the same model through the old and new code gave the same layer
+indices over the whole sampling window, the same sector field across 200,000
+samples, the same slices, and the same layers rolled windows. A refactor that
+can be shown to change nothing and a feature that changes the result are two
+different jobs, and doing them together means neither can be shown.
+
+Two properties turned out to be load-bearing, and neither is visible in the
+code that depends on them:
+
+- **The layer number is not free to change.** Per-layer window rolls are seeded
+  from it, and it counts planes *examined* from the bottom, from 0 — not slices
+  produced. Numbering from 1, or indexing by slice, would have rerolled the
+  windows of every saved project. Ties matter too: `Math.round` sends a half
+  toward +infinity, so a height exactly between two mid-planes belongs to the
+  upper one. The first binary search written disagreed with that at 20 heights
+  out of 3600.
+- **The lookup extrapolates rather than clamping.** The sampling grid pads well
+  past the stack, and over a 280 mm window the old arithmetic produced indices
+  from −3 to 22 — 440 samples below the bottom sheet get negative layers.
+  Clamping them to the ends would change the field there, and `stockField` is a
+  `max` against the sector, so a changed value outside the band can eat material
+  at the band edge.
+
+A validator compares the list against the arithmetic it replaced at 5601
+heights. It is an unusual test — it keeps the old implementation alive as an
+oracle — and it is what made the change safe to make at all.
+
+Looking it up costs **16 ns** against the arithmetic's 26, on a stack of 40
+planes, where one window sample costs 198. The list is cheaper than the thing it
+replaced.
+
+### Gaps that vary up the stack
+
+`spacerHeight` is the gap at the bottom and `spacerHeightTop` the one at the top;
+equal, or the top omitted, is a uniform stack.
+
+**Gaps are counted in rings, not millimetres.** A ring is one sheet of spacer
+material and half a ring does not exist, so a gradient interpolates the *ring
+count* and the quantisation is structural rather than rounded afterwards. One
+consequence worth stating plainly: the smoothness of a gradient is a property of
+the ring material. 3 mm rings give three steps between 3 and 9 mm; 1 mm rings
+give seven.
+
+**The interpolation is by height, not by gap number.** The number of gaps depends
+on the gradient, so a gradient defined per gap would be defined in terms of its
+own result. Height is also what a gradient physically means — the gap depends on
+where in the form you are.
+
+**Uniform is its own branch, not the gradient with equal ends.** Marching
+`z += pitch` accumulates rounding that the closed form `z0 + k·pitch` does not.
+They agree to about 1e-12, which is not the same as agreeing, and a uniform stack
+is the case that must come out bit-identical to what it always has. A validator
+requires that spelling out an equal top gap gives *exactly* the uniform list.
+
+**The plan is built from the achievable gap, not the requested one.** Asking for
+4 mm from 3 mm rings used to slice the model at a 7 mm pitch while the panel
+warned that the stack could only be 6 — the program designed a lamp it could not
+build, and said so in the same panel. Now the two agree, and the warning has
+softened accordingly: it is a note that a number came back different, not a
+threat that the stack will not close.
 
 ### Contour extraction
 

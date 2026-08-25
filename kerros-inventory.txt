@@ -1,58 +1,58 @@
-KERROS INVENTORY  2026-08-25  version 0.17.0
+KERROS INVENTORY  2026-08-25  version 0.18.0
 
 --- source, lines each
-   22175 total
+   23105 total
+    1615 src/core/store.ts
     1605 src/core/sdf.ts
-    1596 src/core/store.ts
     1543 src/ui/Inspector.tsx
     1271 src/core/nest.ts
-    1126 tools/validate-nest.mjs
-    1100 src/ui/Viewport.tsx
-     792 src/core/slice.ts
+    1168 tools/validate-nest.mjs
+    1119 src/ui/Viewport.tsx
+     931 src/core/slice.ts
+     851 src/ui/ProfilePanel.tsx
+     764 src/core/pipeline.ts
      759 src/index.css
-     737 src/ui/ProfilePanel.tsx
-     727 src/core/pipeline.ts
+     703 tools/validate-window.mjs
      685 tools/validate-sdf.mjs
-     635 src/ui/SheetView.tsx
-     627 tools/validate-window.mjs
-     515 tools/validate-pipeline.mjs
-     465 tools/validate-slice.mjs
+     644 src/ui/SheetView.tsx
+     579 tools/validate-slice.mjs
+     556 tools/validate-pipeline.mjs
+     494 src/core/window.ts
      432 tools/validate-rig-export.mjs
-     422 src/core/window.ts
      410 src/core/voxelise.ts
-     396 src/core/project.ts
+     409 src/core/project.ts
      392 tools/validate-pattern.mjs
      388 src/core/pattern.ts
      384 tools/validate-import.mjs
      383 tools/validate-sculpt.mjs
      328 src/core/fixture.ts
+     327 tools/validate-project.mjs
      302 src/ui/SliceInspector.tsx
+     289 src/core/rig.ts
+     287 src/core/job.ts
      286 src/ui/Layout.tsx
      283 src/ui/download.ts
      283 src/core/meshImport.ts
-     273 tools/validate-project.mjs
-     258 src/core/job.ts
      249 tools/validate-fixture.mjs
      244 src/ui/FeatureTree.tsx
      231 src/core/dxf.ts
-     224 src/core/rig.ts
-     217 src/ui/useSheets.ts
+     230 src/ui/useSheets.ts
      203 tools/validate-surfacenets.mjs
      202 src/core/surfaceNets.ts
      182 src/ui/workerBridge.ts
+     136 src/core/types.ts
      136 src/core/font.ts
      131 src/ui/PartInspector.tsx
-      95 src/core/types.ts
+      92 src/ui/useSlices.ts
       88 src/ui/kerros.worker.ts
-      84 src/ui/useSlices.ts
+      87 src/ui/usePreview.ts
       78 src-tauri/src/lib.rs
-      70 src/ui/usePreview.ts
       68 tools/make-icon.py
       52 src/assets/hero.png
       51 tools/check-version.mjs
       45 src/ui/ErrorBoundary.tsx
       43 src/ui/NumberField.tsx
-      33 src/core/profiles.ts
+      41 src/core/profiles.ts
       18 src/core/mesh.ts
       10 src/main.tsx
       10 src/App.tsx
@@ -71,6 +71,13 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+ac2ef94 Gradient controls in the panel; spacer rings nest as their own material; fix a composeField call the 3b core missed
+dff1226 Gradient controls in the panel, and fix a composeField call the 3b core missed
+106ed83 Spacer rings get their own material and a gap that can grade up the stack
+8f152d1 Layer plan becomes a list of planes, proved identical to the pitch it replaces
+a25883e Docs and inventory at 0.17.0; vite no longer wipes the terminal on start
+5e2d3cb Prism and cone as exact fields, and corner-preserving smoothing measured unnecessary
+86bc88e Nesting moved into the worker behind a placement table; dragging a part no longer re-packs the sheet
 f1ff563 Handoff at 0.16.0, including session conventions and untested-in-material status
 7ba2b35 True-shape nesting by rasterising parts, so small parts nest inside rings' holes
 21d725a Group shapes by attaching them to a leader, inheriting the full transform
@@ -94,8 +101,3 @@ fa8c984 M7: wall patterns with four generators and bridge-width enforcement; giz
 8bda200 M4.5: project save and load, panel selection moved into the store
 6a52084 M4.2: true-shape collision and clearance check, replacing the bounding-box overlap warning
 36b5860 M3.1: fix extrusion glitch from intersecting rod holes, rods move in Z with a length parameter, X-ray and wireframe display modes
-e5cd938 M key selects move gizmo, G kept as alias
-736559b M1.5: click-to-select picking via per-feature field distance, transform gizmo with snapping, selection outline
-cb6a510 M1: SDF core with six primitives and six ops, surface nets preview mesher, inspector, validators
-ca76375 M0: Z-up viewport with orbit and ortho views, feature tree store, profiles, error boundaries, version validator
-647afae M0: Vite + React + TS scaffold, three.js, version constant, handoff
