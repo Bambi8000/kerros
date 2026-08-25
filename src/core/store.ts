@@ -179,6 +179,7 @@ interface KerrosState {
 
   addShape: (moduleKey: string) => void;
   addRod: () => void;
+  addLegs: () => void;
   addShell: () => void;
   addPattern: () => void;
   addWindow: () => void;
@@ -832,6 +833,49 @@ export const useKerros = create<KerrosState>((set, get) => ({
    * a rod that starts life at the origin is inside the cable channel and
    * invisible. Both are two drags away from wherever they belong.
    */
+  /**
+   * Splayed legs through the bottom sheets.
+   *
+   * Defaults to the two lowest layers, because that is what the selector is for
+   * and because a leg through the whole stack is a rod. The spread is measured
+   * at the bottom of the model, so the number typed in is where the legs meet
+   * the lamp.
+   */
+  addLegs: () =>
+    set((s) => {
+      const bounds = modelBounds(s.features.filter((f) => f.stage === 'SHAPE'));
+      const spread = bounds ? Math.max(bounds.max[0], 20) * 0.7 : 50;
+      const id = `f${s.nextFeatureNumber}`;
+      const count = s.features.filter((f) => f.kind === 'legs').length + 1;
+
+      return {
+        features: [
+          ...s.features,
+          {
+            id,
+            kind: 'legs',
+            stage: 'RIG' as Stage,
+            name: `Legs ${count}`,
+            enabled: true,
+            params: {
+              legCount: 3,
+              tilt: 15,
+              diameter: 12,
+              radius: Math.round(spread * 10) / 10,
+              angle: 0,
+              px: 0,
+              py: 0,
+              selKind: 'range',
+              selFrom: 1,
+              selTo: 2,
+            },
+          },
+        ],
+        nextFeatureNumber: s.nextFeatureNumber + 1,
+        selectedId: id,
+      };
+    }),
+
   addRod: () =>
     set((s) => {
       const bounds = modelBounds(s.features.filter((f) => f.stage === 'SHAPE'));
@@ -1592,6 +1636,7 @@ export {
   rodsFromFeatures,
   windowsFromFeatures,
   fixturesFromFeatures,
+  legsFromFeatures,
   patternOptionsOf,
 } from './pipeline';
 

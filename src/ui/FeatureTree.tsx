@@ -30,6 +30,12 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
     const mode = f.params.mode === 'band' ? 'band' : 'per layer';
     return `${mode}${attached ? ' · attached' : ''}`;
   }
+  // Before the stage test, not after it. Legs are RIG too, and matching the
+  // stage is what made the fixture inspector unreachable for its whole life.
+  if (f.kind === 'legs') {
+    const n = Math.max(Math.round(Number(f.params.legCount) || 3), 1);
+    return `${n} legs · ${Number(f.params.tilt) || 0}° · Ø${Number(f.params.diameter) || 0}`;
+  }
   if (f.stage === 'RIG') {
     return `${f.params.size ?? 'M5'} · ${Number(f.params.length) || 0} mm`;
   }
@@ -73,6 +79,7 @@ export function FeatureTree() {
   const selectedId = useKerros((s) => s.selectedId);
   const addShape = useKerros((s) => s.addShape);
   const addRod = useKerros((s) => s.addRod);
+  const addLegs = useKerros((s) => s.addLegs);
   const addShell = useKerros((s) => s.addShell);
   const addPattern = useKerros((s) => s.addPattern);
   const addWindow = useKerros((s) => s.addWindow);
@@ -221,6 +228,11 @@ export function FeatureTree() {
             }}
           >
             Import…
+          </button>
+        </div>
+        <div className="add-row">
+          <button type="button" className="btn" onClick={addLegs}>
+            Legs
           </button>
         </div>
         <div className="add-row-three">

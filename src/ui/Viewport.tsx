@@ -4,16 +4,19 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM, useKerros } from '../core/store';
 import type { ViewName } from '../core/store';
-import { findModule, nearestFeatureIndex, num } from '../core/sdf';
+import { findModule, modelBounds, nearestFeatureIndex, num } from '../core/sdf';
 import { usePreview } from './usePreview';
 import { buildGeometry } from '../core/mesh';
 import { circleFitsInPart, groupContours } from '../core/slice';
 import type { SliceSet } from '../core/slice';
 import { rodDiameter, rodSpan } from '../core/rig';
 import { socketDiameter } from '../core/fixture';
+import { legAzimuths, MAX_TILT } from '../core/legs';
+import { resolveLayers, selectorFromParams } from '../core/layers';
 import {
   fieldFeaturesWithVolumes,
   fixturesFromFeatures,
+  legsFromFeatures,
   importEntry,
   hasRotation,
   hasTransform,
@@ -253,6 +256,10 @@ export function Viewport({ slices }: ViewportProps) {
 
   const [stats, setStats] = useState<Stats | null>(null);
   const fixtureCount = features.filter((f) => f.kind.startsWith('fixture:') && f.enabled).length;
+  const legCount = features
+    .filter((f) => f.kind === 'legs' && f.enabled)
+    .reduce((sum, f) => sum + Math.max(Math.round(Number(f.params.legCount) || 0), 1), 0);
+  const ghostCount = fixtureCount + legCount;
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -943,7 +950,114 @@ export function Viewport({ slices }: ViewportProps) {
 
       group.add(holder);
     }
-  }, [features, selectedId, mode]);
+
+    /*
+     * Leg ghosts.
+     *
+     * Same reasoning as a fixture's, and more necessary: nobody can judge a
+     * splay from three numbers. A leg is drawn as the cylinder it is — tilted,
+     * running from below the model up through the sheets it was given — so the
+     * angle and the spread are things you look at rather than compute.
+     *
+     * Long enough to reach the floor and a little past the sheets it cuts,
+     * because a leg you can only see inside the lamp tells you nothing about
+     * where it lands.
+     */
+    // The spread is measured at the bottom of the model, the same reference the
+    // pipeline uses, so the ghost stands where the holes will be cut.
+    const modelBox = modelBounds(features.filter((f) => f.stage === 'SHAPE'));
+    const bottom = modelBox ? modelBox.min[2] : 0;
+    for (const spec of legsFromFeatures(features, 0, bottom)) {
+      const selected = spec.id === selectedId;
+      const material = new THREE.MeshStandardMaterial({
+        color: selected ? COLORS.fixtureSelected : COLORS.fixture,
+        roughness: 0.4,
+        metalness: 0,
+        transparent: true,
+        opacity: selected ? 0.5 : 0.3,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+
+      const tilt = (Math.min(Math.max(spec.tilt, 0), MAX_TILT) * Math.PI) / 180;
+      const cosTilt = Math.max(Math.cos(tilt), 1e-6);
+      const modelTop = modelBox ? modelBox.max[2] : bottom + 100;
+
+      /*
+       * The ghost stops where the holes stop.
+       *
+       * It used to run up a fixed fraction of the model, so a leg told to go
+       * through the bottom six sheets was drawn carrying on past them — the
+       * picture claiming a depth the cut does not have, which is the exact
+       * silent lie a ghost exists to remove. The selector is resolved here the
+       * same way the pipeline resolves it.
+       */
+      const chosen = slices
+        ? resolveLayers(
+            selectorFromParams(
+              features.find((f) => f.id === spec.id)?.params,
+              { kind: 'range', from: 1, to: 2 },
+            ),
+            slices.slices,
+          )
+        : [];
+      const reached = slices ? slices.slices.filter((sl) => chosen.includes(sl.index)) : [];
+      const zTop =
+        reached.length > 0
+          ? Math.max(...reached.map((sl) => sl.z)) + slices!.thickness / 2
+          : modelTop;
+
+      // Below the lamp it is a leg, and a leg you cannot see the end of says
+      // nothing about where the feet land. Not the real length — that is the
+      // maker's business — but enough to read the splay against the floor.
+      const zFloor = bottom - Math.max((modelTop - bottom) * 0.35, 30);
+      const sTop = (zTop - spec.zRef) / cosTilt;
+      const sFloor = (zFloor - spec.zRef) / cosTilt;
+      const length = Math.max(sTop - sFloor, 1);
+      const sMid = (sTop + sFloor) / 2;
+
+      for (const azimuth of legAzimuths(spec)) {
+        const a = (azimuth * Math.PI) / 180;
+        const geometry = new THREE.CylinderGeometry(
+          Math.max(spec.diameter, 0.5) / 2,
+          Math.max(spec.diameter, 0.5) / 2,
+          length,
+          24,
+        );
+        // Cylinders are built along Y. Stand it up, lean it out, swing it round.
+        geometry.rotateX(Math.PI / 2);
+        const mesh = new THREE.Mesh(geometry, material);
+        /*
+         * Negative, because the leg leans *in* as it rises.
+         *
+         * The first version used +tilt and drew the legs upside down: they
+         * converged at the floor and splayed inside the lamp. The holes were
+         * right the whole time — the validator requires a higher sheet to take
+         * its hole further in — so this was a picture disagreeing with the
+         * geometry, which is the worse way round to find out.
+         */
+        mesh.rotation.set(0, -tilt, 0);
+        mesh.rotation.order = 'ZYX';
+        mesh.rotation.z = a;
+
+        /*
+         * The axis passes through the spread at `zRef` and leans inwards as it
+         * rises, so the direction is (-cos a · sinθ, -sin a · sinθ, cosθ). The
+         * mesh is centred on its own middle, so it sits at the midpoint of the
+         * span rather than at the reference height.
+         */
+        const dx = -Math.cos(a) * Math.sin(tilt);
+        const dy = -Math.sin(a) * Math.sin(tilt);
+        mesh.position.set(
+          spec.x + Math.cos(a) * spec.radius + dx * sMid,
+          spec.y + Math.sin(a) * spec.radius + dy * sMid,
+          spec.zRef + Math.cos(tilt) * sMid,
+        );
+        mesh.userData.featureId = spec.id;
+        group.add(mesh);
+      }
+    }
+  }, [features, selectedId, mode, slices]);
 
   // Only one of the two 3D representations is on screen at a time.
   useEffect(() => {
@@ -1096,8 +1210,8 @@ export function Viewport({ slices }: ViewportProps) {
               : `Click a shape to select · M move · R rotate · Esc deselect${
                 displayMode === 'solid' ? '' : ` · ${displayMode}`
               }${
-                fixtureCount > 0
-                  ? ` · ${fixtureCount} fixture${fixtureCount === 1 ? '' : 's'} shown as ghosts, cut per slice`
+                ghostCount > 0
+                  ? ` · ${ghostCount} ghost${ghostCount === 1 ? '' : 's'}, cut per slice`
                   : ''
               }`}
         </span>

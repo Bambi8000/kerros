@@ -24,6 +24,7 @@ import {
 import type { Op } from '../core/sdf';
 import { shellModifier } from '../core/sdf';
 import { ROD_CLEARANCE, ROD_SIZES } from '../core/rig';
+import { LEG_COUNTS, MAX_TILT, legSpacing } from '../core/legs';
 import { PATTERN_KINDS, PATTERN_LABELS } from '../core/pattern';
 import { FIXTURE_LABELS, SOCKET_PRESETS, fixtureExtent } from '../core/fixture';
 import type { FixtureKind } from '../core/fixture';
@@ -967,6 +968,160 @@ function WindowInspector({ feature }: { feature: Feature }) {
   );
 }
 
+interface LegsProps {
+  feature: Feature;
+  slices: SliceSet | null;
+  misses: number | undefined;
+}
+
+function LegsInspector({ feature, slices, misses }: LegsProps) {
+  const setParam = useKerros((s) => s.setParam);
+  const renameFeature = useKerros((s) => s.renameFeature);
+  const kerf = useKerros((s) => s.material.kerf);
+  const thickness = useKerros((s) => s.material.thickness);
+
+  const count = Math.max(Math.round(num(feature.params, 'legCount', 3)), 1);
+  const tilt = num(feature.params, 'tilt', 15);
+  const diameter = num(feature.params, 'diameter', 12);
+  const sweep = thickness * Math.tan((Math.min(Math.max(tilt, 0), MAX_TILT) * Math.PI) / 180);
+  const across = diameter / Math.cos((Math.min(Math.max(tilt, 0), MAX_TILT) * Math.PI) / 180);
+
+  return (
+    <>
+      <div className="group">
+        <div className="group-head">Legs</div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <span className="field-input">
+            <input
+              type="text"
+              value={feature.name}
+              onChange={(e) => renameFeature(feature.id, e.target.value)}
+            />
+          </span>
+        </label>
+        {misses !== undefined && misses > 0 ? (
+          <div className="warn">
+            {misses} of these holes will not fit the sheet they land on and were
+            left out. A leg needs {across.toFixed(1)} mm across the sheet at this
+            tilt — more than its diameter, because it goes through at an angle.
+          </div>
+        ) : null}
+        <div className="derived">
+          Cut per slice, so the Model view cannot show these as holes. They
+          appear in Slice, Stack and Sheet.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">Arrangement</div>
+        <label className="field">
+          <span className="field-label">Legs</span>
+          <span className="field-input">
+            <select
+              value={count}
+              onChange={(e) => setParam(feature.id, 'legCount', Number(e.target.value))}
+            >
+              {LEG_COUNTS.map((n) => (
+                <option key={n} value={n}>
+                  {n} · {legSpacing(n).toFixed(n === 7 ? 1 : 0)}° apart
+                </option>
+              ))}
+            </select>
+          </span>
+        </label>
+        <NumberField
+          label="Spread"
+          value={num(feature.params, 'radius', 50)}
+          unit="mm"
+          step={1}
+          min={0}
+          onChange={(v) => setParam(feature.id, 'radius', v)}
+        />
+        <NumberField
+          label="First leg at"
+          value={num(feature.params, 'angle', 0)}
+          unit="°"
+          step={5}
+          min={-360}
+          max={360}
+          onChange={(v) => setParam(feature.id, 'angle', v)}
+        />
+        {/*
+          The Rotate tool is off for legs, and a disabled button that does not
+          say why is the same silence this program keeps having to fix. Legs are
+          aimed by the angle above, the way a window is: the only rotation that
+          means anything here is about the stack's axis, and a free orientation
+          would let you tip a set of legs sideways.
+        */}
+        <div className="derived">
+          Aim the set here rather than with the Rotate tool, which is off for
+          legs — turning about anything but the stack axis would tip them over.
+        </div>
+        <div className="derived">
+          The spread is measured at the bottom of the model, so it is where the
+          legs meet the lamp rather than where the feet land.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">The leg</div>
+        <NumberField
+          label="Diameter"
+          value={diameter}
+          unit="mm"
+          step={0.5}
+          min={0.5}
+          onChange={(v) => setParam(feature.id, 'diameter', v)}
+        />
+        <NumberField
+          label="Tilt"
+          value={tilt}
+          unit="°"
+          step={1}
+          min={0}
+          max={MAX_TILT}
+          onChange={(v) => setParam(feature.id, 'tilt', v)}
+        />
+        {/*
+          The thing nobody expects, said before it costs a sheet: the hole is
+          not the leg's cross-section. A tilted leg leaves an ellipse, and it
+          moves sideways on its way through the sheet, so the shape cut is the
+          sweep between the two faces.
+        */}
+        <div className="derived">
+          At {tilt.toFixed(0)}° a Ø{diameter} mm leg leaves a hole{' '}
+          {across.toFixed(1)} mm across and {(across + sweep).toFixed(1)} mm
+          long: the section is an ellipse, and the leg moves {sweep.toFixed(1)} mm
+          sideways crossing {thickness} mm of stock. Cutting only the mid-plane
+          ellipse would not let it through. Holes are cut {kerf} mm under size so
+          they open out to the numbers above.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">Placement</div>
+        <NumberField
+          label="Axis X"
+          value={num(feature.params, 'px', 0)}
+          unit="mm"
+          step={0.5}
+          onChange={(v) => setParam(feature.id, 'px', v)}
+        />
+        <NumberField
+          label="Axis Y"
+          value={num(feature.params, 'py', 0)}
+          unit="mm"
+          step={0.5}
+          onChange={(v) => setParam(feature.id, 'py', v)}
+        />
+      </div>
+
+      <LayerSelectorFields feature={feature} slices={slices} />
+    </>
+  );
+}
+
 interface FixtureProps {
   feature: Feature;
   slices: SliceSet | null;
@@ -1692,12 +1847,12 @@ interface InspectorProps {
   /** Holes each pattern feature placed, from the last slicing run. */
   patternCounts: Record<string, number>;
   /** Fixture holes that did not fit, by feature id. */
-  fixtureMisses: Record<string, number>;
+  holeMisses: Record<string, number>;
   /** Whether slicing has run at all — it does not while modelling. */
   sliced: boolean;
 }
 
-export function Inspector({ slices, patternCounts, fixtureMisses, sliced }: InspectorProps) {
+export function Inspector({ slices, patternCounts, holeMisses, sliced }: InspectorProps) {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
 
@@ -1724,7 +1879,10 @@ export function Inspector({ slices, patternCounts, fixtureMisses, sliced }: Insp
    * catch whatever else moved into that stage next, and something did.
    */
   if (feature.kind.startsWith('fixture:')) {
-    return <FixtureInspector feature={feature} slices={slices} misses={fixtureMisses[feature.id]} />;
+    return <FixtureInspector feature={feature} slices={slices} misses={holeMisses[feature.id]} />;
+  }
+  if (feature.kind === 'legs') {
+    return <LegsInspector feature={feature} slices={slices} misses={holeMisses[feature.id]} />;
   }
   if (feature.kind === 'rod' || feature.stage === 'RIG') {
     return <RodInspector feature={feature} />;

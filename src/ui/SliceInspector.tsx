@@ -396,13 +396,30 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
       ctx.lineTo(width, toScreenY(0));
       ctx.stroke();
 
-      const tracePath = (contours: { points: number[] }[]) => {
+      /*
+       * Slicing is debounced, so during a drag the geometry on screen is up to
+       * a quarter of a second behind the hand. Offsetting the thing being
+       * dragged by how far it has gone since costs nothing and is the
+       * difference between dragging and pushing something sticky.
+       *
+       * This has to reach polygons as well as circles. The first version
+       * offset only the circles, so a rod or a socket followed the hand while a
+       * leg hole or a Wago pocket — which are contours, not circles — sat still
+       * and jumped at the end. Same bug as before, hiding in the other half of
+       * the geometry.
+       */
+      const liveDX = (owner?: string) => (drag && owner === drag.owner ? drag.dx : 0);
+      const liveDY = (owner?: string) => (drag && owner === drag.owner ? drag.dy : 0);
+
+      const tracePath = (contours: { points: number[]; owner?: string }[]) => {
         const path = new Path2D();
         for (const contour of contours) {
           const pts = contour.points;
-          path.moveTo(toScreenX(pts[0]), toScreenY(pts[1]));
+          const ox = liveDX(contour.owner);
+          const oy = liveDY(contour.owner);
+          path.moveTo(toScreenX(pts[0] + ox), toScreenY(pts[1] + oy));
           for (let i = 2; i < pts.length; i += 2) {
-            path.lineTo(toScreenX(pts[i]), toScreenY(pts[i + 1]));
+            path.lineTo(toScreenX(pts[i] + ox), toScreenY(pts[i + 1] + oy));
           }
           path.closePath();
         }
@@ -414,15 +431,6 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
         ctx.lineWidth = 1;
         ctx.stroke(tracePath(widest.contours));
       }
-
-      /*
-       * Slicing is debounced, so during a drag the geometry on screen is up to
-       * a quarter of a second behind the hand. Offsetting the thing being
-       * dragged by how far it has gone since costs nothing and is the
-       * difference between dragging and pushing something sticky.
-       */
-      const liveDX = (owner?: string) => (drag && owner === drag.owner ? drag.dx : 0);
-      const liveDY = (owner?: string) => (drag && owner === drag.owner ? drag.dy : 0);
 
       for (const group of groupContours(slice.contours)) {
         const path = tracePath([group.outer, ...group.holes]);
@@ -498,6 +506,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     (slice.circles.some((c) => c.owner === selected.id) ||
       slice.contours.some((c) => c.owner === selected.id));
   const selectedIsRod = selected?.kind === 'rod';
+  const selectedIsLegs = selected?.kind === 'legs';
 
   const partCount = slice ? groupContours(slice.contours).length : 0;
   const holeCount = slice ? slice.contours.filter((c) => c.isHole).length : 0;
@@ -573,7 +582,15 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
                   */}
                   {selectedIsRod
                     ? ' — moving a rod moves it on every layer it reaches'
-                    : ' — drag to move, or type exact numbers on the right'}
+                    : selectedIsLegs
+                      ? /*
+                          One hole, but the whole set moves. `px`/`py` is the
+                          axis the legs are arranged around, not this hole's
+                          own place, and a gesture that moves more than it
+                          appears to should say so before it surprises anybody.
+                        */
+                        ' — dragging one leg moves the whole set, on every layer'
+                      : ' — drag to move, or type exact numbers on the right'}
                 </span>
               ) : null}
             </>

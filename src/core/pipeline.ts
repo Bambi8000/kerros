@@ -42,6 +42,8 @@ import { sampleMeshGrid } from './voxelise.ts';
 import type { MeshGrid } from './voxelise.ts';
 import { generatePattern } from './pattern.ts';
 import { resolveLayerSet, selectorFromParams } from './layers.ts';
+import { legHoles } from './legs.ts';
+import type { LegSpec } from './legs.ts';
 import type { LayerSelector } from './layers.ts';
 import { nestByMaterial } from './nest.ts';
 import type {
@@ -104,7 +106,7 @@ export interface SliceOutput {
   windows: { label: string; set: SliceSet }[];
   reports: GapReport[];
   patternCounts: Record<string, number>;
-  fixtureMisses: Record<string, number>;
+  holeMisses: Record<string, number>;
   ms: number;
 }
 
@@ -113,7 +115,7 @@ export const EMPTY_OUTPUT: SliceOutput = {
   windows: [],
   reports: [],
   patternCounts: {},
-  fixtureMisses: {},
+  holeMisses: {},
   ms: 0,
 };
 
@@ -276,8 +278,14 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
   /* --- fixtures --- */
 
   const fixtures = fixturesFromFeatures(features, kerf);
-  const fixtureMisses: Record<string, number> = {};
-  for (const spec of fixtures) fixtureMisses[spec.id] = 0;
+  /**
+   * Holes that would not have fitted the sheet they landed on, by feature.
+   *
+   * Named for what it holds rather than for who first needed it: legs report
+   * here too, and `fixtureMisses` would have been a lie the moment they did.
+   */
+  const holeMisses: Record<string, number> = {};
+  for (const spec of fixtures) holeMisses[spec.id] = 0;
 
   /*
    * Which layers each fixture reaches, decided once rather than per slice.
@@ -315,7 +323,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
               if (groups.some((g) => circleFitsInPart(g, circle))) {
                 circles.push({ ...circle, owner: spec.id });
               } else {
-                fixtureMisses[spec.id] += 1;
+                holeMisses[spec.id] += 1;
               }
             }
 
@@ -324,12 +332,54 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
                 const area = signedArea(polygon);
                 contours.push({ points: polygon, area, isHole: area < 0, owner: spec.id });
               } else {
-                fixtureMisses[spec.id] += 1;
+                holeMisses[spec.id] += 1;
               }
             }
           }
 
           return { ...slice, circles, contours };
+        });
+
+  /* --- legs --- */
+
+  const legs = legsFromFeatures(features, kerf, bounds ? bounds.min[2] : 0);
+  for (const spec of legs) holeMisses[spec.id] = 0;
+  const legLayers = new Map<string, Set<number>>();
+  for (const spec of legs) {
+    const feature = features.find((f) => f.id === spec.id);
+    legLayers.set(
+      spec.id,
+      resolveLayerSet(selectorFromParams(feature?.params, { kind: 'range', from: 1, to: 2 }), sliced.slices),
+    );
+  }
+
+  /*
+   * A leg hole is the sweep through the sheet, not the section at its
+   * mid-plane, so this needs the sheet's underside and its full depth — which
+   * the plan carries and the slice alone does not.
+   */
+  const legged =
+    legs.length === 0
+      ? fitted
+      : fitted.map((slice) => {
+          const plane = sliced.planes.find((p) => Math.abs(p.z - slice.z) < 1e-9);
+          const zBottom = plane ? plane.z0 : slice.z - thickness / 2;
+          const sheet = plane ? plane.thickness : thickness;
+
+          const contours = slice.contours.slice();
+          for (const spec of legs) {
+            if (!legLayers.get(spec.id)?.has(slice.index)) continue;
+            const groups = groupContours(contours);
+            for (const polygon of legHoles(spec, zBottom, sheet)) {
+              if (groups.some((g) => polygonFitsInPart(g, polygon))) {
+                const area = signedArea(polygon);
+                contours.push({ points: polygon, area, isHole: area < 0, owner: spec.id });
+              } else {
+                holeMisses[spec.id] += 1;
+              }
+            }
+          }
+          return { ...slice, contours };
         });
 
   /* --- perforation --- */
@@ -350,8 +400,8 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
 
   const perforated =
     patterns.length === 0
-      ? fitted
-      : fitted.map((slice) => {
+      ? legged
+      : legged.map((slice) => {
           const circles = slice.circles.slice();
           for (const feature of patterns) {
             if (!patternLayers.get(feature.id)?.has(slice.index)) continue;
@@ -389,7 +439,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     windows,
     reports,
     patternCounts,
-    fixtureMisses,
+    holeMisses,
     ms: Date.now() - started,
   };
 }
@@ -666,6 +716,28 @@ export function selectorForFixture(
 ): LayerSelector {
   const selector = selectorFromParams(params, { kind: 'band', z, length });
   return selector.kind === 'band' ? { ...selector, z, length } : selector;
+}
+
+/** Every enabled legs feature, with its spread measured at the model's bottom. */
+export function legsFromFeatures(features: Feature[], kerf: number, zRef: number): LegSpec[] {
+  const out: LegSpec[] = [];
+  for (const f of features) {
+    if (f.kind !== 'legs' || !f.enabled) continue;
+    out.push({
+      id: f.id,
+      label: f.name,
+      count: Math.max(Math.round(Number(f.params.legCount) || 3), 1),
+      tilt: Number(f.params.tilt) || 0,
+      diameter: Math.max(Number(f.params.diameter) || 0, 0.1),
+      radius: Number(f.params.radius) || 0,
+      angle: Number(f.params.angle) || 0,
+      x: Number(f.params.px) || 0,
+      y: Number(f.params.py) || 0,
+      zRef,
+      kerf,
+    });
+  }
+  return out;
 }
 
 export function fixturesFromFeatures(features: Feature[], kerf: number): FixtureSpec[] {

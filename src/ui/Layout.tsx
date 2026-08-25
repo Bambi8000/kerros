@@ -74,7 +74,7 @@ export function Layout() {
     reports: sliceReports,
     windows: sliceWindows,
     patternCounts,
-    fixtureMisses,
+    holeMisses,
     ms: sliceMs,
     pending: slicePending,
   } = useSlices(mode !== 'model');
@@ -272,7 +272,7 @@ export function Layout() {
                 <Inspector
                   slices={slices}
                   patternCounts={patternCounts}
-                  fixtureMisses={fixtureMisses}
+                  holeMisses={holeMisses}
                   sliced={slices !== null}
                 />
               )

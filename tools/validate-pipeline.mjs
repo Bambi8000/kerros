@@ -143,7 +143,7 @@ console.log('pipeline: rods, fixtures and perforation compose in order');
 
   // The socket sits at the very bottom, where a shelled sphere has almost no
   // material, so it is expected to be reported rather than cut.
-  check('a fixture that does not fit is counted', typeof output.fixtureMisses.fx === 'number');
+  check('a fixture that does not fit is counted', typeof output.holeMisses.fx === 'number');
 
   const bridge = Math.min(...output.reports.map((r) => r.minGap));
   check('the bridge check ran on the finished layers', Number.isFinite(bridge));
@@ -356,7 +356,7 @@ console.log('pipeline: fixtures follow the shape they are attached to');
   // And it must actually reach the layer it is aimed at once attached.
   const output = runSliceJob(baseJob([moved, shell, socket('host')]), new Map());
   check('an attached fixture still slices', output.set !== null);
-  check('and is accounted for', typeof output.fixtureMisses.fx === 'number');
+  check('and is accounted for', typeof output.holeMisses.fx === 'number');
 }
 
 console.log('pipeline: one way to say which layers');
@@ -476,6 +476,124 @@ console.log('pipeline: one way to say which layers');
     everywhere.patternCounts.pt > someLayers.patternCounts.pt,
     `${everywhere.patternCounts.pt} vs ${someLayers.patternCounts.pt}`,
   );
+}
+
+console.log('pipeline: splayed legs cut the sweep, not the section');
+{
+  const plain = runSliceJob(baseJob([body]), new Map());
+  const numbers = plain.set.slices.map((slice) => slice.index);
+
+  /*
+   * Sheets with room, chosen from the model rather than guessed.
+   *
+   * The first version put the legs 40 mm out on the bottom two sheets of a
+   * sphere, which are 13 mm across — every hole was correctly refused and the
+   * test measured nothing. Third time in this session that a number worked out
+   * on paper was the thing that was wrong, so this one is measured.
+   */
+  const outerRadius = (slice) => {
+    let best = 0;
+    const pts = slice.contours.find((c) => !c.isHole).points;
+    for (let i = 0; i < pts.length; i += 2) best = Math.max(best, Math.hypot(pts[i], pts[i + 1]));
+    return best;
+  };
+
+  const middle = Math.floor(plain.set.slices.length / 2);
+  const lowIndex = plain.set.slices[middle].index;
+  const highIndex = plain.set.slices[middle + 1].index;
+  const room = Math.min(
+    outerRadius(plain.set.slices[middle]),
+    outerRadius(plain.set.slices[middle + 1]),
+  );
+
+  const legDiameter = 12;
+  const legSpread = Math.round(room * 0.45);
+  check(
+    'the chosen sheets have room for a leg, or the rest of this measures refusals',
+    room > legSpread + legDiameter,
+    `${room.toFixed(1)} mm of sheet against a leg at ${legSpread} mm`,
+  );
+
+  const legs = (extra) =>
+    feature('lg', 'legs', 'RIG', {
+      legCount: 3,
+      tilt: 30,
+      diameter: legDiameter,
+      radius: legSpread,
+      angle: 0,
+      px: 0,
+      py: 0,
+      selKind: 'range',
+      selFrom: lowIndex,
+      selTo: highIndex,
+      ...extra,
+    });
+
+  const out = runSliceJob(baseJob([body, legs({})]), new Map());
+  const withLegHoles = out.set.slices.filter((slice) =>
+    slice.contours.some((c) => c.owner === 'lg'),
+  );
+  check('the chosen sheets get leg holes', withLegHoles.length === 2, `${withLegHoles.length} sheets`);
+  check(
+    'and only those',
+    withLegHoles.every((slice) => slice.index === lowIndex || slice.index === highIndex),
+  );
+  check('three legs, three holes each', withLegHoles.every((s2) => s2.contours.filter((c) => c.owner === 'lg').length === 3));
+  check('wound as holes', withLegHoles.every((s2) => s2.contours.filter((c) => c.owner === 'lg').every((c) => c.isHole)));
+  check('and each remembers the feature that cut it', withLegHoles[0].contours.some((c) => c.owner === 'lg'));
+
+  /*
+   * The sweep, end to end.
+   *
+   * A tilted leg's hole is longer along the tilt than across it, by the sheet
+   * thickness times the tangent. Measured off the real pipeline output rather
+   * than off the module, because this is the number that reaches the DXF.
+   */
+  const hole = withLegHoles[0].contours.find((c) => c.owner === 'lg');
+  const xs = hole.points.filter((_, i) => i % 2 === 0);
+  const ys = hole.points.filter((_, i) => i % 2 === 1);
+  const along = Math.max(...xs) - Math.min(...xs);
+  const across = Math.max(...ys) - Math.min(...ys);
+  const tan = Math.tan((30 * Math.PI) / 180);
+  check('across the tilt it is the leg width itself', Math.abs(across - legDiameter) < 0.3, `${across.toFixed(2)}`);
+  check(
+    'along it, one ellipse plus the sweep',
+    Math.abs(along - (legDiameter / Math.cos((30 * Math.PI) / 180) + 3 * tan)) < 0.3,
+    `${along.toFixed(2)}`,
+  );
+  check('so the hole is longer than it is wide', along > across + 1);
+
+  const upright = runSliceJob(baseJob([body, legs({ tilt: 0 })]), new Map());
+  const round = upright.set.slices
+    .flatMap((slice) => slice.contours)
+    .find((c) => c.owner === 'lg');
+  const rx = round.points.filter((_, i) => i % 2 === 0);
+  const ry = round.points.filter((_, i) => i % 2 === 1);
+  check(
+    'a vertical leg leaves a round hole',
+    Math.abs(Math.max(...rx) - Math.min(...rx) - (Math.max(...ry) - Math.min(...ry))) < 0.05,
+  );
+
+  // Higher sheets take their holes closer in, because the legs lean inwards.
+  const spread = (slice) => {
+    const c = slice.contours.find((x) => x.owner === 'lg');
+    const cx = c.points.filter((_, i) => i % 2 === 0);
+    return (Math.max(...cx) + Math.min(...cx)) / 2;
+  };
+  check(
+    'the splay carries up the stack',
+    spread(withLegHoles[1]) < spread(withLegHoles[0]),
+    `${spread(withLegHoles[1]).toFixed(2)} above ${spread(withLegHoles[0]).toFixed(2)}`,
+  );
+
+  // A leg that lands where there is no material is counted, not cut.
+  const impossible = runSliceJob(baseJob([body, legs({ radius: 500 })]), new Map());
+  check('a leg off the edge of the sheet is reported', impossible.holeMisses.lg > 0, `${impossible.holeMisses.lg}`);
+  check(
+    'and cuts nothing',
+    impossible.set.slices.every((slice) => !slice.contours.some((c) => c.owner === 'lg')),
+  );
+  check('a fitting set reports no misses', out.holeMisses.lg === 0, `${out.holeMisses.lg}`);
 }
 
 console.log('pipeline: the stack reaches the field, not just the slicer');
