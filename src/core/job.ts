@@ -34,6 +34,16 @@ export function buildParts(
   set: SliceSet,
   spacers: SpacerPlan[],
   windows: { label: string; set: SliceSet }[] = [],
+  /**
+   * What the spacer rings are cut from.
+   *
+   * `stock` while rings are the same sheet as the slices, which is the default
+   * and what they always were. Once they have their own thickness they cannot
+   * share a sheet with the stock — they are not even the same height of
+   * material — so they get their own name and `nestByMaterial` puts them on
+   * their own sheet with their own ordinal.
+   */
+  spacerMaterial = 'stock',
 ): PartGeometry[] {
   const parts: PartGeometry[] = [];
 
@@ -61,7 +71,7 @@ export function buildParts(
         id: `spacer-${plan.rodId}-${i}`,
         label: plan.label.length <= 4 ? plan.label : 'SP',
         kind: 'spacer',
-        material: 'stock',
+        material: spacerMaterial,
         outer: circlePoints(0, 0, plan.outerR),
         outerCircle: { x: 0, y: 0, r: plan.outerR },
         holes: [],

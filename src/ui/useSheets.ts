@@ -109,8 +109,17 @@ export function useSheets(
       ? spacerPlans(rodsFromFeatures(features), slices.slices, spacerOptions)
       : [];
 
+    /*
+     * Rings share the stock's sheet only while they are the stock. Give them a
+     * thickness of their own and they are a different material on the bed —
+     * which is how they get cut in practice, separately from whatever is to
+     * hand — so they nest on their own sheet with their own ordinal.
+     */
+    const ringT = (spacerThickness ?? 0) > 0 ? (spacerThickness as number) : thickness;
+    const spacerMaterial = Math.abs(ringT - thickness) > 1e-9 ? 'spacer' : 'stock';
+
     return {
-      parts: buildParts(slices, spacers, windows),
+      parts: buildParts(slices, spacers, windows, spacerMaterial),
       spacers,
       spacerAchieved: spacerHeightAchieved(spacerOptions),
       options: {
