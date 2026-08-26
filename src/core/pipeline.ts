@@ -25,6 +25,7 @@ import type { RodSpec } from './rig.ts';
 import { PLANE_WORLD, fixtureHolesAt, resolveFixture } from './fixture.ts';
 import type { FixtureKind, FixtureSpec, PlaneFrame } from './fixture.ts';
 import {
+  layerIndexAt,
   WINDOW_WORLD,
   resolveWindow,
   stockField,
@@ -41,9 +42,9 @@ import { surfaceNets } from './surfaceNets.ts';
 import { sampleMeshGrid } from './voxelise.ts';
 import type { MeshGrid } from './voxelise.ts';
 import { generatePattern } from './pattern.ts';
-import { resolveLayerSet, selectorFromParams } from './layers.ts';
-import { legHoles } from './legs.ts';
-import type { LegSpec } from './legs.ts';
+import { resolveLayerSet, resolveLayers, selectorFromParams } from './layers.ts';
+import { legSections, sectionsDistance } from './legs.ts';
+import type { LegSection, LegSpec } from './legs.ts';
 import type { LayerSelector } from './layers.ts';
 import { nestByMaterial } from './nest.ts';
 import type {
@@ -107,6 +108,14 @@ export interface SliceOutput {
   reports: GapReport[];
   patternCounts: Record<string, number>;
   holeMisses: Record<string, number>;
+  /**
+   * Layers a legs feature was aimed at that produced no sheet, by feature.
+   *
+   * The field cuts legs before the sheets exist, so it counts planes rather
+   * than sheets — the two differ only where a model has a void along Z, and
+   * when they do the difference has to be said rather than discovered.
+   */
+  legGaps: Record<string, number>;
   ms: number;
 }
 
@@ -116,6 +125,7 @@ export const EMPTY_OUTPUT: SliceOutput = {
   reports: [],
   patternCounts: {},
   holeMisses: {},
+  legGaps: {},
   ms: 0,
 };
 
@@ -340,47 +350,31 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
           return { ...slice, circles, contours };
         });
 
-  /* --- legs --- */
-
-  const legs = legsFromFeatures(features, kerf, bounds ? bounds.min[2] : 0);
-  for (const spec of legs) holeMisses[spec.id] = 0;
-  const legLayers = new Map<string, Set<number>>();
+  /*
+   * Legs are not applied here.
+   *
+   * They are cut from the field, in `composeField`, which is what lets a leg
+   * over the rim take a bite out of it rather than being refused — and what
+   * makes kerf free, since the slicer's iso-level shrinks a hole on its own.
+   * What is left for this stage is the one thing the field cannot see: whether
+   * a layer somebody chose produced a sheet at all.
+   */
+  const legs = legsFromFeatures(features, kerf, sliced.planes.length > 0 ? sliced.planes[0].z0 : 0);
+  const legGaps: Record<string, number> = {};
   for (const spec of legs) {
     const feature = features.find((f) => f.id === spec.id);
-    legLayers.set(
-      spec.id,
-      resolveLayerSet(selectorFromParams(feature?.params, { kind: 'range', from: 1, to: 2 }), sliced.slices),
+    const chosen = resolveLayers(
+      selectorFromParams(feature?.params, { kind: 'range', from: 1, to: 2 }),
+      sliced.planes.map((plane) => ({ index: plane.index + 1, z: plane.z })),
     );
+    let missing = 0;
+    for (const ordinal of chosen) {
+      const plane = sliced.planes[ordinal - 1];
+      if (!plane) continue;
+      if (!sliced.slices.some((slice) => Math.abs(slice.z - plane.z) < 1e-9)) missing += 1;
+    }
+    legGaps[spec.id] = missing;
   }
-
-  /*
-   * A leg hole is the sweep through the sheet, not the section at its
-   * mid-plane, so this needs the sheet's underside and its full depth — which
-   * the plan carries and the slice alone does not.
-   */
-  const legged =
-    legs.length === 0
-      ? fitted
-      : fitted.map((slice) => {
-          const plane = sliced.planes.find((p) => Math.abs(p.z - slice.z) < 1e-9);
-          const zBottom = plane ? plane.z0 : slice.z - thickness / 2;
-          const sheet = plane ? plane.thickness : thickness;
-
-          const contours = slice.contours.slice();
-          for (const spec of legs) {
-            if (!legLayers.get(spec.id)?.has(slice.index)) continue;
-            const groups = groupContours(contours);
-            for (const polygon of legHoles(spec, zBottom, sheet)) {
-              if (groups.some((g) => polygonFitsInPart(g, polygon))) {
-                const area = signedArea(polygon);
-                contours.push({ points: polygon, area, isHole: area < 0, owner: spec.id });
-              } else {
-                holeMisses[spec.id] += 1;
-              }
-            }
-          }
-          return { ...slice, contours };
-        });
 
   /* --- perforation --- */
 
@@ -400,8 +394,8 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
 
   const perforated =
     patterns.length === 0
-      ? legged
-      : legged.map((slice) => {
+      ? fitted
+      : fitted.map((slice) => {
           const circles = slice.circles.slice();
           for (const feature of patterns) {
             if (!patternLayers.get(feature.id)?.has(slice.index)) continue;
@@ -440,6 +434,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     reports,
     patternCounts,
     holeMisses,
+    legGaps,
     ms: Date.now() - started,
   };
 }
@@ -876,9 +871,61 @@ export function composeField(
 
   const solid = (x: number, y: number, z: number) => evaluatePoint(prepared, x, y, z);
 
+  /*
+   * Legs, cut from the field rather than pasted into the slices.
+   *
+   * The hole is the sweep of a tilted cylinder through a sheet, so it depends
+   * on which sheet a height falls in — the same thing a per-layer window needs,
+   * and answered the same way. Sections are built once per plane and looked up
+   * per sample; a set of three legs through six sheets is eighteen of them.
+   *
+   * The layers are chosen against the **planes**, not the sheets. The field has
+   * to exist before any sheet does, so counting sheets here would define the
+   * selection in terms of its own result. The two agree unless the model has a
+   * void along Z, and where they do not, `legGaps` says so.
+   */
+  const legs = legsFromFeatures(features, kerf, plan.length > 0 ? plan[0].z0 : 0);
+  const legSectionsByPlane = new Map<number, LegSection[]>();
+  for (const spec of legs) {
+    const feature = features.find((f) => f.id === spec.id);
+    const chosen = resolveLayers(
+      selectorFromParams(feature?.params, { kind: 'range', from: 1, to: 2 }),
+      plan.map((plane) => ({ index: plane.index + 1, z: plane.z })),
+    );
+    for (const ordinal of chosen) {
+      const plane = plan[ordinal - 1];
+      if (!plane) continue;
+      const existing = legSectionsByPlane.get(plane.index) ?? [];
+      existing.push(...legSections(spec, plane.z0, plane.thickness));
+      legSectionsByPlane.set(plane.index, existing);
+    }
+  }
+
+  const withWindows = stockField(solid, windows, plan);
+  const sample =
+    legSectionsByPlane.size === 0
+      ? withWindows
+      : (x: number, y: number, z: number) => {
+          const d = withWindows(x, y, z);
+          const index = layerIndexAt(plan, z);
+          const sections = legSectionsByPlane.get(index);
+          if (!sections) return d;
+
+          const plane = plan[index - plan[0].index];
+          if (!plane) return d;
+
+          // Confined to the sheet's own band, one pitch tall, the way a
+          // per-layer window is: continuous within a layer and stepping between
+          // them, which is what a stack of separately cut sheets does.
+          const half = Math.max(plane.thickness + plane.gapAbove, 1e-6) / 2;
+          const slab = Math.max(z - (plane.z + half), plane.z - half - z);
+          const leg = Math.max(sectionsDistance(sections, x, y), slab);
+          return Math.max(d, -leg);
+        };
+
   return {
     solid,
-    sample: stockField(solid, windows, plan),
+    sample,
     windows,
     plan,
     thickness,

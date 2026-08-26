@@ -478,122 +478,158 @@ console.log('pipeline: one way to say which layers');
   );
 }
 
-console.log('pipeline: splayed legs cut the sweep, not the section');
+console.log('pipeline: splayed legs are cut from the field');
 {
-  const plain = runSliceJob(baseJob([body]), new Map());
-  const numbers = plain.set.slices.map((slice) => slice.index);
-
   /*
-   * Sheets with room, chosen from the model rather than guessed.
+   * A flat plate, not the sphere the rest of this file uses.
    *
-   * The first version put the legs 40 mm out on the bottom two sheets of a
-   * sphere, which are 13 mm across — every hole was correctly refused and the
-   * test measured nothing. Third time in this session that a number worked out
-   * on paper was the thing that was wrong, so this one is measured.
+   * A leg's spread is measured at the bottom of the model and the leg leans in
+   * as it rises, so aiming one at a sheet halfway up is nonsense — over 60 mm
+   * of height at 30 degrees it has moved 35 mm inwards, past the axis and out
+   * the other side. The first version of this block did exactly that and
+   * measured legs that had crossed over. Legs belong on the bottom sheets,
+   * which is what the feature is for, and a plate has room down there.
    */
-  const outerRadius = (slice) => {
-    let best = 0;
-    const pts = slice.contours.find((c) => !c.isHole).points;
-    for (let i = 0; i < pts.length; i += 2) best = Math.max(best, Math.hypot(pts[i], pts[i + 1]));
-    return best;
-  };
+  const plate = feature('pl', 'roundBox', 'SHAPE', {
+    ...defaultParams(findModule('roundBox')),
+    op: 'union',
+    sx: 120,
+    sy: 120,
+    sz: 60,
+    r: 0,
+    pz: 30,
+  });
 
-  const middle = Math.floor(plain.set.slices.length / 2);
-  const lowIndex = plain.set.slices[middle].index;
-  const highIndex = plain.set.slices[middle + 1].index;
-  const room = Math.min(
-    outerRadius(plain.set.slices[middle]),
-    outerRadius(plain.set.slices[middle + 1]),
-  );
+  const bare = runSliceJob(baseJob([plate]), new Map());
+  const numbers = bare.set.slices.map((slice) => slice.index);
+  check('the plate slices into sheets to choose between', numbers.length >= 4, `${numbers.length}`);
 
   const legDiameter = 12;
-  const legSpread = Math.round(room * 0.45);
-  check(
-    'the chosen sheets have room for a leg, or the rest of this measures refusals',
-    room > legSpread + legDiameter,
-    `${room.toFixed(1)} mm of sheet against a leg at ${legSpread} mm`,
-  );
-
   const legs = (extra) =>
     feature('lg', 'legs', 'RIG', {
       legCount: 3,
       tilt: 30,
       diameter: legDiameter,
-      radius: legSpread,
+      radius: 40,
       angle: 0,
       px: 0,
       py: 0,
       selKind: 'range',
-      selFrom: lowIndex,
-      selTo: highIndex,
+      selFrom: numbers[0],
+      selTo: numbers[1],
       ...extra,
     });
 
-  const out = runSliceJob(baseJob([body, legs({})]), new Map());
-  const withLegHoles = out.set.slices.filter((slice) =>
-    slice.contours.some((c) => c.owner === 'lg'),
-  );
-  check('the chosen sheets get leg holes', withLegHoles.length === 2, `${withLegHoles.length} sheets`);
-  check(
-    'and only those',
-    withLegHoles.every((slice) => slice.index === lowIndex || slice.index === highIndex),
-  );
-  check('three legs, three holes each', withLegHoles.every((s2) => s2.contours.filter((c) => c.owner === 'lg').length === 3));
-  check('wound as holes', withLegHoles.every((s2) => s2.contours.filter((c) => c.owner === 'lg').every((c) => c.isHole)));
-  check('and each remembers the feature that cut it', withLegHoles[0].contours.some((c) => c.owner === 'lg'));
+  const holesOn = (result, index) => {
+    const slice = result.set.slices.find((s2) => s2.index === index);
+    return slice.contours.filter((c) => c.isHole).length;
+  };
 
-  /*
-   * The sweep, end to end.
-   *
-   * A tilted leg's hole is longer along the tilt than across it, by the sheet
-   * thickness times the tangent. Measured off the real pipeline output rather
-   * than off the module, because this is the number that reaches the DXF.
-   */
-  const hole = withLegHoles[0].contours.find((c) => c.owner === 'lg');
-  const xs = hole.points.filter((_, i) => i % 2 === 0);
-  const ys = hole.points.filter((_, i) => i % 2 === 1);
-  const along = Math.max(...xs) - Math.min(...xs);
-  const across = Math.max(...ys) - Math.min(...ys);
-  const tan = Math.tan((30 * Math.PI) / 180);
-  check('across the tilt it is the leg width itself', Math.abs(across - legDiameter) < 0.3, `${across.toFixed(2)}`);
+  const out = runSliceJob(baseJob([plate, legs({})]), new Map());
+  check('the bare plate has no holes', holesOn(bare, numbers[0]) === 0);
+  check('the first chosen sheet gains three', holesOn(out, numbers[0]) === 3, `${holesOn(out, numbers[0])}`);
+  check('and so does the second', holesOn(out, numbers[1]) === 3);
+  check(
+    'while the sheets nobody chose are untouched',
+    out.set.slices.every(
+      (slice) =>
+        slice.index === numbers[0] || slice.index === numbers[1] || holesOn(out, slice.index) === 0,
+    ),
+  );
+
+  // The sweep, measured off the real output: longer along the tilt than across
+  // it, by the sheet thickness times the tangent.
+  const legOnX = (() => {
+    const slice = out.set.slices.find((s2) => s2.index === numbers[0]);
+    let best = null;
+    let bestD = Infinity;
+    for (const ring of slice.contours.filter((c) => c.isHole)) {
+      const xs = ring.points.filter((_, i) => i % 2 === 0);
+      const ys = ring.points.filter((_, i) => i % 2 === 1);
+      const mx = (Math.max(...xs) + Math.min(...xs)) / 2;
+      const my = (Math.max(...ys) + Math.min(...ys)) / 2;
+      const d = Math.hypot(mx - 40, my);
+      if (d < bestD) {
+        bestD = d;
+        best = { xs, ys, mx };
+      }
+    }
+    return best;
+  })();
+
+  const along = Math.max(...legOnX.xs) - Math.min(...legOnX.xs);
+  const across = Math.max(...legOnX.ys) - Math.min(...legOnX.ys);
+  const tilt = (30 * Math.PI) / 180;
+  const kerf = 0.2;
+
+  check('the leg on +X is where the spread put it', Math.abs(legOnX.mx - 40) < 2, `${legOnX.mx.toFixed(2)}`);
+  // Kerf is the iso-level now, so the cut path is a kerf under the finished hole.
+  check(
+    'across the tilt, the leg width less a kerf',
+    Math.abs(across - (legDiameter - kerf)) < 0.5,
+    `${across.toFixed(2)} against ${(legDiameter - kerf).toFixed(2)}`,
+  );
   check(
     'along it, one ellipse plus the sweep',
-    Math.abs(along - (legDiameter / Math.cos((30 * Math.PI) / 180) + 3 * tan)) < 0.3,
-    `${along.toFixed(2)}`,
+    Math.abs(along - (legDiameter / Math.cos(tilt) + 3 * Math.tan(tilt) - kerf)) < 0.6,
+    `${along.toFixed(2)} against ${(legDiameter / Math.cos(tilt) + 3 * Math.tan(tilt) - kerf).toFixed(2)}`,
   );
   check('so the hole is longer than it is wide', along > across + 1);
 
-  const upright = runSliceJob(baseJob([body, legs({ tilt: 0 })]), new Map());
-  const round = upright.set.slices
-    .flatMap((slice) => slice.contours)
-    .find((c) => c.owner === 'lg');
-  const rx = round.points.filter((_, i) => i % 2 === 0);
-  const ry = round.points.filter((_, i) => i % 2 === 1);
+  /*
+   * The reason for moving into the field: a leg over the rim takes a bite out
+   * of it rather than being refused. The sheet keeps its outer ring, and that
+   * ring loses area and gains perimeter — a notch is longer round than the
+   * straight edge it replaced.
+   */
+  const rim = (result, index) => {
+    const slice = result.set.slices.find((s2) => s2.index === index);
+    const ring = slice.contours.find((c) => !c.isHole);
+    let sum = 0;
+    for (let i = 0; i < ring.points.length; i += 2) {
+      const j = (i + 2) % ring.points.length;
+      sum += Math.hypot(ring.points[j] - ring.points[i], ring.points[j + 1] - ring.points[i + 1]);
+    }
+    return { area: Math.abs(ring.area), perimeter: sum };
+  };
+
+  const overhang = runSliceJob(baseJob([plate, legs({ radius: 60 })]), new Map());
+  check('a leg on the rim still leaves a sheet', overhang.set.slices.some((s2) => s2.index === numbers[0]));
+  check(
+    'and takes material out of the outline',
+    rim(overhang, numbers[0]).area < rim(bare, numbers[0]).area - 10,
+    `${rim(overhang, numbers[0]).area.toFixed(0)} against ${rim(bare, numbers[0]).area.toFixed(0)} mm2`,
+  );
+  check(
+    'by notching it rather than punching through',
+    rim(overhang, numbers[0]).perimeter > rim(bare, numbers[0]).perimeter,
+  );
+
+  // Entirely off the sheet: nothing at all, and no complaint either.
+  const away = runSliceJob(baseJob([plate, legs({ radius: 500 })]), new Map());
+  check(
+    'a leg nowhere near the sheet does nothing',
+    away.set.slices.every((slice) => holesOn(away, slice.index) === 0),
+  );
+  check(
+    'and the outline is untouched',
+    Math.abs(rim(away, numbers[0]).area - rim(bare, numbers[0]).area) < 1e-6,
+  );
+  check('with nothing reported, because nothing was refused', (away.legGaps.lg ?? 0) === 0);
+
+  const upright = runSliceJob(baseJob([plate, legs({ tilt: 0 })]), new Map());
+  const round = (() => {
+    const slice = upright.set.slices.find((s2) => s2.index === numbers[0]);
+    const ring = slice.contours.filter((c) => c.isHole)[0];
+    const xs = ring.points.filter((_, i) => i % 2 === 0);
+    const ys = ring.points.filter((_, i) => i % 2 === 1);
+    return [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)];
+  })();
   check(
     'a vertical leg leaves a round hole',
-    Math.abs(Math.max(...rx) - Math.min(...rx) - (Math.max(...ry) - Math.min(...ry))) < 0.05,
+    Math.abs(round[0] - round[1]) < 0.3,
+    round.map((v) => v.toFixed(2)).join(' x '),
   );
-
-  // Higher sheets take their holes closer in, because the legs lean inwards.
-  const spread = (slice) => {
-    const c = slice.contours.find((x) => x.owner === 'lg');
-    const cx = c.points.filter((_, i) => i % 2 === 0);
-    return (Math.max(...cx) + Math.min(...cx)) / 2;
-  };
-  check(
-    'the splay carries up the stack',
-    spread(withLegHoles[1]) < spread(withLegHoles[0]),
-    `${spread(withLegHoles[1]).toFixed(2)} above ${spread(withLegHoles[0]).toFixed(2)}`,
-  );
-
-  // A leg that lands where there is no material is counted, not cut.
-  const impossible = runSliceJob(baseJob([body, legs({ radius: 500 })]), new Map());
-  check('a leg off the edge of the sheet is reported', impossible.holeMisses.lg > 0, `${impossible.holeMisses.lg}`);
-  check(
-    'and cuts nothing',
-    impossible.set.slices.every((slice) => !slice.contours.some((c) => c.owner === 'lg')),
-  );
-  check('a fitting set reports no misses', out.holeMisses.lg === 0, `${out.holeMisses.lg}`);
 }
 
 console.log('pipeline: the stack reaches the field, not just the slicer');

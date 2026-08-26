@@ -971,10 +971,11 @@ function WindowInspector({ feature }: { feature: Feature }) {
 interface LegsProps {
   feature: Feature;
   slices: SliceSet | null;
-  misses: number | undefined;
+  /** Chosen layers that produced no sheet — a different thing to a refused hole. */
+  gaps: number | undefined;
 }
 
-function LegsInspector({ feature, slices, misses }: LegsProps) {
+function LegsInspector({ feature, slices, gaps }: LegsProps) {
   const setParam = useKerros((s) => s.setParam);
   const renameFeature = useKerros((s) => s.renameFeature);
   const kerf = useKerros((s) => s.material.kerf);
@@ -1000,16 +1001,23 @@ function LegsInspector({ feature, slices, misses }: LegsProps) {
             />
           </span>
         </label>
-        {misses !== undefined && misses > 0 ? (
+        {/*
+          Nothing is refused any more: legs are cut from the field, so one over
+          the rim takes a bite out of it and one entirely off the sheet does
+          nothing. What can still surprise somebody is a chosen layer with no
+          sheet at all, where a form comes apart along Z.
+        */}
+        {gaps !== undefined && gaps > 0 ? (
           <div className="warn">
-            {misses} of these holes will not fit the sheet they land on and were
-            left out. A leg needs {across.toFixed(1)} mm across the sheet at this
-            tilt — more than its diameter, because it goes through at an angle.
+            {gaps} of the chosen layers have no sheet — the form has a gap
+            there, so nothing is cut on them. Layers here are counted as planes
+            from the bottom, and a plane in a void produces no part.
           </div>
         ) : null}
         <div className="derived">
-          Cut per slice, so the Model view cannot show these as holes. They
-          appear in Slice, Stack and Sheet.
+          Cut from the field, so a leg running over the rim takes a bite out of
+          it rather than vanishing, and one entirely off the sheet does nothing.
+          The Model view shows them as real holes.
         </div>
       </div>
 
@@ -1848,11 +1856,13 @@ interface InspectorProps {
   patternCounts: Record<string, number>;
   /** Fixture holes that did not fit, by feature id. */
   holeMisses: Record<string, number>;
+  /** Chosen layers with no sheet, by legs feature. */
+  legGaps: Record<string, number>;
   /** Whether slicing has run at all — it does not while modelling. */
   sliced: boolean;
 }
 
-export function Inspector({ slices, patternCounts, holeMisses, sliced }: InspectorProps) {
+export function Inspector({ slices, patternCounts, holeMisses, legGaps, sliced }: InspectorProps) {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
 
@@ -1882,7 +1892,7 @@ export function Inspector({ slices, patternCounts, holeMisses, sliced }: Inspect
     return <FixtureInspector feature={feature} slices={slices} misses={holeMisses[feature.id]} />;
   }
   if (feature.kind === 'legs') {
-    return <LegsInspector feature={feature} slices={slices} misses={holeMisses[feature.id]} />;
+    return <LegsInspector feature={feature} slices={slices} gaps={legGaps[feature.id]} />;
   }
   if (feature.kind === 'rod' || feature.stage === 'RIG') {
     return <RodInspector feature={feature} />;

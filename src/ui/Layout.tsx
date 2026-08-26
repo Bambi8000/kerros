@@ -75,6 +75,7 @@ export function Layout() {
     windows: sliceWindows,
     patternCounts,
     holeMisses,
+    legGaps,
     ms: sliceMs,
     pending: slicePending,
   } = useSlices(mode !== 'model');
@@ -273,6 +274,7 @@ export function Layout() {
                   slices={slices}
                   patternCounts={patternCounts}
                   holeMisses={holeMisses}
+                  legGaps={legGaps}
                   sliced={slices !== null}
                 />
               )

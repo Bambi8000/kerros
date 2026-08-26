@@ -16,6 +16,9 @@ import {
   legAzimuths,
   legHole,
   legHoles,
+  legSections,
+  sectionDistance,
+  sectionsDistance,
   convexHull,
 } from '../src/core/legs.ts';
 
@@ -289,6 +292,83 @@ console.log('legs: the hull itself');
   check('the hull is counter-clockwise', area(hull) > 0);
   check('two points are returned unchanged', convexHull([0, 0, 1, 1]).length === 4);
   check('collinear points do not break it', convexHull([0, 0, 5, 0, 10, 0, 10, 10, 0, 10]).length / 2 === 4);
+}
+
+console.log('legs: the field says the same thing the hull did');
+{
+  /*
+   * The hull is the proven one — 4096 sides, checked against the analytic
+   * ellipse and the sweep. The field replaced it so that a leg over the rim
+   * takes a bite instead of being refused, and the way to make that change
+   * safely is to show it changes nothing about the shape itself.
+   */
+  const cases = [
+    [45, 3, 6, 60, 1],
+    [15, 3, 6, 38, 3],
+    [0, 3, 6, 50, 4],
+    [60, 0.5, 4, 30, 3],
+  ];
+
+  for (const [tilt, t, r, radius, count] of cases) {
+    const spec = leg({ tilt, diameter: r * 2, radius, count });
+    const sections = legSections(spec, 0, t);
+    const polygons = legAzimuths(spec).map((az) => legHole(spec, az, 0, t, 2048));
+
+    let disagreements = 0;
+    let samples = 0;
+    const reach = radius + 25;
+    for (let i = 0; i < 200; i++) {
+      for (let j = 0; j < 200; j++) {
+        const x = -reach + (i / 199) * 2 * reach;
+        const y = -reach + (j / 199) * 2 * reach;
+        const inField = sectionsDistance(sections, x, y) < 0;
+        const inHull = polygons.some((poly) => inRing(poly, x, y));
+        samples++;
+        if (inField !== inHull) disagreements++;
+      }
+    }
+    check(
+      `tilt ${tilt}, ${count} leg(s): the field's zero level is the hull`,
+      disagreements === 0,
+      `${disagreements} of ${samples}`,
+    );
+  }
+
+  // One section per leg, and the geometry it carries.
+  const spec = leg({ tilt: 45, count: 3 });
+  const sections = legSections(spec, 0, 3);
+  check('one section per leg', sections.length === 3);
+  check('the semi-minor is the leg radius', near(sections[0].b, 6, 1e-12));
+  check('the semi-major is r / cos θ', near(sections[0].a, 6 / Math.cos(45 * DEG), 1e-12));
+  check('the sweep is t · tan θ', near(sections[0].shift, 3 * Math.tan(45 * DEG), 1e-12));
+  check('the centre is the spread at the sheet bottom', near(sections[0].cx, 60, 1e-12));
+
+  /*
+   * No kerf in the section, deliberately. The slicer takes its contour at
+   * +kerf/2 and that shrinks a hole on its own; doing it here as well would cut
+   * every leg hole a full kerf small and no leg would go in.
+   */
+  const kerfed = legSections(leg({ tilt: 45, kerf: 0.4 }), 0, 3);
+  check('the section carries no kerf of its own', near(kerfed[0].b, sections[0].b, 1e-12));
+
+  // Inside is negative, outside positive, and the surface is where it says.
+  check('the centre of a leg is inside', sectionDistance(sections[0], 60, 0) < 0);
+  check('the axis is one radius in', near(sectionDistance(sections[0], 60, 0), -6, 0.02));
+  check('a point far away is far away', near(sectionDistance(sections[0], 60, 40), 34, 0.2));
+  check('and the sign is right there', sectionDistance(sections[0], 60, 40) > 0);
+
+  // A sheet higher up: the leg has leaned in.
+  const higher = legSections(leg({ tilt: 30 }), 30, 3);
+  check(
+    'a section higher up sits closer to the axis',
+    higher[0].cx < legSections(leg({ tilt: 30 }), 0, 3)[0].cx,
+  );
+  check(
+    'by the height times the tangent',
+    near(legSections(leg({ tilt: 30 }), 0, 3)[0].cx - higher[0].cx, 30 * Math.tan(30 * DEG), 1e-9),
+  );
+
+  check('an empty set of sections is far away, not near', sectionsDistance([], 0, 0) > 1000);
 }
 
 console.log('');

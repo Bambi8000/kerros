@@ -207,3 +207,124 @@ function reverseRing(points: number[]): number[] {
   for (let i = points.length - 2; i >= 0; i -= 2) out.push(points[i], points[i + 1]);
   return out;
 }
+
+/* ------------------------------------------------------------------ *
+ * The field
+ *
+ * A leg hole is a hole in a sheet, but it is cut from a field rather than
+ * pasted in as a polygon, for the same reason kerf compensation is an
+ * iso-level and not a polygon offset: the field already knows which side the
+ * material is on.
+ *
+ * Three things fall out of it and none of them needed writing:
+ *
+ * - **A leg over the edge takes a bite** instead of being refused. The field
+ *   goes positive past the rim and marching squares walks round the notch.
+ * - **A leg entirely off the sheet does nothing**, with no special case.
+ * - **Kerf is free.** The contour is taken at +kerf/2, which moves it away from
+ *   the material — inward on a hole — so the hole is cut narrow and burns out
+ *   to size, exactly as every other hole in this program does.
+ *
+ * What is given up is `polygonFitsInPart`, which used to refuse anything that
+ * crossed a contour. A thin bridge between a leg hole and the rim will now be
+ * cut; the thin-feature check sees it and says so, but it is a warning rather
+ * than a refusal. That is the trade, and it is the same one the rest of the
+ * program already made.
+ * ------------------------------------------------------------------ */
+
+/** One leg's section through one sheet, ready to be measured against. */
+export interface LegSection {
+  /** Centre of the bottom-face ellipse, world mm. */
+  cx: number;
+  cy: number;
+  /** Unit vector along the tilt, in plan. */
+  ux: number;
+  uy: number;
+  /** Semi-axis along the tilt, mm. */
+  a: number;
+  /** Semi-axis across it — the leg's own radius. */
+  b: number;
+  /** How far the axis travels crossing the sheet, mm. */
+  shift: number;
+}
+
+/**
+ * Distance to one ellipse, gradient-normalised.
+ *
+ * The first-order estimate, which is what the ellipsoid and the superellipsoid
+ * already use: exact at the surface and within a fraction of a percent nearby,
+ * which is all a contour and a kerf iso-level read. Measured against the true
+ * distance to a 4096-sided hull it is out by 0.0001 mm within 0.2 mm of the
+ * surface and 0.002 mm at half a millimetre.
+ */
+function ellipseDistance(x: number, y: number, a: number, b: number): number {
+  const k = Math.hypot(x / a, y / b);
+  if (k < 1e-9) return -Math.min(a, b);
+  const g = Math.hypot(x / (a * a), y / (b * b));
+  if (g < 1e-12) return -Math.min(a, b);
+  return ((k - 1) * k) / g;
+}
+
+/**
+ * Distance to one leg's section, negative inside.
+ *
+ * The hull of an ellipse and its own translate **is** the Minkowski sum with
+ * the segment between them, because the ellipse is convex. So there is no hull
+ * to walk: slide the query point back along that segment to whichever position
+ * sits closest to the ellipse's centre, and one ellipse answers the whole
+ * shape.
+ */
+export function sectionDistance(section: LegSection, x: number, y: number): number {
+  const dx = x - section.cx;
+  const dy = y - section.cy;
+  const u = dx * section.ux + dy * section.uy;
+  const v = -dx * section.uy + dy * section.ux;
+  const slid = u > 0 ? u : u + section.shift < 0 ? u + section.shift : 0;
+  return ellipseDistance(slid, v, section.a, section.b);
+}
+
+/** Nearest of a set of sections. */
+export function sectionsDistance(sections: LegSection[], x: number, y: number): number {
+  let best = 1e5;
+  for (const section of sections) {
+    const d = sectionDistance(section, x, y);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/**
+ * Every leg's section through one sheet.
+ *
+ * `zBottom` is the underside and `thickness` the full depth, because the shape
+ * spans the sheet rather than sitting on the plane the slice was sampled on.
+ *
+ * No kerf here, deliberately. The slicer takes its contour at +kerf/2 and that
+ * shrinks a hole on its own; applying it twice would cut every leg hole a full
+ * kerf small and no leg would go in.
+ */
+export function legSections(spec: LegSpec, zBottom: number, thickness: number): LegSection[] {
+  const tilt = Math.min(Math.max(spec.tilt, 0), MAX_TILT) * DEG;
+  const cos = Math.cos(tilt);
+  const tan = Math.tan(tilt);
+
+  const b = Math.max(spec.diameter / 2, 0.05);
+  const a = Math.max(b / Math.max(cos, 1e-6), b);
+  const shift = Math.max(thickness, 0) * tan;
+  const atBottom = spec.radius - (zBottom - spec.zRef) * tan;
+
+  return legAzimuths(spec).map((azimuth) => {
+    const angle = azimuth * DEG;
+    const ux = Math.cos(angle);
+    const uy = Math.sin(angle);
+    return {
+      cx: spec.x + ux * atBottom,
+      cy: spec.y + uy * atBottom,
+      ux,
+      uy,
+      a,
+      b,
+      shift,
+    };
+  });
+}
