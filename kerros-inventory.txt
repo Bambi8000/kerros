@@ -1,22 +1,22 @@
-KERROS INVENTORY  2026-08-25  version 0.19.0
+KERROS INVENTORY  2026-08-26  version 0.20.0
 
 --- source, lines each
-   24318 total
-    1737 src/ui/Inspector.tsx
-    1662 src/core/store.ts
+   25683 total
+    1915 src/ui/Inspector.tsx
+    1707 src/core/store.ts
     1605 src/core/sdf.ts
     1271 src/core/nest.ts
+    1233 src/ui/Viewport.tsx
     1168 tools/validate-nest.mjs
-    1119 src/ui/Viewport.tsx
      948 src/core/slice.ts
+     935 src/core/pipeline.ts
      851 src/ui/ProfilePanel.tsx
-     816 src/core/pipeline.ts
+     829 tools/validate-pipeline.mjs
      759 src/index.css
      703 tools/validate-window.mjs
      685 tools/validate-sdf.mjs
-     675 tools/validate-pipeline.mjs
      644 src/ui/SheetView.tsx
-     587 src/ui/SliceInspector.tsx
+     604 src/ui/SliceInspector.tsx
      579 tools/validate-slice.mjs
      494 src/core/window.ts
      453 tools/validate-rig-export.mjs
@@ -26,15 +26,17 @@ KERROS INVENTORY  2026-08-25  version 0.19.0
      388 src/core/pattern.ts
      384 tools/validate-import.mjs
      383 tools/validate-sculpt.mjs
+     379 tools/validate-legs.mjs
      334 src/core/fixture.ts
+     330 src/core/legs.ts
      327 tools/validate-project.mjs
      299 src/core/rig.ts
-     287 src/ui/Layout.tsx
+     289 src/ui/Layout.tsx
      287 src/core/job.ts
      283 src/ui/download.ts
      283 src/core/meshImport.ts
+     256 src/ui/FeatureTree.tsx
      251 tools/validate-fixture.mjs
-     244 src/ui/FeatureTree.tsx
      239 src/core/layers.ts
      231 src/core/dxf.ts
      230 src/ui/useSheets.ts
@@ -45,7 +47,7 @@ KERROS INVENTORY  2026-08-25  version 0.19.0
      136 src/core/types.ts
      136 src/core/font.ts
      131 src/ui/PartInspector.tsx
-      92 src/ui/useSlices.ts
+     107 src/ui/useSlices.ts
       88 src/ui/kerros.worker.ts
       87 src/ui/usePreview.ts
       78 src-tauri/src/lib.rs
@@ -68,11 +70,15 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-pipeline.mjs
+check: node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-pipeline.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+577903d Legs cut from the field, so one over the rim takes a bite instead of vanishing
+b10220d Splayed leg holes as the swept hull of two ellipses, with ghosts that stop where the holes do
+d160f68 Keep the last slice while modelling, so a fixture's ghost can find its layers
+09c8b05 Drag per-slice holes in the slice view; docs and inventory at 0.19.0
 6d50d64 One layer selector for fixtures and perforation; per-slice holes remember which feature cut them
 f7d90c9 Docs and inventory at 0.18.0: the layer plan, gaps that grade, and rings as their own material
 ac2ef94 Gradient controls in the panel; spacer rings nest as their own material; fix a composeField call the 3b core missed
@@ -99,7 +105,3 @@ daafe81 M10: Tauri shell with native save and open dialogs, batch export into on
 9aea7a4 M9: E27 socket mount, cable channel and Wago chamber as dimensioned per-slice fixtures; centre-on-model for windows and fixtures
 b22ce8d M8.2: windows carry their own axis and get a gizmo; rotation separated from translation for rods and windows
 4417159 M8.1: per-layer random windows, seeded per layer so adjusting a setting does not reroll the choice
-f94a38a M8: window wedges producing plexi plugs that fit their holes, nesting split by material
-e8453cd M7.2: measure perforation clearance in the slice plane, add band limit, rename to perforation
-fa8c984 M7: wall patterns with four generators and bridge-width enforcement; gizmo no longer attaches to features without a transform
-8bda200 M4.5: project save and load, panel selection moved into the store

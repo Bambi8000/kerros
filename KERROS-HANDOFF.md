@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.19.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.20.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -79,6 +79,8 @@ quietly revert them.**
 | a claim in a comment is documentation | a claim in a comment is a guess | `parseProject`'s backwards-compatibility promise was a comment until a broken round-trip test forced it to be proved |
 | four ways to say which layers, one per feature | one `LayerSelector`, resolved in the pipeline | the same shape as the attachment problem; four modules that may not import one another would each have needed a copy of the *logic*, which drifts |
 | dispatch a panel on a feature's stage | dispatch on its kind | `stage === 'RIG'` caught fixtures three lines before the fixture branch, and `FixtureInspector` was unreachable from the day it was written |
+| polygon booleans for a leg hole over the rim | cut legs from the field | estimated at eighty lines, honestly nearer two hundred, and its failure mode is a plausible-looking wrong polygon — the field does it in none, and gives kerf and the empty case away free |
+| `polygonFitsInPart` guards every per-slice hole | it guards the ones with no partial shape | right for a rod and a socket, wrong for a leg, which should take a bite out of the rim rather than vanish |
 
 ## The recurring failure mode
 
@@ -165,6 +167,7 @@ src/core/
   pattern.ts      perforation generators, EdgeIndex                [no imports]
   rig.ts          rod clearances, spans, spacer ring planning      [no imports]
   layers.ts       which layers a per-slice feature applies to     [no imports]
+  legs.ts         splayed leg holes: the swept ellipse hull        [no imports]
   nest.ts         shelf packing, raster true-shape packing,
                   placement, collision, rotation, labels           [no imports]
   font.ts         stroke font for engraved labels                  [no imports]
@@ -246,8 +249,9 @@ so sculpting a spout and then shelling hollows the spout too.
    Shapes can be grouped under other shapes.
 2. **CARVE** — shell with optional solid caps; windows, which subtract a wedge and
    emit the removed piece as a part in another material.
-3. **RIG** — rods with Z-span and clearance holes, spacer rings, and the lamp
-   fixtures.
+3. **RIG** — rods with Z-span and clearance holes, spacer rings, the lamp
+   fixtures, and splayed legs. Legs are the one thing in this stage cut from
+   the field rather than per slice, so that a leg over the rim notches it.
 4. **SLICE** — mid-plane sampling, marching squares, Chaikin then RDP, kerf at the
    iso-level, thin-feature check.
 5. **PATTERN** — perforation per slice, four generators, one bridge test.
@@ -277,6 +281,11 @@ and it will be a second tool rather than a second set of canvas handlers.
 - **Project files record an import's path, not its geometry.** A grid is megabytes
   and the project file is meant to stay readable, so imports must be located again
   after opening.
+- **A leg hole is not guarded.** `polygonFitsInPart` refuses a rod or a socket
+  that crosses a contour, because a partial one of those is not a thing; a leg
+  is cut from the field precisely so it *can* notch the rim, which means a thin
+  bridge left between a leg and the edge will be cut. The thin-feature check
+  rings it and the profiles panel counts it, but nothing refuses it.
 - **A fixture is skipped on any layer it does not fit**, which is right for a
   socket and arguable for a Wago chamber selected across the whole stack: a
   missing pocket in the middle is a floor inside what was meant to be a cavity,
@@ -326,7 +335,10 @@ about to happen when this handoff was written; ask before assuming.
    parts on a bench. Deliberately *after* the next real cut: what it has to say —
    whether a gap takes one ring or two, which plexi plug goes in which hole — is a
    guess until there is a pile of parts on the bench.
-2. **Cross-slicing (fin / eggcrate mode)**, discussed and scoped:
+2. **Cross-slicing (fin / eggcrate mode)**, discussed and scoped. Phase A is
+   part paid for: the swept-section arithmetic legs needed — a tilted solid met
+   by a plane, and the sweep between two faces of a sheet — is the same
+   mathematics, and it is written and validated.
    - **Phase A: generalised slice planes.** `sliceModel` assumes `z = const`, but
      marching squares, Chaikin, RDP, kerf and grouping all work in the plane's own
      coordinates and do not care which plane it is. Generalise to an origin plus
@@ -357,7 +369,7 @@ once is the whole saving.
 | Foundation | What it unlocks |
 | --- | --- |
 | ~~**An explicit layer plan**~~ — **shipped**, as `{ index, z0, z, thickness, gapAbove }` | varying gaps *(shipped)*; interleaved short pins; per-layer cable holes; per-layer sculpting |
-| ~~**One `LayerSelector`**~~ — **shipped**, for per-slice features; windows keep their band | interleaved pins and per-layer cable holes are now mostly wiring |
+| ~~**One `LayerSelector`**~~ — **shipped**, for per-slice features; windows keep their band, and legs count planes because the field precedes the sheets | interleaved pins and per-layer cable holes are now mostly wiring |
 | **`profile2d.ts`** — a 2D profile as a first-class thing, from SVG, a brush, or a slice of the field | SVG import; morph between key layers; per-layer editing |
 | **A material library** — calliper, flute pitch and profile, direction, phase | corrugated sheet as stock; stack pitch that depends on it |
 
@@ -372,11 +384,10 @@ Two constraints that have to be said before anyone builds against them:
 - ~~A gap is always a whole number of spacer rings.~~ **Shipped**, and the ring
   material is now separate from the stock, which is what makes 0.5 mm sheet
   usable at all. The panel says how many steps a gradient can actually take.
-- **A slanted leg hole is not the mid-plane ellipse.** A 45° leg moves 3 mm
-  sideways through a 3 mm sheet, so the shape to cut is the sweep between the
-  ellipses at the sheet's top and bottom faces. Cut only the mid-plane ellipse
-  and the leg does not pass through at all. Same mathematics as cross-slicing
-  Phase A, so the two share the work.
+- ~~A slanted leg hole is not the mid-plane ellipse.~~ **Shipped.** The sweep
+  between the two faces, as the hull of two ellipses, and measured: 421 points
+  of 720 around a 45° leg's outline at the top face fall outside the mid-plane
+  ellipse. Same mathematics as cross-slicing Phase A, which is now part paid.
 
 Two of the eleven turned out to exist already: solid top and bottom are the
 shell's caps, and measuring the distance between overlapping parts by their real
@@ -436,6 +447,12 @@ Worth knowing, because it is a working agreement rather than a preference.
   edge, a fixture's layers, a mid-plane — and the arithmetic was wrong, not the
   code. Derive the expectation from the model in the test, or run it once and
   read it.
+- **And the test's *model* has to suit the feature, not only its numbers.** A
+  fourth time the derived number was right and the shape was wrong: a socket
+  aimed into a shelled sphere's cavity, then legs on a sphere's narrowest
+  sheets, then legs whose spread was measured at the bottom and aimed halfway
+  up. Each read as zero holes and looked like a bug in the code. If a feature is
+  for base sheets, the test model needs a base sheet — a sphere has none.
 - **Every geometry change comes with validator checks in the same batch**, and the
   checks are written to fail for the right reason. Several times a red check has
   been the test being wrong rather than the code, and saying so plainly is part of

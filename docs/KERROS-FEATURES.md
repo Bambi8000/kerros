@@ -1073,6 +1073,109 @@ Flagged layers are ringed in the slice inspector and counted in the profiles
 panel. **They are flagged, not blocked** — the maker decides, but not by
 accident.
 
+## Legs — **shipped**
+
+`src/core/legs.ts`. Round legs — turned wood, steel tube — splayed outwards
+from the stack's axis and passing through some number of sheets near the
+bottom. Counts of 3 to 8, which is 120° to 45° apart; the angle follows from
+the count rather than being typed.
+
+### The shape to cut is not the mid-plane ellipse
+
+A cylinder tilted by θ meets a horizontal plane in an ellipse: semi-minor `r`
+across the tilt, semi-major `r / cos θ` along it. That much is ordinary. What
+matters is that a leg does not meet one plane — it passes through a **sheet**,
+and between the underside and the top face the axis moves sideways by
+`t · tan θ`. At 45° through 3 mm stock that is a full 3 mm, most of a leg's
+width.
+
+Measured, because it is the whole reason this module exists: of 720 points
+around a 45° leg's outline at the top face, **421 fall outside the mid-plane
+ellipse**. Cut only that ellipse and the leg does not go through at all, and
+you find out with everything already cut.
+
+So the hole is the **convex hull of the two end-face ellipses**, and that is
+exact rather than approximate: a cylinder is convex, a slab is convex, their
+intersection is convex, and the sections are translates of one ellipse moving
+linearly — so the union of them all is the hull of the two extremes.
+
+### One line, because the hull is a Minkowski sum
+
+The hull of a convex set and its own translate **is** the Minkowski sum with
+the segment between them. So there is no hull to walk and no polygon to
+intersect: slide the query point back along that segment to whichever position
+sits closest to the ellipse's centre, and one ellipse answers the whole shape.
+
+```ts
+const slid = u > 0 ? u : u + shift < 0 ? u + shift : 0;
+return ellipseDistance(slid, v, a, b);
+```
+
+The ellipse distance is the gradient-normalised first-order estimate, the same
+one the ellipsoid and the superellipsoid already use. Against the true distance
+to a 4096-sided hull it is out by **0.0001 mm within 0.2 mm of the surface** —
+which is where the kerf iso-level reads — and 0.002 mm at half a millimetre.
+
+### Cut from the field, not pasted into the slices
+
+The first version generated polygons and pushed them into each slice, gated by
+`polygonFitsInPart`. That is right for a rod or a socket, which have no sensible
+partial shape, and wrong for a leg: a leg that runs over the rim should take a
+**bite** out of it.
+
+Doing that with polygons means a boolean subtraction. The estimate was eighty
+lines; the honest number is nearer two hundred, because a sheet's outline is
+concave and can cross a leg hole several times, so Sutherland–Hodgman is not
+enough. And its failure mode is the one true-shape nesting already rejected NFP
+for: a subtly wrong polygon that looks plausible until it is cut.
+
+In the field it is nothing at all. Three things fall out and none needed
+writing:
+
+- **A leg over the rim takes a bite.** The field goes positive past the edge and
+  marching squares walks round the notch.
+- **A leg entirely off the sheet does nothing**, with no special case.
+- **Kerf is free.** The contour is taken at +kerf/2, which moves it away from
+  the material — inward on a hole — so the hole is cut narrow and burns out to
+  size, exactly as every other hole here does. `legSections` carries no kerf at
+  all, and a validator pins that: applying it twice would cut every leg hole a
+  full kerf small and no leg would go in.
+
+The change was made safe by keeping the polygon hull and proving the field
+against it: **270,400 samples across four tilts and leg counts, zero
+disagreements** about which side of the boundary a point is on.
+
+### What it costs
+
+**`polygonFitsInPart` no longer protects a leg.** A thin bridge between a leg
+hole and the rim will be cut; the thin-feature check sees it and rings it in the
+slice inspector, but it warns rather than refuses. That is the trade, and it is
+the same one the rest of this program already made.
+
+**Layers are counted as planes, not sheets.** The field has to exist before any
+sheet does, so counting sheets would define the selection in terms of its own
+result — the same boundary that keeps windows on a band. The two agree unless
+the model has a void along Z, and where they do not, `legGaps` reports how many
+chosen layers produced no part.
+
+### The spread is measured at the bottom
+
+`radius` is where the legs meet the lamp, at the bottom of the model, and a leg
+leans **in** as it rises: a sheet higher up takes its hole closer to the axis by
+the height times the tangent.
+
+Worth knowing because it makes some settings nonsense rather than merely odd. At
+30° over 60 mm of height a leg has moved 35 mm inwards — past the axis and out
+the other side. Legs belong on the bottom sheets, which is what the selector
+defaults to.
+
+The sign of that was wrong in the first version, with a comment above it saying
+the opposite of what the arithmetic did; the holes marched outwards up the stack
+and the legs would have had to bend to fit. It was wrong a second time in the
+Model view's ghost, which drew them converging at the floor while the holes were
+right the whole time — a picture disagreeing with the geometry, which is the
+worse way round to find out.
+
 ## PATTERN — **shipped** (M7)
 
 `src/core/pattern.ts`. Perforation in the wall of each slice.
