@@ -118,6 +118,29 @@ and both hold `|∇d| = 1` to four decimals across the whole sampled volume. Tha
 unit gradient is the property smooth blends and the kerf iso-level depend on;
 it is what "exact" means here, not that the zero level is in the right place.
 
+### A parameter is not always a dimension
+
+Some primitives are dimensioned by a part of themselves. A capsule's length is
+its straight section and the two caps add a diameter on top, so 80 mm of capsule
+at radius 25 stands 130 mm tall. A torus is given its centreline radius, which
+is not a measurement anybody can take with callipers. A prism is given the
+radius to a vertex, while the across-flats it will actually be is
+`2r · cos(π/n)`.
+
+None of that is guessable from the field name, and the measuring tool made it
+visible immediately: the panel says 80 and the tape says 130, and the first
+conclusion anybody draws is that the tape is broken.
+
+So those four carry a derived line under their parameters saying what the shape
+actually measures. The sphere, the box and the ellipsoid get none — their
+parameters *are* their dimensions.
+
+The alternative was to redefine `Length` as the overall height and derive the
+straight section from it. That was considered and dropped: it changes every
+saved capsule, it needs a new rule for a radius over half the length, and the
+mathematical definition of a capsule really is a segment with a radius. Saying
+what it comes to is cheaper than redefining what it is.
+
 ### Display modes — M3.1
 
 Model mode draws the solid three ways: **Solid**, **X-ray** (translucent, with
@@ -517,6 +540,30 @@ producing two plexi plugs.
 
 `band` mode is still there, unchanged, for one set of windows running the whole
 height with an optional twist.
+
+### Two ceilings the bench put there
+
+Both came off a cut lamp rather than out of the mathematics, and both matter
+only when the wedges are left as openings instead of being filled with plexi.
+
+**A window is at most 100° across.** It used to be 178°, where the two-half-plane
+form of the wedge stops being exact. The real limit is lower and physical: left
+as an opening, a wider window leaves too little ring to hold while the glue
+sets.
+
+**A rolled layer gets at most two.** Two openings leave two arcs to hold, three
+leave three of nothing much.
+
+The count is clamped on the **per-layer roll** and not in `band` mode, and that
+asymmetry is deliberate rather than an oversight. The limit only bites when the
+plugs are not cut; put them back and a ring with five windows in it is whole
+again, which is a documented working lamp. The program cannot know which you
+will do — a plug is a part on a sheet, not a setting — so it holds the line
+where it invents the number itself and leaves the one you typed alone.
+
+Clamping both was tried first and six checks went red, all of them describing
+that five-window lamp. The red was right: a hard ceiling there would encode an
+assumption the program cannot check.
 
 ### Kerf pulls the two apart in opposite directions
 
@@ -1054,6 +1101,44 @@ duration.
 Arrow keys are deliberately absent. They already mean "step a layer", which is
 older and stronger; drag for coarse, and the inspector's numbers — now one click
 away, since selecting a hole brings its feature forward — for exact.
+
+### Measuring
+
+Two points, and the distance between them. It exists because a number in a
+panel and a number on the bench disagreeing is the most expensive kind of
+disagreement this program can have, and within an hour of being built it found
+one — a capsule whose `Length` is its straight section, standing 130 mm tall
+with 80 mm in the box.
+
+**In the slice view it snaps to the geometry.** A wall measured by eye is not a
+measurement, so an end catches the nearest point on any outline, the rim of a
+drilled circle, or its centre — and the marker says which it caught: a ring for
+a centre, a square for an edge or a rim, a bare cross for a free point. Centres
+beat rims and rims beat edges when several are in range, because a centre is
+usually the thing wanted and it is the one that cannot be hit by accident.
+Alt holds a point free of everything, for the cases where the answer is not on
+an edge.
+
+The measurement survives stepping through layers, which is the point: the same
+wall on three sheets is exactly the comparison worth making.
+
+**In the model view the ray is only a starting guess.** It hits the preview
+mesh, which is surface nets at whatever resolution the preview is running — one
+cell is 3 mm on a 200 mm model at 64 samples, and a tape measure three
+millimetres out is worse than none. So the real field is bisected along the same
+ray to find where it crosses zero, forty halvings, a few dozen field evaluations
+per click. If there is no sign change to bracket — a tangent grazing the surface
+— it falls back to the mesh hit rather than inventing a number.
+
+The readout gives the distance and `dx`, `dy`, `dz`, because how tall and how
+wide are usually the actual questions. There is no floating label: three.js has
+no text without a sprite, and a label in space turns edge-on while the readout
+can be read from any angle.
+
+**Deliberately not in the sheet view.** `analyseSheet` already measures the
+closest approach between real outlines and reports it, which is a better number
+than a hand-placed one — it finds the tightest place you did not think to look
+for.
 
 ### Manufacturability check — M3
 

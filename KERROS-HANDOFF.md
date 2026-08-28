@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.20.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.21.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -81,6 +81,7 @@ quietly revert them.**
 | dispatch a panel on a feature's stage | dispatch on its kind | `stage === 'RIG'` caught fixtures three lines before the fixture branch, and `FixtureInspector` was unreachable from the day it was written |
 | polygon booleans for a leg hole over the rim | cut legs from the field | estimated at eighty lines, honestly nearer two hundred, and its failure mode is a plausible-looking wrong polygon — the field does it in none, and gives kerf and the empty case away free |
 | `polygonFitsInPart` guards every per-slice hole | it guards the ones with no partial shape | right for a rod and a socket, wrong for a leg, which should take a bite out of the rim rather than vanish |
+| a window's width is limited by where the wedge stops being exact | by what can be glued back together | 178° was the mathematics; 100° is the bench, and only when the plexi plugs are not cut |
 
 ## The recurring failure mode
 
@@ -236,7 +237,10 @@ out of the store for exactly this reason and are re-exported from there.
   comments in interactive commands.
 - **Design before code**: plan the feature completely, then implement.
 - **No error boundary means one throw whites out the app.** There are four, around
-  the app, the viewport, the feature tree and the right-hand panel.
+  the app, the viewport, the feature tree and the right-hand panel. They earn it:
+  a temporal-dead-zone slip in `Viewport.tsx` showed up as *"VIEWPORT STOPPED ·
+  Cannot access 'measureMode' before initialization"* with the rest of the
+  interface still working, rather than as a white page with nothing to read.
 
 ## Pipeline as built
 
@@ -403,6 +407,11 @@ when a layer ends up held on one side only.
 
 ## Practical notes from cutting actual lamps
 
+- **Measure the board, not the packet.** A lamp cut at 3 mm settings from 4 mm
+  card came out an ellipsoid rather than a sphere: eighteen sheets a millimetre
+  taller than planned is eighteen millimetres of extra height. The program
+  planned correctly for the number it was given, and a sphere is not obtainable
+  from unmeasured stock.
 - **Cut the kerf test into the real material before anything else**, and measure
   the outer square and inner square separately. If they disagree the beam is not
   perpendicular and no single kerf value will save the fit.
@@ -422,6 +431,23 @@ when a layer ends up held on one side only.
   gives layers in two groups, and each group needs a rod through it or the smaller
   piece has nothing holding it. It is easy to miss because the Model view looks
   continuous.
+
+## The ghost is a second implementation
+
+Worth its own note because it has been wrong three times while the geometry was
+right every time: a leg ghost tilted the wrong way, then drawn the full height
+of the model whatever layers were chosen, then guessing a depth with nothing
+sliced.
+
+A ghost is drawn in three dimensions from the same numbers the holes are cut
+from in two, and **nothing compares the two**. It is the one place in this
+program where the same thing is worked out twice, and a second implementation
+drifts. Every other duplication here is a *shape* — `WindowFrame` and
+`PlaneFrame` — which is safe precisely because shapes do not drift.
+
+The cure, when it is worth paying for, is to derive the ghost from the same
+`legSections` the field uses rather than from the spec. Until then: when a
+picture and a slice disagree, suspect the picture.
 
 ## How these sessions run
 

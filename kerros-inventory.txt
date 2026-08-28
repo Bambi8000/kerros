@@ -1,24 +1,24 @@
-KERROS INVENTORY  2026-08-26  version 0.20.0
+KERROS INVENTORY  2026-08-28  version 0.21.0
 
 --- source, lines each
-   25683 total
-    1915 src/ui/Inspector.tsx
-    1707 src/core/store.ts
+   26199 total
+    1953 src/ui/Inspector.tsx
+    1714 src/core/store.ts
     1605 src/core/sdf.ts
+    1397 src/ui/Viewport.tsx
     1271 src/core/nest.ts
-    1233 src/ui/Viewport.tsx
     1168 tools/validate-nest.mjs
      948 src/core/slice.ts
      935 src/core/pipeline.ts
      851 src/ui/ProfilePanel.tsx
      829 tools/validate-pipeline.mjs
+     803 src/ui/SliceInspector.tsx
+     768 tools/validate-window.mjs
      759 src/index.css
-     703 tools/validate-window.mjs
      685 tools/validate-sdf.mjs
      644 src/ui/SheetView.tsx
-     604 src/ui/SliceInspector.tsx
      579 tools/validate-slice.mjs
-     494 src/core/window.ts
+     526 src/core/window.ts
      453 tools/validate-rig-export.mjs
      410 src/core/voxelise.ts
      409 src/core/project.ts
@@ -30,8 +30,8 @@ KERROS INVENTORY  2026-08-26  version 0.20.0
      334 src/core/fixture.ts
      330 src/core/legs.ts
      327 tools/validate-project.mjs
+     300 src/ui/Layout.tsx
      299 src/core/rig.ts
-     289 src/ui/Layout.tsx
      287 src/core/job.ts
      283 src/ui/download.ts
      283 src/core/meshImport.ts
@@ -75,6 +75,8 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+832b78e Measuring in the slice and model views, window ceilings from the bench, and what a shape actually measures
+c12d1fb Docs and inventory at 0.20.0: legs from the field, and the layer selector
 577903d Legs cut from the field, so one over the rim takes a bite instead of vanishing
 b10220d Splayed leg holes as the swept hull of two ellipses, with ghosts that stop where the holes do
 d160f68 Keep the last slice while modelling, so a fixture's ghost can find its layers
@@ -103,5 +105,3 @@ daafe81 M10: Tauri shell with native save and open dialogs, batch export into on
 7740b53 M6.1: sculpt strokes stored in the attached shape's frame, so moving or turning the shape carries them
 566d6dd M9.1: fixtures drawn as clickable ghost volumes in the model view
 9aea7a4 M9: E27 socket mount, cable channel and Wago chamber as dimensioned per-slice fixtures; centre-on-model for windows and fixtures
-b22ce8d M8.2: windows carry their own axis and get a gizmo; rotation separated from translation for rods and windows
-4417159 M8.1: per-layer random windows, seeded per layer so adjusting a setting does not reroll the choice
