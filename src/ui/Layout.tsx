@@ -78,6 +78,7 @@ export function Layout() {
     patternCounts,
     holeMisses,
     legGaps,
+    pinLoose,
     ms: sliceMs,
     pending: slicePending,
   } = useSlices(mode !== 'model');
@@ -286,11 +287,17 @@ export function Layout() {
                   patternCounts={patternCounts}
                   holeMisses={holeMisses}
                   legGaps={legGaps}
+                  pinLoose={pinLoose}
                   sliced={slices !== null}
                 />
               )
             ) : (
-              <ProfilePanel slices={slices} reports={sliceReports} sheets={sheets} />
+              <ProfilePanel
+                slices={slices}
+                reports={sliceReports}
+                sheets={sheets}
+                pinLoose={pinLoose}
+              />
             )}
           </ErrorBoundary>
         </section>

@@ -51,6 +51,10 @@ export interface CircleHole {
   label: string;
   /** The id of the feature that put it there, for pointing at it. */
   owner?: string;
+  /** For a pin, the other sheet it also passes through. */
+  pinTo?: number;
+  /** For a pin, which one it is: `gap:position`. */
+  pinKey?: string;
 }
 
 export interface Slice {

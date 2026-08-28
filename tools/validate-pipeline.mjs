@@ -632,6 +632,100 @@ console.log('pipeline: splayed legs are cut from the field');
   );
 }
 
+console.log('pipeline: interleaved pins fasten each sheet to the next');
+{
+  const plate = feature('pl2', 'roundBox', 'SHAPE', {
+    ...defaultParams(findModule('roundBox')),
+    op: 'union',
+    sx: 120,
+    sy: 120,
+    sz: 60,
+    r: 0,
+    pz: 30,
+  });
+
+  const bare = runSliceJob(baseJob([plate]), new Map());
+  const numbers = bare.set.slices.map((slice) => slice.index);
+
+  const pins = (extra) =>
+    feature('pn', 'pins', 'RIG', {
+      pinCount: 3,
+      diameter: 4,
+      radius: 40,
+      angle: 0,
+      stagger: 0,
+      px: 0,
+      py: 0,
+      selKind: 'all',
+      ...extra,
+    });
+
+  const out = runSliceJob(baseJob([plate, pins({})]), new Map());
+  const holesOn = (result, index) =>
+    result.set.slices.find((s2) => s2.index === index).circles.length;
+
+  /*
+   * Every sheet but the two ends carries two rings: one from the gap below and
+   * one from the gap above. The ends have a gap on one side only, so they get
+   * one ring — which is the arithmetic that proves the pins really are being
+   * drilled into both sheets of each gap rather than one.
+   */
+  check('the bottom sheet gets one ring', holesOn(out, numbers[0]) === 3, `${holesOn(out, numbers[0])}`);
+  check('the top sheet gets one ring', holesOn(out, numbers[numbers.length - 1]) === 3);
+  check(
+    'every sheet between them gets two',
+    numbers.slice(1, -1).every((n) => holesOn(out, n) === 6),
+    numbers.slice(1, -1).map((n) => holesOn(out, n)).join(','),
+  );
+  check('and nothing is loose', (out.pinLoose.pn ?? []).length === 0, JSON.stringify(out.pinLoose.pn));
+
+  // The two rings on a shared sheet must not sit on top of each other.
+  const middle = out.set.slices.find((s2) => s2.index === numbers[1]);
+  let closest = Infinity;
+  for (let i = 0; i < middle.circles.length; i++) {
+    for (let j = i + 1; j < middle.circles.length; j++) {
+      closest = Math.min(
+        closest,
+        Math.hypot(middle.circles[i].x - middle.circles[j].x, middle.circles[i].y - middle.circles[j].y),
+      );
+    }
+  }
+  check(
+    'the two rings on a shared sheet are turned apart',
+    closest > 4,
+    `${closest.toFixed(2)} mm between the nearest pair`,
+  );
+
+  // A ring off the edge of the plate fastens nothing, and says so by name.
+  const wide = runSliceJob(baseJob([plate, pins({ radius: 200 })]), new Map());
+  check('pins off the sheet are refused', wide.holeMisses.pn > 0, `${wide.holeMisses.pn}`);
+  check(
+    'and every sheet is named as unfastened',
+    (wide.pinLoose.pn ?? []).length === numbers.length,
+    JSON.stringify(wide.pinLoose.pn),
+  );
+  check(
+    'with no holes drilled',
+    wide.set.slices.every((slice) => slice.circles.length === 0),
+  );
+
+  // A run of layers pins only that run.
+  const some = runSliceJob(
+    baseJob([plate, pins({ selKind: 'range', selFrom: numbers[1], selTo: numbers[3] })]),
+    new Map(),
+  );
+  check(
+    'a range pins only the sheets in it',
+    some.set.slices.every(
+      (slice) =>
+        (slice.index >= numbers[1] && slice.index <= numbers[3]) === slice.circles.length > 0,
+    ),
+  );
+  check('and the ends of that run get one ring each', holesOn(some, numbers[1]) === 3);
+  check('with the sheet between them getting two', holesOn(some, numbers[2]) === 6);
+  check('nothing loose in the run', (some.pinLoose.pn ?? []).length === 0);
+}
+
 console.log('pipeline: the stack reaches the field, not just the slicer');
 {
   const uniform = runSliceJob(baseJob([body, shell]), new Map());

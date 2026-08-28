@@ -23,9 +23,11 @@ interface Props {
   slices: SliceSet | null;
   reports: GapReport[];
   sheets: SheetResult;
+  /** Sheets each pins feature left held on one side only. */
+  pinLoose: Record<string, number[]>;
 }
 
-export function ProfilePanel({ slices, reports, sheets }: Props) {
+export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
   const projectName = useKerros((s) => s.projectName);
   const setProjectName = useKerros((s) => s.setProjectName);
   const trueShape = useKerros((s) => s.trueShapeNesting);
@@ -103,6 +105,9 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
   const layerIndex = total > 0 ? Math.min(Math.max(currentLayer, 1), total) : 0;
   const report = layerIndex > 0 ? reports[layerIndex - 1] : null;
   const flaggedLayers = reports.filter((r) => r.tooThin).length;
+
+  /** Every sheet any pins feature left half-fastened, named once. */
+  const looseSheets = Array.from(new Set(Object.values(pinLoose).flat())).sort((a, b) => a - b);
 
   const sheetCount = sheets.sheets.length;
   const sheetIndex = sheetCount > 0 ? Math.min(Math.max(currentSheet, 1), sheetCount) : 0;
@@ -542,6 +547,21 @@ export function ProfilePanel({ slices, reports, sheets }: Props) {
               ? `, including this one at ${report.minGap.toFixed(2)} mm`
               : ''}
             . They are ringed in the slice inspector.
+          </div>
+        ) : null}
+        {/*
+          Loose sheets belong here rather than only in the pins panel. A
+          thin wall is a warning about how a part will cut; a sheet fastened on
+          one side is a warning about whether the lamp stands up, and that is
+          the sort of thing somebody checks once before exporting rather than by
+          clicking through features.
+        */}
+        {looseSheets.length > 0 ? (
+          <div className="warn">
+            {looseSheets.length === 1 ? 'Sheet' : 'Sheets'} {looseSheets.join(', ')}{' '}
+            {looseSheets.length === 1 ? 'is' : 'are'} pinned on one side only.
+            The pins in the gap beside {looseSheets.length === 1 ? 'it' : 'them'}{' '}
+            did not fit both sheets, so the stack is not fastened through there.
           </div>
         ) : null}
       </div>

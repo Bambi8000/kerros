@@ -20,8 +20,10 @@ import type { Feature } from './types.ts';
 import {
   ROD_CLEARANCE,
   applyRods,
+  loosePins,
+  pinGaps,
 } from './rig.ts';
-import type { RodSpec } from './rig.ts';
+import type { CircleHole, PinSpec, RodSpec } from './rig.ts';
 import { PLANE_WORLD, fixtureHolesAt, resolveFixture } from './fixture.ts';
 import type { FixtureKind, FixtureSpec, PlaneFrame } from './fixture.ts';
 import {
@@ -116,6 +118,14 @@ export interface SliceOutput {
    * when they do the difference has to be said rather than discovered.
    */
   legGaps: Record<string, number>;
+  /**
+   * Sheets a pins feature left held on one side only, by feature.
+   *
+   * A pattern of holes is not a structure. If a gap's pins do not fit, the two
+   * sheets either side of it are not fastened together, and a stack that comes
+   * apart in the middle is worse than one that was never pinned.
+   */
+  pinLoose: Record<string, number[]>;
   ms: number;
 }
 
@@ -126,6 +136,7 @@ export const EMPTY_OUTPUT: SliceOutput = {
   patternCounts: {},
   holeMisses: {},
   legGaps: {},
+  pinLoose: {},
   ms: 0,
 };
 
@@ -350,6 +361,92 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
           return { ...slice, circles, contours };
         });
 
+  /* --- interleaved pins --- */
+
+  const pins = pinsFromFeatures(features, kerf);
+  const pinLoose: Record<string, number[]> = {};
+  const pinsByLayer = new Map<number, CircleHole[]>();
+
+  for (const spec of pins) {
+    holeMisses[spec.id] = holeMisses[spec.id] ?? 0;
+    const feature = features.find((f) => f.id === spec.id);
+    const chosen = resolveLayers(selectorFromParams(feature?.params), fitted);
+    const gaps = pinGaps(spec, chosen);
+
+    /*
+     * Pins taken out by hand.
+     *
+     * Stored on the feature as a plain string of keys so the project file stays
+     * readable, and read here rather than in `rig.ts`: the generator's job is to
+     * say where pins go, not to remember which ones somebody did not want.
+     *
+     * A removed pin is not a miss. It never had to fit, so counting it as one
+     * would put a warning next to a deliberate act. It does still count as
+     * absent for the structural check, which is the point — empty a gap by hand
+     * and the two sheets either side are genuinely unfastened, and saying so is
+     * the whole reason that check exists.
+     */
+    const removed = new Set(
+      String(feature?.params.removed ?? '')
+        .split(' ')
+        .filter(Boolean),
+    );
+
+    /*
+     * A pin has to fit **both** sheets it passes through, not one.
+     *
+     * Half a pin is not a joint, so a hole that lands on material in the sheet
+     * below and off the edge of the one above is refused in both — otherwise
+     * the stack would carry a hole that fastens nothing and reads as if it did.
+     */
+    const placed: number[] = [];
+    for (const gap of gaps) {
+      const below = fitted.find((slice) => slice.index === gap.below);
+      const above = fitted.find((slice) => slice.index === gap.above);
+      if (!below || !above) {
+        placed.push(0);
+        continue;
+      }
+      const groupsBelow = groupContours(below.contours);
+      const groupsAbove = groupContours(above.contours);
+
+      let landed = 0;
+      for (const hole of gap.holes) {
+        if (hole.pinKey && removed.has(hole.pinKey)) continue;
+        const fits =
+          groupsBelow.some((g) => circleFitsInPart(g, hole)) &&
+          groupsAbove.some((g) => circleFitsInPart(g, hole));
+        if (!fits) {
+          holeMisses[spec.id] += 1;
+          continue;
+        }
+        landed += 1;
+        // The same hole in both sheets, each stamped with the other one: which
+        // of the pair you are looking at is what says whether the pin carries
+        // on up from here or down.
+        for (const [index, other] of [
+          [gap.below, gap.above],
+          [gap.above, gap.below],
+        ]) {
+          const list = pinsByLayer.get(index) ?? [];
+          list.push({ ...hole, pinTo: other });
+          pinsByLayer.set(index, list);
+        }
+      }
+      placed.push(landed);
+    }
+
+    pinLoose[spec.id] = loosePins(gaps, placed);
+  }
+
+  const pinned =
+    pinsByLayer.size === 0
+      ? fitted
+      : fitted.map((slice) => {
+          const extra = pinsByLayer.get(slice.index);
+          return extra ? { ...slice, circles: [...slice.circles, ...extra] } : slice;
+        });
+
   /*
    * Legs are not applied here.
    *
@@ -394,8 +491,8 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
 
   const perforated =
     patterns.length === 0
-      ? fitted
-      : fitted.map((slice) => {
+      ? pinned
+      : pinned.map((slice) => {
           const circles = slice.circles.slice();
           for (const feature of patterns) {
             if (!patternLayers.get(feature.id)?.has(slice.index)) continue;
@@ -435,6 +532,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     patternCounts,
     holeMisses,
     legGaps,
+    pinLoose,
     ms: Date.now() - started,
   };
 }
@@ -714,6 +812,27 @@ export function selectorForFixture(
 }
 
 /** Every enabled legs feature, with its spread measured at the model's bottom. */
+/** Every enabled pins feature. */
+export function pinsFromFeatures(features: Feature[], kerf: number): PinSpec[] {
+  const out: PinSpec[] = [];
+  for (const f of features) {
+    if (f.kind !== 'pins' || !f.enabled) continue;
+    out.push({
+      id: f.id,
+      label: f.name,
+      count: Math.max(Math.round(Number(f.params.pinCount) || 3), 1),
+      diameter: Math.max(Number(f.params.diameter) || 0, 0.1),
+      radius: Math.max(Number(f.params.radius) || 0, 0),
+      angle: Number(f.params.angle) || 0,
+      stagger: Number(f.params.stagger) || 0,
+      x: Number(f.params.px) || 0,
+      y: Number(f.params.py) || 0,
+      kerf,
+    });
+  }
+  return out;
+}
+
 export function legsFromFeatures(features: Feature[], kerf: number, zRef: number): LegSpec[] {
   const out: LegSpec[] = [];
   for (const f of features) {

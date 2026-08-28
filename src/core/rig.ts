@@ -52,6 +52,25 @@ export interface CircleHole {
    * has to.
    */
   owner?: string;
+  /**
+   * For a pin, the other sheet it also passes through.
+   *
+   * A pin joins two neighbouring sheets and the same hole is drilled in both,
+   * so which of the two you are looking at decides whether it carries on up or
+   * down from here. Worth carrying: a ring of identical holes hides the one
+   * thing about interleaving that matters.
+   */
+  pinTo?: number;
+  /**
+   * For a pin, which one it is: `gap:position`.
+   *
+   * Stable across a re-slice so a pin taken out by hand stays out. It is keyed
+   * on the layer number below the gap rather than on an ordinal, because a run
+   * of layers can be re-chosen without renumbering the sheets — but it does
+   * move if the sheet count itself changes, which is the same fragility hand
+   * placements on the bed already carry.
+   */
+  pinKey?: string;
 }
 
 /** Finished hole diameter for a rod, table value unless overridden. */
@@ -296,4 +315,132 @@ export function circlePoints(cx: number, cy: number, r: number, tolerance = 0.02
     points.push(cx + safe * Math.cos(a), cy + safe * Math.sin(a));
   }
   return points;
+}
+
+/* ------------------------------------------------------------------ *
+ * Interleaved pins
+ *
+ * Short pins joining one sheet to the next, instead of a threaded rod through
+ * the whole stack. Each pin passes through **two** neighbouring sheets, so a
+ * stack of n sheets has n-1 gaps and every gap needs at least one pin or the
+ * two sheets either side of it are not fastened to each other.
+ *
+ * THE REASON THEY ARE INTERLEAVED. The pins in gap k-1 pass through sheets k-1
+ * and k. The pins in gap k pass through sheets k and k+1. Both drill sheet k —
+ * so if consecutive gaps used the same angle, the two pins would meet inside
+ * that sheet. Turning each gap from the one below it is not decoration; it is
+ * what makes the idea possible at all.
+ *
+ * Every sheet except the two ends therefore carries two rings of holes, one
+ * from the gap below and one from the gap above.
+ * ------------------------------------------------------------------ */
+
+export interface PinSpec {
+  id: string;
+  label: string;
+  /** Pins in each gap, evenly around the axis. */
+  count: number;
+  /** Finished hole diameter, mm. */
+  diameter: number;
+  /** Distance from the stack axis, mm. */
+  radius: number;
+  /** Where the first pin of the lowest gap points, degrees from +X. */
+  angle: number;
+  /**
+   * Degrees each gap is turned from the one below it.
+   *
+   * Zero — or a whole turn, which is the same thing — would put every gap at
+   * the same angle and the pins would meet inside the sheets they share. Either
+   * falls back to half a position, which is the furthest apart consecutive gaps
+   * can be.
+   */
+  stagger: number;
+  /** The axis the ring of pins is arranged around, mm. */
+  x: number;
+  y: number;
+  kerf: number;
+}
+
+/** Half a position: the furthest one gap can be turned from the next. */
+export function defaultStagger(count: number): number {
+  return 360 / Math.max(Math.round(count), 1) / 2;
+}
+
+export interface PinGap {
+  /** Layer numbers of the two sheets this gap joins. */
+  below: number;
+  above: number;
+  /** Where the pins go. The same holes are drilled in both sheets. */
+  holes: CircleHole[];
+}
+
+/**
+ * One gap per pair of neighbouring sheets, with the pins turned as they climb.
+ *
+ * `layers` is the run of sheets to pin, in order and as the slice inspector
+ * numbers them. Fewer than two sheets is not a stack and gets nothing.
+ */
+export function pinGaps(spec: PinSpec, layers: number[]): PinGap[] {
+  const count = Math.max(Math.round(spec.count), 1);
+  const radius = Math.max(spec.radius, 0);
+  const cut = rodCutRadius(Math.max(spec.diameter, 0.1), spec.kerf);
+
+  // Zero would stack every gap on the same angle and the pins would collide
+  // inside the sheets they share. A whole turn is the same as none.
+  const turn = spec.stagger % 360 === 0 ? defaultStagger(count) : spec.stagger;
+
+  const gaps: PinGap[] = [];
+  for (let i = 0; i + 1 < layers.length; i++) {
+    const base = spec.angle + turn * i;
+    const holes: CircleHole[] = [];
+    for (let k = 0; k < count; k++) {
+      const a = ((base + (k * 360) / count) * Math.PI) / 180;
+      holes.push({
+        x: spec.x + Math.cos(a) * radius,
+        y: spec.y + Math.sin(a) * radius,
+        r: cut,
+        label: `pin ${spec.label}`,
+        owner: spec.id,
+        pinKey: `${layers[i]}:${k}`,
+      });
+    }
+    gaps.push({ below: layers[i], above: layers[i + 1], holes });
+  }
+  return gaps;
+}
+
+/**
+ * Sheets held on one side only, or on neither.
+ *
+ * The check the generator owes its own output. A pattern of holes is not a
+ * structure: if a gap's pins would not fit the sheets they pass through, those
+ * two sheets are simply not fastened together, and a stack that comes apart in
+ * the middle is worse than one that was never pinned.
+ *
+ * `placed` says how many pins actually landed in each gap, in the same order
+ * `pinGaps` returned them. The two ends of the run are left out: the lowest
+ * sheet has no gap below it and the highest none above, and reporting those
+ * would cry wolf on every stack.
+ */
+export function loosePins(gaps: PinGap[], placed: number[]): number[] {
+  if (gaps.length === 0) return [];
+
+  const held = new Map<number, number>();
+  const note = (layer: number, joins: number) => held.set(layer, (held.get(layer) ?? 0) + joins);
+
+  for (const [i, gap] of gaps.entries()) {
+    const joined = (placed[i] ?? 0) > 0 ? 1 : 0;
+    note(gap.below, joined);
+    note(gap.above, joined);
+  }
+
+  const first = gaps[0].below;
+  const last = gaps[gaps.length - 1].above;
+
+  const loose: number[] = [];
+  for (const [layer, joins] of held) {
+    const wanted = layer === first || layer === last ? 1 : 2;
+    if (joins < wanted) loose.push(layer);
+  }
+  return loose.sort((a, b) => a - b);
 }

@@ -30,8 +30,13 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
     const mode = f.params.mode === 'band' ? 'band' : 'per layer';
     return `${mode}${attached ? ' · attached' : ''}`;
   }
-  // Before the stage test, not after it. Legs are RIG too, and matching the
-  // stage is what made the fixture inspector unreachable for its whole life.
+  // Before the stage test, not after it. Legs and pins are RIG too, and
+  // matching the stage is what made the fixture inspector unreachable for its
+  // whole life.
+  if (f.kind === 'pins') {
+    const n = Math.max(Math.round(Number(f.params.pinCount) || 3), 1);
+    return `${n} per gap · Ø${Number(f.params.diameter) || 0} at ${Number(f.params.radius) || 0} mm`;
+  }
   if (f.kind === 'legs') {
     const n = Math.max(Math.round(Number(f.params.legCount) || 3), 1);
     return `${n} legs · ${Number(f.params.tilt) || 0}° · Ø${Number(f.params.diameter) || 0}`;
@@ -80,6 +85,7 @@ export function FeatureTree() {
   const addShape = useKerros((s) => s.addShape);
   const addRod = useKerros((s) => s.addRod);
   const addLegs = useKerros((s) => s.addLegs);
+  const addPins = useKerros((s) => s.addPins);
   const addShell = useKerros((s) => s.addShell);
   const addPattern = useKerros((s) => s.addPattern);
   const addWindow = useKerros((s) => s.addWindow);
@@ -233,6 +239,9 @@ export function FeatureTree() {
         <div className="add-row">
           <button type="button" className="btn" onClick={addLegs}>
             Legs
+          </button>
+          <button type="button" className="btn" onClick={addPins}>
+            Pins
           </button>
         </div>
         <div className="add-row-three">

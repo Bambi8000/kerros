@@ -18,6 +18,13 @@ const COLORS = {
   warn: '#d9a441',
   selected: '#f0b429',
   measure: '#5fb3d4',
+  /*
+   * A pin joins two sheets, so on any one sheet half its holes carry on
+   * upwards and half downwards. Two colours because a ring of identical holes
+   * hides the interleave, which is the one thing about pins worth seeing.
+   */
+  pinUp: '#6bbf8a',
+  pinDown: '#c07ad4',
 };
 
 /** How close to a hole's edge still counts as pointing at it, in screen pixels. */
@@ -127,6 +134,9 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
   const selectedId = useKerros((s) => s.selectedId);
   const selectFeature = useKerros((s) => s.selectFeature);
   const moveOriginWorldBy = useKerros((s) => s.moveOriginWorldBy);
+  const togglePin = useKerros((s) => s.togglePin);
+  /** The one pin last pointed at, so Backspace knows which to take out. */
+  const [pickedPin, setPickedPin] = useState<{ owner: string; key: string } | null>(null);
 
   /**
    * The transform the last paint used.
@@ -225,19 +235,19 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
    * should get the small one — the same rule the sheet view uses when a part
    * rests inside a ring's waste.
    */
-  const hitAt = (wx: number, wy: number): string | null => {
+  const hitAt = (wx: number, wy: number): { owner: string; pinKey?: string } | null => {
     if (!slice) return null;
     const view = viewRef.current;
     const slop = view ? GRAB_SLOP_PX / view.scale : 0.5;
 
-    let best: string | null = null;
+    let best: { owner: string; pinKey?: string } | null = null;
     let bestSize = Infinity;
 
     for (const circle of slice.circles as CircleHole[]) {
       if (!circle.owner || !grabbable.has(circle.owner)) continue;
       const d = Math.hypot(wx - circle.x, wy - circle.y);
       if (d <= circle.r + slop && circle.r < bestSize) {
-        best = circle.owner;
+        best = { owner: circle.owner, pinKey: circle.pinKey };
         bestSize = circle.r;
       }
     }
@@ -247,7 +257,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
       if (!pointInRing(contour.points, wx, wy)) continue;
       const size = Math.sqrt(Math.abs(contour.area));
       if (size < bestSize) {
-        best = contour.owner;
+        best = { owner: contour.owner };
         bestSize = size;
       }
     }
@@ -333,8 +343,14 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     const world = toWorld(event.clientX, event.clientY);
     if (!world) return;
 
-    const owner = hitAt(world[0], world[1]);
-    if (!owner) return;
+    const hit = hitAt(world[0], world[1]);
+    if (!hit) return;
+    const owner = hit.owner;
+
+    // Remembered so Backspace knows which pin, not just which feature: a pin is
+    // one of a ring and the ring is one feature, so selecting the feature alone
+    // cannot say what to take out.
+    setPickedPin(hit.pinKey ? { owner, key: hit.pinKey } : null);
 
     selectFeature(owner);
 
@@ -418,6 +434,28 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     setDrag(settling);
     settledAgainst.current = slices;
   };
+
+  /**
+   * Backspace takes the pin under the last click out, and puts it back.
+   *
+   * The same gesture the sheet view uses to unpin a part, and for the same
+   * reason: the thing was pointed at, so the keyboard should act on it. A pin
+   * removed by hand is not counted as a miss — it never had to fit — but it
+   * still counts as absent for the structural check, so emptying a gap says so
+   * rather than quietly leaving two sheets unfastened.
+   */
+  useEffect(() => {
+    if (!pickedPin) return;
+    const onKey = (event: KeyboardEvent) => {
+      const el = document.activeElement;
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
+      if (event.key !== 'Backspace' && event.key !== 'Delete') return;
+      togglePin(pickedPin.owner, pickedPin.key);
+      event.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pickedPin, togglePin]);
 
   /** Escape puts the tape away. Changing layer keeps it, which is the point. */
   useEffect(() => {
@@ -575,6 +613,50 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
         }
       }
 
+      /*
+       * Pin holes in the colour of where they go, after the selection ring.
+       *
+       * Order matters and the first attempt had it backwards: the selection
+       * highlight strokes every hole belonging to the selected feature, so
+       * drawing the pin colours first meant they were painted over in amber the
+       * moment the pins feature was the selected one — which is exactly when
+       * anybody looks at them.
+       *
+       * They stay in the filled path above, so they still read as material
+       * removed; this only re-strokes them.
+       */
+      for (const circle of slice.circles) {
+        if (circle.pinTo === undefined) continue;
+        ctx.strokeStyle = circle.pinTo > slice.index ? COLORS.pinUp : COLORS.pinDown;
+        ctx.lineWidth = 2;
+        const ox = circle.x + liveDX(circle.owner);
+        const oy = circle.y + liveDY(circle.owner);
+        ctx.beginPath();
+        ctx.arc(toScreenX(ox), toScreenY(oy), circle.r * scale, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // The pin Backspace would take out, ringed outside its own colour so the
+      // key has something to aim at without hiding which way the pin goes.
+      if (pickedPin) {
+        const target = slice.circles.find(
+          (c) => c.owner === pickedPin.owner && c.pinKey === pickedPin.key,
+        );
+        if (target) {
+          ctx.strokeStyle = COLORS.selected;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(
+            toScreenX(target.x + liveDX(target.owner)),
+            toScreenY(target.y + liveDY(target.owner)),
+            target.r * scale + 4,
+            0,
+            Math.PI * 2,
+          );
+          ctx.stroke();
+        }
+      }
+
       // Ring the narrowest place so it can be found rather than hunted for.
       if (report?.tooThin && report.at) {
         ctx.strokeStyle = COLORS.warn;
@@ -665,7 +747,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     const observer = new ResizeObserver(draw);
     observer.observe(wrap);
     return () => observer.disconnect();
-  }, [slice, extent, fitToLayer, widest, report, selectedId, drag, tool, measure, cursor]);
+  }, [slice, extent, fitToLayer, widest, report, selectedId, drag, tool, measure, cursor, pickedPin]);
 
   const selected = features.find((f) => f.id === selectedId) ?? null;
   const selectedHere =
@@ -676,6 +758,9 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
       slice.contours.some((c) => c.owner === selected.id));
   const selectedIsRod = selected?.kind === 'rod';
   const selectedIsLegs = selected?.kind === 'legs';
+  const selectedIsPins = selected?.kind === 'pins';
+  const pinsUp = slice ? slice.circles.filter((c) => c.pinTo !== undefined && c.pinTo > slice.index).length : 0;
+  const pinsDown = slice ? slice.circles.filter((c) => c.pinTo !== undefined && c.pinTo < slice.index).length : 0;
 
   const partCount = slice ? groupContours(slice.contours).length : 0;
   const holeCount = slice ? slice.contours.filter((c) => c.isHole).length : 0;
@@ -779,7 +864,11 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
                     sheet it reaches, and they all move together. Better said
                     out loud than discovered on the bed.
                   */}
-                  {selectedIsRod
+                  {selectedIsPins
+                    ? ` — ${pinsUp} joining the sheet above, ${pinsDown} the sheet below${
+                        pickedPin ? ' · Backspace takes this one out' : ''
+                      }`
+                    : selectedIsRod
                     ? ' — moving a rod moves it on every layer it reaches'
                     : selectedIsLegs
                       ? /*

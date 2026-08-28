@@ -25,6 +25,7 @@ import type { Op } from '../core/sdf';
 import { shellModifier } from '../core/sdf';
 import { ROD_CLEARANCE, ROD_SIZES } from '../core/rig';
 import { LEG_COUNTS, MAX_TILT, legSpacing } from '../core/legs';
+import { defaultStagger } from '../core/rig';
 import { PATTERN_KINDS, PATTERN_LABELS } from '../core/pattern';
 import { FIXTURE_LABELS, SOCKET_PRESETS, fixtureExtent } from '../core/fixture';
 import type { FixtureKind } from '../core/fixture';
@@ -968,6 +969,178 @@ function WindowInspector({ feature }: { feature: Feature }) {
   );
 }
 
+interface PinsProps {
+  feature: Feature;
+  slices: SliceSet | null;
+  /** Sheets left held on one side only. */
+  loose: number[] | undefined;
+}
+
+function PinsInspector({ feature, slices, loose }: PinsProps) {
+  const setParam = useKerros((s) => s.setParam);
+  const renameFeature = useKerros((s) => s.renameFeature);
+  const kerf = useKerros((s) => s.material.kerf);
+
+  const restorePins = useKerros((st) => st.restorePins);
+  const count = Math.max(Math.round(num(feature.params, 'pinCount', 3)), 1);
+  const stagger = num(feature.params, 'stagger', 0);
+  const removedCount = String(feature.params.removed ?? '').split(' ').filter(Boolean).length;
+  const turn = stagger % 360 === 0 ? defaultStagger(count) : stagger;
+
+  return (
+    <>
+      <div className="group">
+        <div className="group-head">Pins</div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <span className="field-input">
+            <input
+              type="text"
+              value={feature.name}
+              onChange={(e) => renameFeature(feature.id, e.target.value)}
+            />
+          </span>
+        </label>
+        {/*
+          The one warning that matters. A pattern of holes is not a structure:
+          if a gap's pins do not fit, the two sheets either side are not
+          fastened to each other, and a stack that comes apart in the middle is
+          worse than one that was never pinned.
+        */}
+        {loose && loose.length > 0 ? (
+          <div className="warn">
+            {loose.length === 1 ? 'Sheet' : 'Sheets'} {loose.join(', ')}{' '}
+            {loose.length === 1 ? 'is' : 'are'} held on one side only — the pins
+            in the gap next to {loose.length === 1 ? 'it' : 'them'} would not fit
+            both sheets. Move the ring in or out, or use a smaller pin.
+          </div>
+        ) : null}
+        <div className="derived">
+          Each pin passes through two neighbouring sheets, so every gap between
+          the chosen layers gets a set. Cut per slice, so the Model view cannot
+          show them. In the slice view the green holes join the sheet above and
+          the violet ones the sheet below; click one and Backspace takes it out.
+        </div>
+        {removedCount > 0 ? (
+          <>
+            <button type="button" className="btn btn-wide" onClick={() => restorePins(feature.id)}>
+              Put back {removedCount} removed {removedCount === 1 ? 'pin' : 'pins'}
+            </button>
+            {/*
+              A removed pin is a deliberate act, not a miss, so it gets a count
+              rather than a warning. Emptying a gap entirely is a different
+              matter and the loose-sheet warning above says so.
+            */}
+            <div className="derived">
+              Taken out by hand. They are not counted as holes that would not
+              fit — they never had to.
+            </div>
+          </>
+        ) : null}
+      </div>
+
+      <div className="group">
+        <div className="group-head">The ring</div>
+        <NumberField
+          label="Pins per gap"
+          value={count}
+          step={1}
+          min={1}
+          max={12}
+          onChange={(v) => setParam(feature.id, 'pinCount', Math.round(v))}
+        />
+        <NumberField
+          label="Diameter"
+          value={num(feature.params, 'diameter', 4)}
+          unit="mm"
+          step={0.5}
+          min={0.5}
+          onChange={(v) => setParam(feature.id, 'diameter', v)}
+        />
+        <NumberField
+          label="Radius"
+          value={num(feature.params, 'radius', 40)}
+          unit="mm"
+          step={1}
+          min={0}
+          onChange={(v) => setParam(feature.id, 'radius', v)}
+        />
+        <NumberField
+          label="First pin at"
+          value={num(feature.params, 'angle', 0)}
+          unit="°"
+          step={5}
+          min={-360}
+          max={360}
+          onChange={(v) => setParam(feature.id, 'angle', v)}
+        />
+        <NumberField
+          label="Turn per gap"
+          value={stagger}
+          unit="°"
+          step={5}
+          min={0}
+          max={360}
+          onChange={(v) => setParam(feature.id, 'stagger', v)}
+        />
+        {/*
+          Why the turn is not decoration: neighbouring gaps drill the sheet they
+          share, so at the same angle their pins would meet inside it.
+        */}
+        <div className="derived">
+          {stagger % 360 === 0
+            ? `0 uses half a position — ${turn.toFixed(1)}°, as far apart as neighbouring gaps go. `
+            : `Each gap is turned ${turn.toFixed(1)}° from the one below. `}
+          Two gaps share a sheet, so at the same angle their pins would meet
+          inside it. Holes are cut {kerf} mm under size so they open out to the
+          diameter above.
+        </div>
+        {/*
+          The default turns each gap as far as it can from its neighbour, which
+          is not the same as making the pattern climb: half a position twice is
+          a whole position, so the rings repeat every second gap and every sheet
+          looks alike. Saying the period out loud is the difference between
+          choosing that and not noticing it.
+        */}
+        <div className="derived">
+          {(() => {
+            const spacing = 360 / count;
+            const steps = Math.round(spacing / turn);
+            const exact = Math.abs(steps * turn - spacing) < 1e-6;
+            if (exact && steps <= 1) {
+              return 'Every gap lands on the same angles — nothing is interleaved.';
+            }
+            if (exact) {
+              return `The rings repeat every ${steps} gaps, so a sheet looks like the one ${steps} above it. For a pattern that keeps climbing, use a turn that does not divide ${spacing.toFixed(1)}° evenly — ${(spacing / (steps + 1)).toFixed(1)}° gives ${steps + 1}.`;
+            }
+            return `The rings do not line up again for a long way, so the pattern climbs the stack.`;
+          })()}
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">Placement</div>
+        <NumberField
+          label="Axis X"
+          value={num(feature.params, 'px', 0)}
+          unit="mm"
+          step={0.5}
+          onChange={(v) => setParam(feature.id, 'px', v)}
+        />
+        <NumberField
+          label="Axis Y"
+          value={num(feature.params, 'py', 0)}
+          unit="mm"
+          step={0.5}
+          onChange={(v) => setParam(feature.id, 'py', v)}
+        />
+      </div>
+
+      <LayerSelectorFields feature={feature} slices={slices} />
+    </>
+  );
+}
+
 interface LegsProps {
   feature: Feature;
   slices: SliceSet | null;
@@ -1896,11 +2069,12 @@ interface InspectorProps {
   holeMisses: Record<string, number>;
   /** Chosen layers with no sheet, by legs feature. */
   legGaps: Record<string, number>;
+  pinLoose: Record<string, number[]>;
   /** Whether slicing has run at all — it does not while modelling. */
   sliced: boolean;
 }
 
-export function Inspector({ slices, patternCounts, holeMisses, legGaps, sliced }: InspectorProps) {
+export function Inspector({ slices, patternCounts, holeMisses, legGaps, pinLoose, sliced }: InspectorProps) {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
 
@@ -1928,6 +2102,9 @@ export function Inspector({ slices, patternCounts, holeMisses, legGaps, sliced }
    */
   if (feature.kind.startsWith('fixture:')) {
     return <FixtureInspector feature={feature} slices={slices} misses={holeMisses[feature.id]} />;
+  }
+  if (feature.kind === 'pins') {
+    return <PinsInspector feature={feature} slices={slices} loose={pinLoose[feature.id]} />;
   }
   if (feature.kind === 'legs') {
     return <LegsInspector feature={feature} slices={slices} gaps={legGaps[feature.id]} />;

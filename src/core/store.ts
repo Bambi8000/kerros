@@ -182,6 +182,11 @@ interface KerrosState {
   addShape: (moduleKey: string) => void;
   addRod: () => void;
   addLegs: () => void;
+  addPins: () => void;
+  /** Take one pin out by hand, or put it back. */
+  togglePin: (id: string, key: string) => void;
+  /** Put every hand-removed pin back. */
+  restorePins: (id: string) => void;
   addShell: () => void;
   addPattern: () => void;
   addWindow: () => void;
@@ -845,6 +850,74 @@ export const useKerros = create<KerrosState>((set, get) => ({
    * at the bottom of the model, so the number typed in is where the legs meet
    * the lamp.
    */
+  /**
+   * Interleaved pins: short pins joining each sheet to the next.
+   *
+   * Every gap between the chosen sheets gets a set, and each set is turned from
+   * the one below it — the pins in neighbouring gaps share a sheet, so at the
+   * same angle they would meet inside it.
+   */
+  addPins: () =>
+    set((s) => {
+      const bounds = modelBounds(s.features.filter((f) => f.stage === 'SHAPE'));
+      const spread = bounds ? Math.max(bounds.max[0], 20) * 0.6 : 40;
+      const id = `f${s.nextFeatureNumber}`;
+      const count = s.features.filter((f) => f.kind === 'pins').length + 1;
+
+      return {
+        features: [
+          ...s.features,
+          {
+            id,
+            kind: 'pins',
+            stage: 'RIG' as Stage,
+            name: `Pins ${count}`,
+            enabled: true,
+            params: {
+              pinCount: 3,
+              diameter: 4,
+              radius: Math.round(spread * 10) / 10,
+              angle: 0,
+              // 0 means half a position, as far apart as neighbouring gaps go.
+              stagger: 0,
+              px: 0,
+              py: 0,
+              selKind: 'all',
+              removed: '',
+            },
+          },
+        ],
+        nextFeatureNumber: s.nextFeatureNumber + 1,
+        selectedId: id,
+      };
+    }),
+
+  /*
+   * Removed pins live on the feature as a space-separated string of keys.
+   *
+   * A handful of short keys is not bulk data the way sculpt strokes are, so it
+   * needs no array of its own and no change to the project format — and a
+   * string of `12:0 12:2` is something a person can read in the file and edit
+   * out if it ever goes wrong.
+   */
+  togglePin: (id, key) =>
+    set((s) => ({
+      features: s.features.map((f) => {
+        if (f.id !== id) return f;
+        const keys = new Set(String(f.params.removed ?? '').split(' ').filter(Boolean));
+        if (keys.has(key)) keys.delete(key);
+        else keys.add(key);
+        return { ...f, params: { ...f.params, removed: [...keys].sort().join(' ') } };
+      }),
+    })),
+
+  restorePins: (id) =>
+    set((s) => ({
+      features: s.features.map((f) =>
+        f.id === id ? { ...f, params: { ...f.params, removed: '' } } : f,
+      ),
+    })),
+
   addLegs: () =>
     set((s) => {
       const bounds = modelBounds(s.features.filter((f) => f.stage === 'SHAPE'));
@@ -1644,6 +1717,7 @@ export {
   windowsFromFeatures,
   fixturesFromFeatures,
   legsFromFeatures,
+  pinsFromFeatures,
   patternOptionsOf,
 } from './pipeline';
 

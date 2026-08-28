@@ -9,6 +9,9 @@
  */
 
 import {
+  pinGaps,
+  loosePins,
+  defaultStagger,
   GLYPH_ADVANCE,
   GLYPH_HEIGHT,
   GLYPH_WIDTH,
@@ -236,6 +239,122 @@ console.log('spacers: ring counting');
   const acrossVoid = spacerPlans([rods[0]], voided, base)[0];
   check('a void along Z is filled rather than counted as one gap', acrossVoid.total === 8,
     `${acrossVoid.total} rings for a 24 mm gap of 3 mm rings`);
+}
+
+console.log('pins: one gap per pair of sheets');
+{
+  const pin = (patch) => ({
+    id: 'p',
+    label: 'Pins',
+    count: 3,
+    diameter: 4,
+    radius: 40,
+    angle: 0,
+    stagger: 0,
+    x: 0,
+    y: 0,
+    kerf: 0.2,
+    ...patch,
+  });
+
+  const layers = [1, 2, 3, 4, 5, 6];
+  const gaps = pinGaps(pin({}), layers);
+
+  check('six sheets have five gaps', gaps.length === 5);
+  check('each joins neighbours', gaps.every((g, i) => g.below === layers[i] && g.above === layers[i + 1]));
+  check('one hole per pin', gaps.every((g) => g.holes.length === 3));
+  check('cut a kerf under size, like every other hole', near(gaps[0].holes[0].r, rodCutRadius(4, 0.2), 1e-12));
+  check('each hole knows which feature made it', gaps.every((g) => g.holes.every((h) => h.owner === 'p')));
+  check('and they sit on the radius asked for', gaps.every((g) => g.holes.every((h) => near(Math.hypot(h.x, h.y), 40, 1e-9))));
+
+  check('fewer than two sheets is not a stack', pinGaps(pin({}), [1]).length === 0 && pinGaps(pin({}), []).length === 0);
+  check('two sheets are one gap', pinGaps(pin({}), [1, 2]).length === 1);
+
+  /*
+   * The rule the whole idea rests on.
+   *
+   * Gap k-1 drills sheets k-1 and k; gap k drills sheets k and k+1. Both go
+   * through sheet k, so at the same angle the two pins would meet inside it.
+   * Consecutive gaps must be turned apart, and the default turns them as far
+   * apart as they go.
+   */
+  const angleOf = (h) => ((Math.atan2(h.y, h.x) * 180) / Math.PI + 360) % 360;
+  const closestBetween = (a, b) => {
+    let best = 360;
+    for (const x of a.holes.map(angleOf)) {
+      for (const y of b.holes.map(angleOf)) {
+        let d = Math.abs(x - y) % 360;
+        d = Math.min(d, 360 - d);
+        best = Math.min(best, d);
+      }
+    }
+    return best;
+  };
+
+  for (let i = 0; i + 1 < gaps.length; i++) {
+    check(
+      `gap ${i + 1} and ${i + 2} do not share an angle`,
+      closestBetween(gaps[i], gaps[i + 1]) > 1e-6,
+      `${closestBetween(gaps[i], gaps[i + 1]).toFixed(3)} degrees apart`,
+    );
+  }
+  check(
+    'the default turn is half a position, the furthest they go',
+    near(closestBetween(gaps[0], gaps[1]), defaultStagger(3), 1e-9),
+  );
+  check('a stagger of zero is refused rather than obeyed', (() => {
+    const zeroed = pinGaps(pin({ stagger: 0 }), layers);
+    return closestBetween(zeroed[0], zeroed[1]) > 1e-6;
+  })());
+  check('a stagger that is asked for is used', (() => {
+    const turned = pinGaps(pin({ count: 4, stagger: 15 }), layers);
+    return near(closestBetween(turned[0], turned[1]), 15, 1e-9);
+  })());
+
+  // With more pins the positions are closer together, so the furthest apart
+  // consecutive gaps can be is smaller.
+  check('more pins leave less room to turn', defaultStagger(6) < defaultStagger(3));
+}
+
+console.log('pins: every sheet held on both sides');
+{
+  const pin = { id: 'p', label: 'Pins', count: 3, diameter: 4, radius: 40, angle: 0, stagger: 0, x: 0, y: 0, kerf: 0.2 };
+  const gaps = pinGaps(pin, [1, 2, 3, 4, 5, 6]);
+
+  /*
+   * A pattern of holes is not a structure. If a gap's pins do not fit the
+   * sheets they pass through, those two sheets are not fastened to each other,
+   * and a stack that comes apart in the middle is worse than one that was never
+   * pinned. So the generator is made to check its own output.
+   */
+  check('all pinned, nothing loose', loosePins(gaps, [3, 3, 3, 3, 3]).length === 0);
+  check(
+    'a gap with no pins leaves both its sheets held on one side',
+    loosePins(gaps, [3, 3, 0, 3, 3]).join(',') === '3,4',
+  );
+  check(
+    'one pin is enough to fasten a gap',
+    loosePins(gaps, [3, 3, 1, 3, 3]).length === 0,
+  );
+  check(
+    'the bottom gap empty leaves the bottom sheet held by nothing',
+    loosePins(gaps, [0, 3, 3, 3, 3]).join(',') === '1,2',
+  );
+  check(
+    'the top gap empty is the same at the other end',
+    loosePins(gaps, [3, 3, 3, 3, 0]).join(',') === '5,6',
+  );
+  check('nothing pinned at all names every sheet', loosePins(gaps, [0, 0, 0, 0, 0]).length === 6);
+
+  /*
+   * The ends are not complained about for having one neighbour. The lowest
+   * sheet has no gap below it and the highest none above, and saying so on
+   * every stack would teach somebody to stop reading the warning.
+   */
+  const two = pinGaps(pin, [1, 2]);
+  check('a two-sheet stack pinned once is complete', loosePins(two, [3]).length === 0);
+  check('and unpinned names both', loosePins(two, [0]).join(',') === '1,2');
+  check('no gaps at all is not a complaint', loosePins([], []).length === 0);
 }
 
 console.log('spacers: circle points');
