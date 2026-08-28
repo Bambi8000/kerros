@@ -12,6 +12,7 @@ import type { SliceSet } from '../core/slice';
 import { rodDiameter, rodSpan } from '../core/rig';
 import { socketDiameter } from '../core/fixture';
 import { legAzimuths, MAX_TILT } from '../core/legs';
+import { composeField } from '../core/store';
 import { resolveLayers, selectorFromParams } from '../core/layers';
 import {
   fieldFeaturesWithVolumes,
@@ -60,6 +61,7 @@ const COLORS = {
   sheet: 0xc9bfb2,
   sheetCurrent: 0xe04a2f,
   rod: 0x8d8a86,
+  measure: 0x5fb3d4,
   rodSelected: 0xe04a2f,
   fixture: 0x4a9fd8,
   fixtureSelected: 0xe04a2f,
@@ -249,6 +251,38 @@ export function Viewport({ slices }: ViewportProps) {
   const preview = usePreview(mode !== 'stack');
   const displayMode = useKerros((s) => s.displayMode);
   const sculptMode = useKerros((s) => s.sculptMode);
+  const measureMode = useKerros((s) => s.measureMode);
+
+  /**
+   * The measuring tape, in model millimetres.
+   *
+   * Kept here rather than in the store: it is transient interface state, which
+   * the project file deliberately does not save, and nothing outside this view
+   * needs to know about it.
+   */
+  const [measure, setMeasure] = useState<{
+    from: [number, number, number];
+    to: [number, number, number] | null;
+  } | null>(null);
+
+  /** Escape clears the tape first, then puts it away. */
+  useEffect(() => {
+    if (!measureMode) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (measure) setMeasure(null);
+      else useKerros.getState().setMeasureMode(false);
+      event.stopPropagation();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [measureMode, measure]);
+
+  /** Putting the tape away clears what it was showing. */
+  useEffect(() => {
+    if (!measureMode) setMeasure(null);
+  }, [measureMode]);
+
   const brushRadius = useKerros((s) => s.brushRadius);
   const selectedId = useKerros((s) => s.selectedId);
   const gizmoMode = useKerros((s) => s.gizmoMode);
@@ -269,6 +303,7 @@ export function Viewport({ slices }: ViewportProps) {
   const stackRef = useRef<THREE.Group | null>(null);
   const rodsRef = useRef<THREE.Group | null>(null);
   const fixturesRef = useRef<THREE.Group | null>(null);
+  const measureRef = useRef<THREE.Group | null>(null);
   const brushRef = useRef<THREE.Mesh | null>(null);
   const strokeRef = useRef<THREE.Group | null>(null);
   const paintRef = useRef<{ id: string; points: number[] } | null>(null);
@@ -337,6 +372,10 @@ export function Viewport({ slices }: ViewportProps) {
     const fixtures = new THREE.Group();
     scene.add(fixtures);
     fixturesRef.current = fixtures;
+
+    const tape = new THREE.Group();
+    scene.add(tape);
+    measureRef.current = tape;
 
     // Brush cursor and the stroke being laid down. Both are overlays: the field
     // is only re-evaluated when the stroke is finished, so the drag stays
@@ -548,6 +587,57 @@ export function Viewport({ slices }: ViewportProps) {
       raycaster.setFromCamera(pointer, cam);
 
       const { features: current, selectFeature } = useKerros.getState();
+
+      /*
+       * Measuring, if the tape is out.
+       *
+       * The ray hits the preview mesh, which is surface nets at whatever
+       * resolution the preview is running — one cell is 3 mm on a 200 mm model
+       * at 64 samples, and a tape measure three millimetres out is worse than
+       * none. So the hit is only a starting guess: the real field is bisected
+       * along the same ray to find where it actually crosses zero. That costs a
+       * few dozen field evaluations per click and makes the number true.
+       */
+      if (useKerros.getState().measureMode) {
+        const surface = raycaster.intersectObjects(target.children, true);
+        if (surface.length === 0) return;
+
+        const state = useKerros.getState();
+        const field = composeField(
+          current,
+          state.material.kerf,
+          state.seed,
+          state.material.thickness,
+          state.stack,
+        );
+
+        const origin = raycaster.ray.origin;
+        const dir = raycaster.ray.direction;
+        const t0 = surface[0].distance;
+        const step = Math.max(preview.step ?? 1, 0.5) * 2;
+        const at = (t: number) =>
+          field.sample(origin.x + dir.x * t, origin.y + dir.y * t, origin.z + dir.z * t);
+
+        let lo = Math.max(t0 - step, 0);
+        let hi = t0 + step;
+        let refined = t0;
+        if (at(lo) > 0 && at(hi) < 0) {
+          for (let i = 0; i < 40; i++) {
+            const mid = (lo + hi) / 2;
+            if (at(mid) > 0) lo = mid;
+            else hi = mid;
+          }
+          refined = (lo + hi) / 2;
+        }
+
+        const point: [number, number, number] = [
+          origin.x + dir.x * refined,
+          origin.y + dir.y * refined,
+          origin.z + dir.z * refined,
+        ];
+        setMeasure((prev) => (!prev || prev.to ? { from: point, to: null } : { ...prev, to: point }));
+        return;
+      }
 
       // Rods are real meshes and thin, so they get first refusal — otherwise
       // a rod inside the form could never be clicked.
@@ -768,6 +858,13 @@ export function Viewport({ slices }: ViewportProps) {
     const proxy = proxyRef.current;
     if (!gizmo || !proxy) return;
 
+    // The tape is out: a gizmo under the cursor would take the click that was
+    // meant for a measuring point, the same way sculpting takes the left button.
+    if (measureMode) {
+      gizmo.detach();
+      return;
+    }
+
     const feature = useKerros.getState().features.find((f) => f.id === selectedId);
     if (!feature) {
       gizmo.detach();
@@ -804,7 +901,7 @@ export function Viewport({ slices }: ViewportProps) {
     return () => {
       gizmo.detach();
     };
-  }, [selectedId, view]);
+  }, [selectedId, view, measureMode]);
 
   // Keep the proxy and the selection outline in step with the parameters,
   // including edits typed into the inspector. Skipped mid-drag so the gizmo
@@ -1002,10 +1099,22 @@ export function Viewport({ slices }: ViewportProps) {
           )
         : [];
       const reached = slices ? slices.slices.filter((sl) => chosen.includes(sl.index)) : [];
+      /*
+       * With nothing sliced, the ghost stops at the bottom of the lamp.
+       *
+       * It used to fall back to the top of the model, which draws a leg running
+       * the whole height whatever layers were chosen — and that reads exactly
+       * like the layer setting having been lost. It had not been: the panel
+       * says so, but a picture beats a sentence and this one was wrong.
+       *
+       * What is actually known before a slice is where the legs meet the lamp
+       * and where the feet go. So that is what gets drawn, and the panel says
+       * why the rest is missing.
+       */
       const zTop =
         reached.length > 0
           ? Math.max(...reached.map((sl) => sl.z)) + slices!.thickness / 2
-          : modelTop;
+          : bottom;
 
       // Below the lamp it is a leg, and a leg you cannot see the end of says
       // nothing about where the feet land. Not the real length — that is the
@@ -1189,13 +1298,59 @@ export function Viewport({ slices }: ViewportProps) {
       }
     }
 
+    /*
+     * The tape, drawn last and over everything.
+     *
+     * A line and two markers, no text: three.js has no text without a sprite, and
+     * the number belongs in the readout where it can be read at any angle
+     * rather than edge-on.
+     */
+    const tape = measureRef.current;
+    if (tape) {
+      while (tape.children.length > 0) {
+        const child = tape.children[0];
+        tape.remove(child);
+        if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+          child.geometry.dispose();
+          (child.material as THREE.Material).dispose();
+        }
+      }
+
+      if (measure) {
+        const colour = new THREE.Color(COLORS.measure);
+        const dot = (p: [number, number, number]) => {
+          const mesh = new THREE.Mesh(
+            new THREE.SphereGeometry(Math.max(preview.step, 0.6), 12, 8),
+            new THREE.MeshBasicMaterial({ color: colour, depthTest: false }),
+          );
+          mesh.position.set(p[0], p[1], p[2]);
+          mesh.renderOrder = 999;
+          return mesh;
+        };
+        tape.add(dot(measure.from));
+        if (measure.to) {
+          tape.add(dot(measure.to));
+          const geometry = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(...measure.from),
+            new THREE.Vector3(...measure.to),
+          ]);
+          const line = new THREE.Line(
+            geometry,
+            new THREE.LineBasicMaterial({ color: colour, depthTest: false }),
+          );
+          line.renderOrder = 999;
+          tape.add(line);
+        }
+      }
+    }
+
     setStats({
       triangles: preview.triangles,
       dims: preview.dims.join('×'),
       step: preview.step,
       ms: preview.ms,
     });
-  }, [preview, mode, displayMode]);
+  }, [preview, mode, displayMode, measure]);
 
   return (
     <div className="viewport">
@@ -1205,7 +1360,16 @@ export function Viewport({ slices }: ViewportProps) {
         <span className="hud-note">
           {mode === 'stack'
             ? 'Exploded stack at real layer pitch'
-            : sculptMode
+            : measureMode
+              ? (() => {
+                  if (!measure) return 'Measuring · click a point on the surface, then another · Esc clears';
+                  if (!measure.to) return 'Measuring · click the second point · Esc clears';
+                  const dx = measure.to[0] - measure.from[0];
+                  const dy = measure.to[1] - measure.from[1];
+                  const dz = measure.to[2] - measure.from[2];
+                  return `${Math.hypot(dx, dy, dz).toFixed(2)} mm · dx ${dx.toFixed(2)} · dy ${dy.toFixed(2)} · dz ${dz.toFixed(2)}`;
+                })()
+              : sculptMode
               ? `Sculpting · left drag paints, right drag orbits · brush ${brushRadius} mm`
               : `Click a shape to select · M move · R rotate · Esc deselect${
                 displayMode === 'solid' ? '' : ` · ${displayMode}`

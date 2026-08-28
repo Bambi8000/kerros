@@ -11,6 +11,7 @@
  */
 
 import {
+  MAX_WINDOWS_PER_LAYER,
   sectorDistance,
   windowHalfAngle,
   windowSpansZ,
@@ -152,13 +153,27 @@ console.log('window: the width ceiling');
   const greedy = win({ count: 4, width: 300 });
   const half = windowHalfAngle(greedy);
   check('an impossible width is clamped', half < (Math.PI * 2) / 4 / 2);
-  check('and never past a right angle', windowHalfAngle(win({ count: 1, width: 350 })) <= 89 * DEG + 1e-9);
+  /*
+   * The ceiling came down from 89 degrees to 50 — 100 across — and the reason
+   * moved with it. At 89 the limit was the wedge's two-half-plane form giving
+   * out; at 50 it is the bench. Left as an opening rather than filled with a
+   * plexi plug, a wider window leaves too little ring to hold while the glue
+   * sets. Measured on a cut lamp.
+   */
+  check('and never past 100 degrees across', windowHalfAngle(win({ count: 1, width: 350 })) <= 50 * DEG + 1e-9);
   check(
     'clamping leaves material between windows',
     sectorDistance(50 * Math.cos(45 * DEG), 50 * Math.sin(45 * DEG), 45, greedy) > 0,
   );
   check('a sane width is left alone', near(windowHalfAngle(win({ width: 40 })), 20 * DEG, 1e-12));
-  check('a single window can be wide', windowHalfAngle(win({ count: 1, width: 120 })) > 55 * DEG);
+  check('a single window can still be as wide as the ceiling allows', (() => {
+    const half = windowHalfAngle(win({ count: 1, width: 120 }));
+    return Math.abs(half - 50 * DEG) < 1e-9;
+  })());
+  check('a width under the ceiling is left alone', (() => {
+    const half = windowHalfAngle(win({ count: 1, width: 80 }));
+    return Math.abs(half - 40 * DEG) < 1e-9;
+  })());
 }
 
 console.log('window: stock and plug fields');
@@ -347,6 +362,13 @@ console.log('window: degenerate settings');
   const thin = win({ width: 0 });
   check('a zero width cuts nothing', sectorDistance(55, 0, 45, thin) >= 0);
 
+  /*
+   * A count of 24 used to be a sensible thing to ask for. It is clamped to two
+   * now, for the same reason as the width: a ring cut into two dozen arcs is
+   * not a thing anybody glues back together. What the check is really about —
+   * that material survives between openings — still holds, so it now asks it of
+   * the clamped set.
+   */
   const many = win({ count: 24, width: 30 });
   check(
     'many narrow windows still leave material between them',
@@ -621,6 +643,49 @@ console.log('window: per-layer rolls');
   check(
     'changing the count does not change whether a layer was chosen',
     (wedgesForLayer(spec, 12).length > 0) === (shifted.length > 0),
+  );
+}
+
+console.log('window: the ceilings the bench put there');
+{
+  /*
+   * Both of these came from a cut lamp rather than from the mathematics, and
+   * both only bite when the wedges are left as openings instead of being filled
+   * with plexi plugs. The program cannot know which you will do, so it holds
+   * the line where it invents the number itself.
+   */
+  const rolled = win({ mode: 'perLayer', chance: 1, minCount: 5, maxCount: 5 });
+  let worst = 0;
+  for (let layer = 0; layer < 40; layer++) {
+    worst = Math.max(worst, wedgesForLayer(rolled, layer).length);
+  }
+  check(
+    'a rolled layer never gets more than two windows',
+    worst <= MAX_WINDOWS_PER_LAYER,
+    `${worst} on some layer`,
+  );
+  check('and it still gets some', worst >= 1);
+
+  const asked = win({ mode: 'perLayer', chance: 1, minCount: 1, maxCount: 2 });
+  let seen = 0;
+  for (let layer = 0; layer < 40; layer++) {
+    seen = Math.max(seen, wedgesForLayer(asked, layer).length);
+  }
+  check('a count already inside the ceiling is untouched', seen === 2);
+
+  /*
+   * Band mode is deliberately not clamped. Five windows twisting up a stack is
+   * a documented, working lamp — with the plugs cut and glued back in, the ring
+   * is whole. Clamping it would encode an assumption the program cannot check.
+   */
+  check(
+    'band mode keeps the count it was given',
+    windowHalfAngle(win({ count: 5, width: 40 })) > 0 &&
+      Math.abs(windowHalfAngle(win({ count: 5, width: 40 })) - 20 * DEG) < 1e-9,
+  );
+  check(
+    'and its width still meets the 100 degree ceiling',
+    Math.abs(windowHalfAngle(win({ count: 1, width: 300 })) - 50 * DEG) < 1e-9,
   );
 }
 

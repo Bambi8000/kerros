@@ -1700,6 +1700,40 @@ function PatternInspector({ feature, placed, slices, sliced }: PatternProps) {
   );
 }
 
+/**
+ * The size a shape actually is, where its parameters do not say.
+ *
+ * Some primitives are dimensioned by a part of themselves rather than by their
+ * overall size, and the difference is not guessable: a capsule's length is its
+ * straight section and the two caps add a diameter on top, so an 80 mm capsule
+ * of radius 25 stands 130 mm tall. Measured in the model view and compared with
+ * the panel, that reads as the measuring tape being broken.
+ *
+ * Only the ones that differ get a line. A sphere needs no help.
+ */
+function overallSize(kind: string, params: Feature['params']): string | null {
+  const n = (key: string, fallback: number) => num(params, key, fallback);
+  if (kind === 'capsule') {
+    const h = n('h', 80);
+    const r = n('r', 25);
+    return `${h} mm straight plus two ${r} mm caps — ${(h + 2 * r).toFixed(1)} mm tall, ${(2 * r).toFixed(1)} mm across.`;
+  }
+  if (kind === 'torus') {
+    const R = n('R', 60);
+    const r = n('r', 15);
+    return `${(2 * (R + r)).toFixed(1)} mm across the outside, ${(2 * (R - r)).toFixed(1)} mm across the hole, ${(2 * r).toFixed(1)} mm thick.`;
+  }
+  if (kind === 'prism') {
+    const sides = Math.max(Math.round(n('n', 6)), 3);
+    const r = n('r', 45);
+    return `${(2 * r).toFixed(1)} mm corner to corner, ${(2 * r * Math.cos(Math.PI / sides)).toFixed(1)} mm across the flats.`;
+  }
+  if (kind === 'cone') {
+    return `${(2 * n('r1', 50)).toFixed(1)} mm across the bottom, ${(2 * n('r2', 0)).toFixed(1)} mm across the top, ${n('h', 90)} mm tall.`;
+  }
+  return null;
+}
+
 function ShapeInspector({ feature }: { feature: Feature }) {
   const features = useKerros((s) => s.features);
   const setParam = useKerros((s) => s.setParam);
@@ -1783,6 +1817,10 @@ function ShapeInspector({ feature }: { feature: Feature }) {
             onChange={(v) => setParam(feature.id, spec.key, v)}
           />
         ))}
+        {(() => {
+          const size = overallSize(feature.kind, feature.params);
+          return size ? <div className="derived">{size}</div> : null;
+        })()}
       </div>
 
       <div className="group">

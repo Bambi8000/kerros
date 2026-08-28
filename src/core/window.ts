@@ -126,7 +126,33 @@ export interface WindowSpec {
  * half-planes, which is exact below a right angle and not above it.
  */
 const MAX_SHARE = 0.9;
-const MAX_HALF_ANGLE = 89 * DEG;
+
+/**
+ * Widest a single window may be, half-angle — 100 degrees across.
+ *
+ * This was 89 degrees, which is where the two-half-plane form of the wedge
+ * stops being exact. The real ceiling turned out to be lower and to come from
+ * the bench rather than the mathematics: a window is only a plexi plug if you
+ * cut one, and left as an opening a wide one makes the stack awkward to glue —
+ * there is not enough ring left to hold while it sets. Measured on a cut lamp,
+ * not reasoned about.
+ */
+const MAX_HALF_ANGLE = 50 * DEG;
+
+/**
+ * Most windows a **rolled** layer may get.
+ *
+ * Same bench, different force: two openings in a ring leave two arcs to hold
+ * while the glue sets, and three leave three of nothing much.
+ *
+ * It clamps the per-layer roll and **not** `band` mode, and that asymmetry is
+ * deliberate. The limit only bites when the wedges are left as openings; cut
+ * the plexi plugs and put them back and a ring with five windows in it is whole
+ * again. The program cannot know which you will do — a plug is a part on a
+ * sheet, not a setting — so it holds the line where it invents the number
+ * itself and leaves the one you typed alone. Band mode warns instead.
+ */
+export const MAX_WINDOWS_PER_LAYER = 2;
 
 /* ------------------------------------------------------------------ *
  * Attachment
@@ -302,8 +328,14 @@ export function wedgesForLayer(spec: WindowSpec, layer: number): Wedge[] {
 
   if (random() > Math.min(Math.max(spec.chance, 0), 1)) return [];
 
-  const lo = Math.max(Math.round(Math.min(spec.minCount, spec.maxCount)), 1);
-  const hi = Math.max(Math.round(Math.max(spec.minCount, spec.maxCount)), lo);
+  const lo = Math.min(
+    Math.max(Math.round(Math.min(spec.minCount, spec.maxCount)), 1),
+    MAX_WINDOWS_PER_LAYER,
+  );
+  const hi = Math.min(
+    Math.max(Math.round(Math.max(spec.minCount, spec.maxCount)), lo),
+    MAX_WINDOWS_PER_LAYER,
+  );
   const count = lo + Math.floor(random() * (hi - lo + 1));
 
   const widthLo = Math.max(Math.min(spec.minWidth, spec.maxWidth), 0);

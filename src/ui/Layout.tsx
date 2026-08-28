@@ -54,6 +54,8 @@ export function Layout() {
   const sculptMode = useKerros((s) => s.sculptMode);
   const setSculptMode = useKerros((s) => s.setSculptMode);
   const ensureSculpt = useKerros((s) => s.ensureSculpt);
+  const measureMode = useKerros((s) => s.measureMode);
+  const setMeasureMode = useKerros((s) => s.setMeasureMode);
   const gizmoMode = useKerros((s) => s.gizmoMode);
   const setGizmoMode = useKerros((s) => s.setGizmoMode);
   const snapEnabled = useKerros((s) => s.snapEnabled);
@@ -185,6 +187,15 @@ export function Layout() {
             }}
           >
             Sculpt
+          </button>
+          <button
+            type="button"
+            title="Measure between two points on the surface. Esc clears."
+            disabled={mode !== 'model'}
+            className={`view-btn${measureMode && mode === 'model' ? ' is-active' : ''}`}
+            onClick={() => setMeasureMode(!measureMode)}
+          >
+            Measure
           </button>
         </div>
 

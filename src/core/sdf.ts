@@ -387,7 +387,7 @@ export const SHAPE_MODULES: ShapeModule[] = [
   {
     key: 'capsule',
     name: 'Capsule',
-    params: [mm('h', 'Length', 80, 0, 700), mm('r', 'Radius', 25, 0.5, 400)],
+    params: [mm('h', 'Straight length', 80, 0, 700), mm('r', 'Radius', 25, 0.5, 400)],
     sdf: (x, y, z, p) => sdCapsuleZ(x, y, z, num(p, 'h', 80), num(p, 'r', 25)),
     bounds: (p) => {
       const h = num(p, 'h', 80) / 2;

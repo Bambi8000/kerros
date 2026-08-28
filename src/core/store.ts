@@ -121,6 +121,8 @@ interface KerrosState {
   /** Grid the true-shape packer works on, mm. */
   nestCell: number;
   sculptMode: boolean;
+  /** The measuring tape is out in the model view. */
+  measureMode: boolean;
   brushOp: BrushOp;
   brushRadius: number;
   brushBlend: number;
@@ -218,6 +220,7 @@ interface KerrosState {
   setTrueShapeNesting: (on: boolean) => void;
   setNestCell: (mm: number) => void;
   setSculptMode: (on: boolean) => void;
+  setMeasureMode: (on: boolean) => void;
   setBrushOp: (op: BrushOp) => void;
   setBrushRadius: (mm: number) => void;
   setBrushBlend: (mm: number) => void;
@@ -364,6 +367,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
   trueShapeNesting: false,
   nestCell: 2,
   sculptMode: false,
+  measureMode: false,
   brushOp: 'smoothUnion',
   brushRadius: 8,
   brushBlend: 6,
@@ -981,7 +985,10 @@ export const useKerros = create<KerrosState>((set, get) => ({
   setPanel: (panel) => set({ panel }),
   setTrueShapeNesting: (trueShapeNesting) => set({ trueShapeNesting }),
   setNestCell: (nestCell) => set({ nestCell: Math.min(Math.max(nestCell, 0.5), 6) }),
-  setSculptMode: (sculptMode) => set({ sculptMode }),
+  // The two tools want the same button, so turning one on puts the other away
+  // rather than leaving both live and letting the click decide.
+  setSculptMode: (sculptMode) => set({ sculptMode, measureMode: sculptMode ? false : get().measureMode }),
+  setMeasureMode: (measureMode) => set({ measureMode, sculptMode: measureMode ? false : get().sculptMode }),
   setBrushOp: (brushOp) => set({ brushOp }),
   setBrushRadius: (brushRadius) => set({ brushRadius: Math.max(brushRadius, 0.2) }),
   setBrushBlend: (brushBlend) => set({ brushBlend: Math.max(brushBlend, 0) }),

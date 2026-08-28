@@ -17,6 +17,7 @@ const COLORS = {
   label: '#9a918a',
   warn: '#d9a441',
   selected: '#f0b429',
+  measure: '#5fb3d4',
 };
 
 /** How close to a hole's edge still counts as pointing at it, in screen pixels. */
@@ -33,7 +34,23 @@ const GRAB_SLOP_PX = 4;
  * the same button. Model mode already learned this: sculpting is a *mode*, and
  * orbit moves to the right button for its duration.
  */
-type SliceTool = 'select';
+type SliceTool = 'select' | 'measure';
+
+/** Where a measured end landed, and on what. */
+interface Snap {
+  x: number;
+  y: number;
+  /** What it caught: an outline, the rim of a hole, its centre, or nothing. */
+  on: 'edge' | 'rim' | 'centre' | 'free';
+}
+
+/**
+ * How close a measuring end has to be to catch, in screen pixels.
+ *
+ * Generous, because the point of snapping is that a wall thickness measured by
+ * eye is not a measurement. A free point is still available by holding Alt.
+ */
+const SNAP_PX = 10;
 
 interface DragState {
   owner: string;
@@ -124,7 +141,9 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
   const settledAgainst = useRef<SliceSet | null>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [hovering, setHovering] = useState(false);
-  const tool: SliceTool = 'select';
+  const [tool, setTool] = useState<SliceTool>('select');
+  const [measure, setMeasure] = useState<{ from: Snap; to: Snap | null } | null>(null);
+  const [cursor, setCursor] = useState<Snap | null>(null);
 
   const total = slices?.slices.length ?? 0;
   const layerIndex = total > 0 ? Math.min(Math.max(currentLayer, 1), total) : 0;
@@ -236,8 +255,81 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     return best;
   };
 
+  /**
+   * The nearest thing worth measuring to.
+   *
+   * A wall measured by eye is not a measurement, so an end catches the real
+   * geometry: the nearest point on any outline or hole, the rim of a drilled
+   * circle, or its centre. Alt holds it free for the cases where the answer is
+   * not on an edge — the gap between two parts, say.
+   *
+   * Centres beat rims and rims beat edges when several are in range, because a
+   * centre is the thing somebody is usually after and it is the one that cannot
+   * be hit by accident.
+   */
+  const snapAt = (wx: number, wy: number, free: boolean): Snap => {
+    if (free || !slice) return { x: wx, y: wy, on: 'free' };
+    const view = viewRef.current;
+    const reach = view ? SNAP_PX / view.scale : 1;
+
+    let best: Snap | null = null;
+    let bestD = reach;
+    const offer = (x: number, y: number, on: Snap['on'], bias: number) => {
+      const d = Math.hypot(x - wx, y - wy) - bias;
+      if (d < bestD) {
+        bestD = d;
+        best = { x, y, on };
+      }
+    };
+
+    for (const circle of slice.circles) {
+      offer(circle.x, circle.y, 'centre', reach * 0.6);
+      const away = Math.hypot(wx - circle.x, wy - circle.y);
+      if (away > 1e-9) {
+        offer(
+          circle.x + ((wx - circle.x) / away) * circle.r,
+          circle.y + ((wy - circle.y) / away) * circle.r,
+          'rim',
+          reach * 0.3,
+        );
+      }
+    }
+
+    for (const contour of slice.contours) {
+      const pts = contour.points;
+      for (let i = 0; i < pts.length; i += 2) {
+        const j = (i + 2) % pts.length;
+        const ax = pts[i];
+        const ay = pts[i + 1];
+        const ex = pts[j] - ax;
+        const ey = pts[j + 1] - ay;
+        const len2 = ex * ex + ey * ey;
+        let t = len2 > 0 ? ((wx - ax) * ex + (wy - ay) * ey) / len2 : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        offer(ax + ex * t, ay + ey * t, 'edge', 0);
+      }
+    }
+
+    return best ?? { x: wx, y: wy, on: 'free' };
+  };
+
+  const onMeasureDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const world = toWorld(event.clientX, event.clientY);
+    if (!world) return;
+    const point = snapAt(world[0], world[1], event.altKey);
+    // A finished measurement is replaced rather than extended: the second click
+    // ends one and the third starts the next, which is how a tape measure goes.
+    if (!measure || measure.to) setMeasure({ from: point, to: null });
+    else setMeasure({ ...measure, to: point });
+  };
+
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (tool !== 'select' || event.button !== 0) return;
+    if (event.button !== 0) return;
+    if (tool === 'measure') {
+      onMeasureDown(event);
+      return;
+    }
+    if (tool !== 'select') return;
     const world = toWorld(event.clientX, event.clientY);
     if (!world) return;
 
@@ -277,6 +369,11 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
   const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const world = toWorld(event.clientX, event.clientY);
     if (!world) return;
+
+    if (tool === 'measure') {
+      setCursor(snapAt(world[0], world[1], event.altKey));
+      return;
+    }
 
     const active = dragRef.current;
     if (!active || active.settling) {
@@ -321,6 +418,18 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     setDrag(settling);
     settledAgainst.current = slices;
   };
+
+  /** Escape puts the tape away. Changing layer keeps it, which is the point. */
+  useEffect(() => {
+    if (tool !== 'measure') return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (measure) setMeasure(null);
+      else setTool('select');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tool, measure]);
 
   /** Drop the preview once the geometry underneath it has actually changed. */
   useEffect(() => {
@@ -475,6 +584,66 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
         ctx.stroke();
       }
 
+      /*
+       * The measurement, over everything else.
+       *
+       * Drawn last so it is never buried, and with its ends marked by what they
+       * caught: a ring for a centre, a square for a rim or an edge, a bare
+       * cross for a free point. The mark is the difference between a number you
+       * can act on and one you have to check.
+       */
+      if (measure) {
+        const live = measure.to ?? cursor;
+        const mark = (point: Snap) => {
+          const sx = toScreenX(point.x);
+          const sy = toScreenY(point.y);
+          ctx.beginPath();
+          if (point.on === 'centre') ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+          else if (point.on === 'free') {
+            ctx.moveTo(sx - 5, sy);
+            ctx.lineTo(sx + 5, sy);
+            ctx.moveTo(sx, sy - 5);
+            ctx.lineTo(sx, sy + 5);
+          } else ctx.rect(sx - 4, sy - 4, 8, 8);
+          ctx.stroke();
+        };
+
+        ctx.strokeStyle = COLORS.measure;
+        ctx.lineWidth = 1.5;
+        mark(measure.from);
+
+        if (live) {
+          ctx.setLineDash(measure.to ? [] : [5, 4]);
+          ctx.beginPath();
+          ctx.moveTo(toScreenX(measure.from.x), toScreenY(measure.from.y));
+          ctx.lineTo(toScreenX(live.x), toScreenY(live.y));
+          ctx.stroke();
+          ctx.setLineDash([]);
+          mark(live);
+
+          const mm = Math.hypot(live.x - measure.from.x, live.y - measure.from.y);
+          const mx = (toScreenX(measure.from.x) + toScreenX(live.x)) / 2;
+          const my = (toScreenY(measure.from.y) + toScreenY(live.y)) / 2;
+          const text = `${mm.toFixed(2)} mm`;
+          ctx.font = '12px ui-monospace, monospace';
+          const pad = 4;
+          const w = ctx.measureText(text).width;
+          ctx.fillStyle = COLORS.background;
+          ctx.fillRect(mx - w / 2 - pad, my - 18, w + pad * 2, 16);
+          ctx.fillStyle = COLORS.measure;
+          ctx.fillText(text, mx - w / 2, my - 6);
+        }
+      } else if (tool === 'measure' && cursor) {
+        ctx.strokeStyle = COLORS.measure;
+        ctx.lineWidth = 1.5;
+        const sx = toScreenX(cursor.x);
+        const sy = toScreenY(cursor.y);
+        ctx.beginPath();
+        if (cursor.on === 'centre') ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+        else ctx.rect(sx - 4, sy - 4, 8, 8);
+        ctx.stroke();
+      }
+
       // Scale bar, so the eye has something absolute to hold on to.
       const barLength = 10 * scale;
       ctx.strokeStyle = COLORS.label;
@@ -496,7 +665,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     const observer = new ResizeObserver(draw);
     observer.observe(wrap);
     return () => observer.disconnect();
-  }, [slice, extent, fitToLayer, widest, report, selectedId, drag]);
+  }, [slice, extent, fitToLayer, widest, report, selectedId, drag, tool, measure, cursor]);
 
   const selected = features.find((f) => f.id === selectedId) ?? null;
   const selectedHere =
@@ -517,7 +686,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
       <div className="slice-canvas-wrap" ref={wrapRef}>
         <canvas
           ref={canvasRef}
-          style={{ cursor: drag ? 'grabbing' : hovering ? 'grab' : 'default' }}
+          style={{ cursor: tool === 'measure' ? 'crosshair' : drag ? 'grabbing' : hovering ? 'grab' : 'default' }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
@@ -532,6 +701,23 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
       </div>
 
       <div className="slice-bar">
+        {/*
+          Two tools, one pointer layer. A push brush will be a third rather than
+          a second set of canvas handlers, which is the whole reason the layer
+          is there.
+        */}
+        <button
+          type="button"
+          className={`btn${tool === 'measure' ? ' is-active' : ''}`}
+          title="Measure between two points. Alt for a free point, Esc to clear."
+          onClick={() => {
+            setTool(tool === 'measure' ? 'select' : 'measure');
+            setMeasure(null);
+            setCursor(null);
+          }}
+        >
+          Measure
+        </button>
         <button
           type="button"
           className="btn"
@@ -558,7 +744,20 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
         </button>
 
         <span className="slice-readout">
-          {slice ? (
+          {tool === 'measure' ? (
+            (() => {
+              const live = measure?.to ?? cursor;
+              if (!measure || !live) {
+                return 'Measure — click a point, then another. Alt holds it free of the geometry.';
+              }
+              const dx = live.x - measure.from.x;
+              const dy = live.y - measure.from.y;
+              const named = { edge: 'outline', rim: 'hole rim', centre: 'hole centre', free: 'free' };
+              return `${Math.hypot(dx, dy).toFixed(2)} mm · dx ${dx.toFixed(2)} · dy ${dy.toFixed(
+                2,
+              )} · ${named[measure.from.on]} to ${named[live.on]}`;
+            })()
+          ) : slice ? (
             <>
               Layer {layerIndex} / {total} · z {slice.z.toFixed(2)} mm ·{' '}
               {partCount} {partCount === 1 ? 'part' : 'parts'}
