@@ -9,9 +9,6 @@
  */
 
 import {
-  pinGaps,
-  loosePins,
-  defaultStagger,
   GLYPH_ADVANCE,
   GLYPH_HEIGHT,
   GLYPH_WIDTH,
@@ -48,6 +45,9 @@ import {
   spacerPlans,
   circlePoints,
   rodCutRadius,
+  pinGaps,
+  loosePins,
+  defaultStagger,
 } from '../src/core/rig.ts';
 
 let failures = 0;
