@@ -726,6 +726,93 @@ console.log('pipeline: interleaved pins fasten each sheet to the next');
   check('nothing loose in the run', (some.pinLoose.pn ?? []).length === 0);
 }
 
+console.log('pipeline: a boss widens the window it is sampled in');
+{
+  const ball = feature('bb', 'sphere', 'SHAPE', {
+    ...defaultParams(sphere),
+    op: 'union',
+    r: 60,
+    pz: 65,
+  });
+  const hollow = feature('hs', 'shell', 'CARVE', {
+    ...defaultModifierParams(shellModifier),
+    t: 8,
+  });
+  const rod = feature('rd', 'rod', 'RIG', { size: 'M5', diameter: 0, px: 0, py: 0, pz: 65, length: 120 });
+
+  const boss = (extra) =>
+    feature('bs', 'boss', 'RIG', {
+      attachTo: 'rd',
+      radius: 10,
+      spokes: 3,
+      spokeWidth: 4,
+      spokeLength: 30,
+      angle: 0,
+      blend: 2,
+      selKind: 'all',
+      ...extra,
+    });
+
+  const plain = runSliceJob(baseJob([ball, hollow, rod]), new Map());
+  const inside = runSliceJob(baseJob([ball, hollow, rod, boss({})]), new Map());
+
+  check('a shelled ball slices into rings', plain.set.slices.length > 4);
+  check(
+    'every sheet has an outer ring with positive area',
+    plain.set.slices.every((s2) => s2.contours.some((c) => !c.isHole && c.area > 0)),
+  );
+
+  /*
+   * The failure this exists to catch.
+   *
+   * A spoke reaching further than the form does used to be clipped at the
+   * sampling grid: the preview drew the cut face as a flat plate and the slicer
+   * found a contour running off its window, dropped it rather than guessing an
+   * edge, and the whole outer ring of that layer went with it. It showed up as
+   * a sheet reporting a negative area — a hole with no part around it.
+   */
+  const wide = runSliceJob(baseJob([ball, hollow, rod, boss({ spokeLength: 90 })]), new Map());
+  check(
+    'a spoke reaching past the form keeps every outer ring',
+    wide.set.slices.every((s2) => s2.contours.some((c) => !c.isHole && c.area > 0)),
+    `${wide.set.slices.filter((s2) => !s2.contours.some((c) => !c.isHole && c.area > 0)).length} sheets lost theirs`,
+  );
+  check(
+    'and no sheet reports a negative area',
+    wide.set.slices.every((s2) => s2.contours.reduce((sum, c) => sum + c.area, 0) > 0),
+  );
+  check(
+    'as many sheets as without it',
+    wide.set.slices.length === plain.set.slices.length,
+    `${wide.set.slices.length} against ${plain.set.slices.length}`,
+  );
+
+  // The boss really does add material: a mid sheet is heavier than the bare ring.
+  const areaOf = (result, index) =>
+    result.set.slices.find((s2) => s2.index === index).contours.reduce((sum, c) => sum + c.area, 0);
+  const mid = plain.set.slices[Math.floor(plain.set.slices.length / 2)].index;
+  check('a boss adds material to the sheet', areaOf(inside, mid) > areaOf(plain, mid));
+  check('and a longer spoke adds more', areaOf(wide, mid) > areaOf(inside, mid));
+
+  /*
+   * The plan must not move. The boss's own span is read from it, so growing the
+   * box in Z would be circular — and it would reroll every per-layer window and
+   * shift the sheets of every saved lamp.
+   */
+  check(
+    'the layers stay exactly where they were',
+    wide.set.slices.map((s2) => s2.z.toFixed(6)).join(',') ===
+      plain.set.slices.map((s2) => s2.z.toFixed(6)).join(','),
+  );
+
+  // A boss whose rod is gone contributes nothing rather than jumping to the axis.
+  const orphan = runSliceJob(baseJob([ball, hollow, boss({})]), new Map());
+  check(
+    'a boss with no rod adds nothing',
+    Math.abs(areaOf(orphan, mid) - areaOf(plain, mid)) < 1e-6,
+  );
+}
+
 console.log('pipeline: the stack reaches the field, not just the slicer');
 {
   const uniform = runSliceJob(baseJob([body, shell]), new Map());

@@ -183,6 +183,7 @@ interface KerrosState {
   addRod: () => void;
   addLegs: () => void;
   addPins: () => void;
+  addBoss: () => void;
   /** Take one pin out by hand, or put it back. */
   togglePin: (id: string, key: string) => void;
   /** Put every hand-removed pin back. */
@@ -857,6 +858,47 @@ export const useKerros = create<KerrosState>((set, get) => ({
    * the one below it — the pins in neighbouring gaps share a sheet, so at the
    * same angle they would meet inside it.
    */
+  /**
+   * A boss: a thickening around a rod, so a rod in the cavity has something to
+   * be drilled through.
+   *
+   * Attaches to the last rod in the tree, because a boss with no rod has no
+   * position at all — it is not a shape that stands somewhere, it is a lump
+   * around something that does.
+   */
+  addBoss: () =>
+    set((s) => {
+      const rod = [...s.features].reverse().find((f) => f.kind === 'rod' && f.enabled);
+      const id = `f${s.nextFeatureNumber}`;
+      const count = s.features.filter((f) => f.kind === 'boss').length + 1;
+      return {
+        features: [
+          ...s.features,
+          {
+            id,
+            kind: 'boss',
+            stage: 'RIG' as Stage,
+            name: `Boss ${count}`,
+            enabled: true,
+            params: {
+              attachTo: rod?.id ?? '',
+              radius: 10,
+              spokes: 3,
+              spokeWidth: 4,
+              // 0 reaches the wall on every layer, which is the answer on a
+              // curved form: the distance that lands differs sheet by sheet.
+              spokeLength: 0,
+              angle: 0,
+              blend: 2,
+              selKind: 'all',
+            },
+          },
+        ],
+        nextFeatureNumber: s.nextFeatureNumber + 1,
+        selectedId: id,
+      };
+    }),
+
   addPins: () =>
     set((s) => {
       const bounds = modelBounds(s.features.filter((f) => f.stage === 'SHAPE'));
@@ -1718,6 +1760,7 @@ export {
   fixturesFromFeatures,
   legsFromFeatures,
   pinsFromFeatures,
+  bossesFromFeatures,
   patternOptionsOf,
 } from './pipeline';
 

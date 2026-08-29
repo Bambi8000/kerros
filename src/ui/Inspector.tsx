@@ -26,6 +26,7 @@ import { shellModifier } from '../core/sdf';
 import { ROD_CLEARANCE, ROD_SIZES } from '../core/rig';
 import { LEG_COUNTS, MAX_TILT, legSpacing } from '../core/legs';
 import { defaultStagger } from '../core/rig';
+import { spokesStickOut } from '../core/boss';
 import { PATTERN_KINDS, PATTERN_LABELS } from '../core/pattern';
 import { FIXTURE_LABELS, SOCKET_PRESETS, fixtureExtent } from '../core/fixture';
 import type { FixtureKind } from '../core/fixture';
@@ -965,6 +966,187 @@ function WindowInspector({ feature }: { feature: Feature }) {
           {windowKerf} mm.
         </div>
       </div>
+    </>
+  );
+}
+
+interface BossProps {
+  feature: Feature;
+  slices: SliceSet | null;
+}
+
+function BossInspector({ feature, slices }: BossProps) {
+  const setParam = useKerros((s) => s.setParam);
+  const renameFeature = useKerros((s) => s.renameFeature);
+  const features = useKerros((s) => s.features);
+
+  const rods = features.filter((f) => f.kind === 'rod');
+  const attachTo = typeof feature.params.attachTo === 'string' ? feature.params.attachTo : '';
+  const rod = rods.find((r) => r.id === attachTo);
+
+  const radius = num(feature.params, 'radius', 10);
+  const spokes = Math.max(Math.round(num(feature.params, 'spokes', 3)), 0);
+  const spokeLength = num(feature.params, 'spokeLength', 40);
+  const reaches = spokesStickOut({ spokes, radius, spokeLength });
+
+  return (
+    <>
+      <div className="group">
+        <div className="group-head">Boss</div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <span className="field-input">
+            <input
+              type="text"
+              value={feature.name}
+              onChange={(e) => renameFeature(feature.id, e.target.value)}
+            />
+          </span>
+        </label>
+        {/*
+          A boss has no position of its own — it thickens a rod. One pointing at
+          a rod that has been deleted or switched off adds nothing, and saying
+          which rod it wanted is the difference between a fixable mistake and a
+          feature that appears to do nothing.
+        */}
+        {!rod ? (
+          <div className="warn">
+            {attachTo === ''
+              ? 'Not attached to a rod, so it has nowhere to stand and adds nothing.'
+              : `The rod this thickens (${attachTo}) is gone or switched off, so it adds nothing.`}
+          </div>
+        ) : null}
+        <div className="derived">
+          A local thickening so a rod standing in the cavity has material to be
+          drilled through. Added after the shell has hollowed the form, which is
+          why it survives it, and clipped to the form's outside, so it fills the
+          cavity without bulging out of the lamp.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">Placement</div>
+        <label className="field">
+          <span className="field-label">Around rod</span>
+          <span className="field-input">
+            <select
+              value={attachTo}
+              onChange={(e) => setParam(feature.id, 'attachTo', e.target.value)}
+            >
+              <option value="">Nothing — adds nothing</option>
+              {rods.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+          </span>
+        </label>
+        <div className="derived">
+          {rod
+            ? `Stands where ${rod.name} does, and follows it when it moves.`
+            : 'Pick a rod. A boss is a lump around something, not a shape of its own.'}
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">The thickening</div>
+        <NumberField
+          label="Radius"
+          value={radius}
+          unit="mm"
+          step={0.5}
+          min={0.5}
+          onChange={(v) => setParam(feature.id, 'radius', v)}
+        />
+        <NumberField
+          label="Blend"
+          value={num(feature.params, 'blend', 2)}
+          unit="mm"
+          step={0.5}
+          min={0}
+          onChange={(v) => setParam(feature.id, 'blend', v)}
+        />
+        <div className="derived">
+          The blend is a fillet where the boss meets the form. In a flat cut part
+          that is a rounded inside corner rather than a place that tears.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">Spokes</div>
+        <NumberField
+          label="Spokes"
+          value={spokes}
+          step={1}
+          min={0}
+          max={12}
+          onChange={(v) => setParam(feature.id, 'spokes', Math.round(v))}
+        />
+        <NumberField
+          label="Width"
+          value={num(feature.params, 'spokeWidth', 4)}
+          unit="mm"
+          step={0.5}
+          min={0.5}
+          onChange={(v) => setParam(feature.id, 'spokeWidth', v)}
+        />
+        <NumberField
+          label="Reach from the axis"
+          value={spokeLength}
+          unit="mm"
+          step={1}
+          min={0}
+          onChange={(v) => setParam(feature.id, 'spokeLength', v)}
+        />
+        <NumberField
+          label="First spoke at"
+          value={num(feature.params, 'angle', 0)}
+          unit="°"
+          step={5}
+          min={-360}
+          max={360}
+          onChange={(v) => setParam(feature.id, 'angle', v)}
+        />
+        {/*
+          The mistake that fails quietly. A spoke shorter than the boss is inside
+          it, the boss is then an island in the cavity, and an island shows up as
+          a loose disc on the sheet — on every layer, and only once it is cut.
+        */}
+        {/*
+          Zero is the useful answer, not a missing one. The reach that lands on
+          the wall differs on every layer of a curved form, so a typed number is
+          only right once — and the clip means overshooting costs nothing.
+        */}
+        {spokes === 0 ? (
+          <div className="warn">
+            No spokes, so the boss is an island in the cavity: a loose disc on
+            every sheet it appears on.
+          </div>
+        ) : spokeLength === 0 ? (
+          <div className="derived">
+            Reaching the wall on every layer. A boss is kept inside the form, so
+            a spoke runs until the wall stops it — which is a different distance
+            on every sheet of a curved shape and not a number worth typing.
+          </div>
+        ) : !reaches ? (
+          <div className="warn">
+            The spokes reach {spokeLength} mm from the axis and the boss is{' '}
+            {radius} mm — they do not stick out at all, so it is an island on
+            every sheet. Set the reach to 0 to let them run to the wall.
+          </div>
+        ) : (
+          <div className="derived">
+            Reach is measured from the axis, and overshooting costs nothing: the
+            boss is kept inside the form, so the wall decides where a spoke
+            stops. Falling short is the mistake — the slice then shows a loose
+            disc and the thin-feature check rings it. 0 reaches the wall on
+            every layer.
+          </div>
+        )}
+      </div>
+
+      <LayerSelectorFields feature={feature} slices={slices} />
     </>
   );
 }
@@ -2102,6 +2284,9 @@ export function Inspector({ slices, patternCounts, holeMisses, legGaps, pinLoose
    */
   if (feature.kind.startsWith('fixture:')) {
     return <FixtureInspector feature={feature} slices={slices} misses={holeMisses[feature.id]} />;
+  }
+  if (feature.kind === 'boss') {
+    return <BossInspector feature={feature} slices={slices} />;
   }
   if (feature.kind === 'pins') {
     return <PinsInspector feature={feature} slices={slices} loose={pinLoose[feature.id]} />;

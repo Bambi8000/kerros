@@ -46,6 +46,8 @@ import type { MeshGrid } from './voxelise.ts';
 import { generatePattern } from './pattern.ts';
 import { resolveLayerSet, resolveLayers, selectorFromParams } from './layers.ts';
 import { legSections, sectionsDistance } from './legs.ts';
+import { bossField } from './boss.ts';
+import type { BossSpec } from './boss.ts';
 import type { LegSection, LegSpec } from './legs.ts';
 import type { LayerSelector } from './layers.ts';
 import { nestByMaterial } from './nest.ts';
@@ -813,6 +815,68 @@ export function selectorForFixture(
 
 /** Every enabled legs feature, with its spread measured at the model's bottom. */
 /** Every enabled pins feature. */
+/**
+ * Every enabled boss, standing where its rod does.
+ *
+ * A boss has no position of its own: it thickens a rod, so it reads the rod's.
+ * One attached to a rod that has been deleted or switched off contributes
+ * nothing rather than falling back to the axis — a boss silently jumping to the
+ * middle of the lamp would be worse than one that is missing, and the inspector
+ * says which rod it wanted.
+ */
+export function bossesFromFeatures(
+  features: Feature[],
+  plan: LayerPlan,
+  /** Far enough to leave the model from anywhere in it, for automatic spokes. */
+  reachToEdge = 1e4,
+): BossSpec[] {
+  const out: BossSpec[] = [];
+  for (const f of features) {
+    if (f.kind !== 'boss' || !f.enabled) continue;
+
+    const rodId = typeof f.params.attachTo === 'string' ? f.params.attachTo : '';
+    const rod = features.find((r) => r.id === rodId && r.kind === 'rod' && r.enabled);
+    if (!rod) continue;
+
+    // The chosen layers become a span: bottom of the lowest, top of the highest.
+    const chosen = resolveLayers(
+      selectorFromParams(f.params),
+      plan.map((plane) => ({ index: plane.index + 1, z: plane.z })),
+    );
+    const planes = chosen.map((ordinal) => plan[ordinal - 1]).filter(Boolean);
+    if (planes.length === 0) continue;
+
+    out.push({
+      id: f.id,
+      label: f.name,
+      x: Number(rod.params.px) || 0,
+      y: Number(rod.params.py) || 0,
+      z0: planes[0].z0,
+      z1: planes[planes.length - 1].z0 + planes[planes.length - 1].thickness,
+      radius: Math.max(Number(f.params.radius) || 0, 0.05),
+      spokes: Math.max(Math.round(Number(f.params.spokes) || 0), 0),
+      spokeWidth: Math.max(Number(f.params.spokeWidth) || 0, 0.1),
+      /*
+       * Zero reaches the wall.
+       *
+       * A spoke has to land on material or the boss is an island, and the
+       * number that does it is different on every layer of a curved form —
+       * asking for it is asking somebody to guess a value that is only right
+       * once. So zero means "as far as it goes", and the envelope clip stops it
+       * at the wall. Reaching too far costs nothing; that is the whole point of
+       * the clip.
+       */
+      spokeLength:
+        (Number(f.params.spokeLength) || 0) > 0
+          ? Number(f.params.spokeLength)
+          : reachToEdge,
+      angle: Number(f.params.angle) || 0,
+      blend: Math.max(Number(f.params.blend) || 0, 0),
+    });
+  }
+  return out;
+}
+
 export function pinsFromFeatures(features: Feature[], kerf: number): PinSpec[] {
   const out: PinSpec[] = [];
   for (const f of features) {
@@ -991,6 +1055,65 @@ export function composeField(
   const solid = (x: number, y: number, z: number) => evaluatePoint(prepared, x, y, z);
 
   /*
+   * Bosses, added to the form after the shell has hollowed it.
+   *
+   * The order is the whole difficulty. Everything else in RIG removes material;
+   * a boss adds it, and putting it in before the shell would let the shell
+   * carve the boss out again — which is the one thing it exists to prevent.
+   * `solid` is already the accumulated SHAPE and CARVE tree, so unioning here
+   * is after the shell and before the windows, which should still be able to
+   * cut through a boss.
+   *
+   * A boss needs no per-layer work. A leg's hole differs on every sheet because
+   * the sweep depends on the sheet's thickness; a boss is a straight column, so
+   * the chosen layers collapse to a z range and the field costs one expression
+   * per sample.
+   */
+  // Far enough that a spoke from anywhere inside the model leaves it, so an
+  // automatic spoke is stopped by the envelope rather than by its own length.
+  const reachToEdge = bounds
+    ? Math.hypot(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1])
+    : 1e4;
+  const bosses = bossesFromFeatures(features, plan, reachToEdge);
+
+  /*
+   * The form before it was hollowed, so a boss can be kept inside it.
+   *
+   * The shape tree without the CARVE modifiers — subtracting shapes still
+   * subtract, since those are part of the outline, but the shell is left out.
+   * That is the surface a boss must not cross: a spoke aimed past the wall
+   * should stop at the wall rather than carry on through and hang off the
+   * outside of the lamp as a fin.
+   *
+   * Built only when there is a boss to clip, because preparing a second tree
+   * for nothing is a cost every lamp would pay.
+   */
+  const envelope =
+    bosses.length === 0
+      ? undefined
+      : (() => {
+          const outer = prepareFeatures(fieldFeatures.filter((f) => f.stage === 'SHAPE'));
+          return (x: number, y: number, z: number) => evaluatePoint(outer, x, y, z);
+        })();
+
+  const withBoss = bossField(solid, bosses, envelope);
+
+  /*
+   * The bounds are deliberately left alone.
+   *
+   * The first version grew them in XY for every boss, because a spoke reaching
+   * further than the form did was clipped at the grid: the preview drew the cut
+   * face as a flat plate and the slicer found a contour running off its window,
+   * dropped it rather than guessing an edge, and the whole outer ring of that
+   * layer went with it — a sheet reporting a negative area.
+   *
+   * Clipping the boss to the envelope fixes that at the source and makes the
+   * growth wrong rather than merely unnecessary: a bigger box at the same
+   * sample count is a coarser grid everywhere, paid for reach that adds
+   * nothing.
+   */
+
+  /*
    * Legs, cut from the field rather than pasted into the slices.
    *
    * The hole is the sweep of a tilted cylinder through a sheet, so it depends
@@ -1020,7 +1143,7 @@ export function composeField(
     }
   }
 
-  const withWindows = stockField(solid, windows, plan);
+  const withWindows = stockField(withBoss, windows, plan);
   const sample =
     legSectionsByPlane.size === 0
       ? withWindows
@@ -1048,6 +1171,9 @@ export function composeField(
     windows,
     plan,
     thickness,
+    // The grown box, so the grid holds whatever the bosses added. The plan above
+    // was built from the original, which is what keeps the layers where they
+    // were.
     bounds,
   };
 }

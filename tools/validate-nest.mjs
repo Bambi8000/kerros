@@ -15,6 +15,8 @@ import {
   GLYPH_ADVANCE,
   GLYPH_HEIGHT,
   GLYPH_WIDTH,
+  glyphTestDocument,
+  DEFAULT_GLYPH_TEST,
   textStrokes,
   textWidth,
   supportedCharacters,
@@ -107,6 +109,201 @@ console.log('font: glyph coverage and metrics');
   check('lowercase renders as uppercase', textStrokes('l', 0, 0, 5).length === textStrokes('L', 0, 0, 5).length);
 
   check('every stroke has at least two points', textStrokes('KERROS 2026', 0, 0, 4).every((s) => s.length >= 4));
+}
+
+console.log('font: digits have to be told apart on a pile of parts');
+{
+  /*
+   * The measurement that replaced an opinion.
+   *
+   * This file used to say seven-segment digits stay unambiguous at 3 mm on
+   * scorched board. That was reasoned and never checked, and cutting a real
+   * lamp disproved it: 3 and 8 could not be told apart on a pile of parts, and
+   * 6 and 8 are worse — in seven segments they differ by two short verticals
+   * and nothing else, so every digit is one unburnt segment from another.
+   *
+   * Rasterise each glyph on its own cell and compare: the closest seven-segment
+   * pair differed in 2.8% of its area. The shape-led digits manage 20%. The
+   * threshold below sits between the two, so this fails if anybody quietly
+   * reverts to segments — and it is the only argument the new digits have.
+   */
+  const raster = (ch, w = 30, h = 50, pen = 0.16) => {
+    const strokes = textStrokes(ch, 0, 0, GLYPH_HEIGHT);
+    const segs = [];
+    for (const flat of strokes) {
+      for (let i = 0; i + 3 < flat.length; i += 2) {
+        segs.push([flat[i], flat[i + 1], flat[i + 2], flat[i + 3]]);
+      }
+    }
+    const cells = [];
+    for (let gy = 0; gy < h; gy++) {
+      for (let gx = 0; gx < w; gx++) {
+        const px = ((gx + 0.5) * GLYPH_WIDTH) / w;
+        const py = ((gy + 0.5) * GLYPH_HEIGHT) / h;
+        let hit = false;
+        for (const [ax, ay, bx, by] of segs) {
+          const ex = bx - ax;
+          const ey = by - ay;
+          const len2 = ex * ex + ey * ey;
+          let t = len2 === 0 ? 0 : ((px - ax) * ex + (py - ay) * ey) / len2;
+          t = t < 0 ? 0 : t > 1 ? 1 : t;
+          if (Math.hypot(px - (ax + ex * t), py - (ay + ey * t)) <= pen) {
+            hit = true;
+            break;
+          }
+        }
+        cells.push(hit);
+      }
+    }
+    return cells;
+  };
+
+  const digits = '0123456789';
+  const grids = new Map(digits.split('').map((d) => [d, raster(d)]));
+  const unlike = (a, b) => {
+    const x = grids.get(a);
+    const y = grids.get(b);
+    let differ = 0;
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) differ++;
+    return differ / x.length;
+  };
+
+  let worst = 1;
+  let worstPair = '';
+  for (let i = 0; i < digits.length; i++) {
+    for (let j = i + 1; j < digits.length; j++) {
+      const d = unlike(digits[i], digits[j]);
+      if (d < worst) {
+        worst = d;
+        worstPair = digits[i] + digits[j];
+      }
+    }
+  }
+
+  check(
+    'no two digits are near-copies of each other',
+    worst > 0.12,
+    `the closest pair is ${worstPair} at ${(worst * 100).toFixed(1)}% — seven-segment managed 2.8%`,
+  );
+
+  // The three that were actually confused on the bench, named so a regression
+  // says which one came back.
+  for (const pair of ['38', '68', '08', '58']) {
+    check(
+      `${pair[0]} and ${pair[1]} are plainly different`,
+      unlike(pair[0], pair[1]) > 0.2,
+      `${(unlike(pair[0], pair[1]) * 100).toFixed(1)}%`,
+    );
+  }
+
+  /*
+   * The two features that carry most of that difference, pinned directly so a
+   * redraw cannot quietly drop them. The 8's waist is a narrowing at the middle
+   * that no other digit has; the 7's bar is what keeps it from being a 1.
+   */
+  const widthAt = (ch, y) => {
+    const strokes = textStrokes(ch, 0, 0, GLYPH_HEIGHT);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const flat of strokes) {
+      for (let i = 0; i + 3 < flat.length; i += 2) {
+        const [ax, ay, bx, by] = [flat[i], flat[i + 1], flat[i + 2], flat[i + 3]];
+        if ((ay - y) * (by - y) > 0) continue;
+        const t = ay === by ? 0 : (y - ay) / (by - ay);
+        const x = ax + (bx - ax) * t;
+        lo = Math.min(lo, x);
+        hi = Math.max(hi, x);
+      }
+    }
+    return hi - lo;
+  };
+
+  check(
+    'the 8 has a waist',
+    widthAt('8', 2.6) < widthAt('8', 4) - 0.5 && widthAt('8', 2.6) < widthAt('8', 1) - 0.5,
+    `${widthAt('8', 2.6).toFixed(2)} mm at the middle against ${widthAt('8', 4).toFixed(2)} above`,
+  );
+  check('and it is the only digit with one', (() => {
+    for (const d of digits) {
+      if (d === '8') continue;
+      const w = widthAt(d, 2.6);
+      if (Number.isFinite(w) && w < widthAt(d, 4) - 0.5 && w < widthAt(d, 1) - 0.5) return false;
+    }
+    return true;
+  })());
+  check('the 7 is crossed', textStrokes('7', 0, 0, GLYPH_HEIGHT).length === 2);
+  check("the 3's middle runs left of centre", (() => {
+    const strokes = textStrokes('3', 0, 0, GLYPH_HEIGHT);
+    return strokes.some((flat) => {
+      for (let i = 0; i < flat.length; i += 2) {
+        if (Math.abs(flat[i + 1] - 2.6) < 0.01 && flat[i] < GLYPH_WIDTH / 2) return true;
+      }
+      return false;
+    });
+  })());
+  check('every digit still fits its cell', digits.split('').every((d) => {
+    const flat = textStrokes(d, 0, 0, GLYPH_HEIGHT).flat();
+    for (let i = 0; i < flat.length; i += 2) {
+      if (flat[i] < -1e-9 || flat[i] > GLYPH_WIDTH + 1e-9) return false;
+      if (flat[i + 1] < -1e-9 || flat[i + 1] > GLYPH_HEIGHT + 1e-9) return false;
+    }
+    return true;
+  }));
+}
+
+console.log('font: the figure that answers what size to use');
+{
+  const doc = glyphTestDocument();
+  check('it draws something', doc.polylines.length > 100);
+  check('and nothing round', doc.circles.length === 0);
+
+  const cut = doc.polylines.filter((p) => p.layer === 'CUT');
+  const engraved = doc.polylines.filter((p) => p.layer === 'ENGRAVE');
+  check('one cut outline', cut.length === 1);
+  check('the digits are engraved, not cut', engraved.length === doc.polylines.length - 1);
+  check('and left open, because a stroke is not a ring', engraved.every((p) => p.closed === false));
+
+  const xs = cut[0].points.filter((_, i) => i % 2 === 0);
+  const ys = cut[0].points.filter((_, i) => i % 2 === 1);
+  const w = Math.max(...xs);
+  const h = Math.max(...ys);
+  check('it fits a bed', w < 400 && h < 300, `${w.toFixed(0)} x ${h.toFixed(0)} mm`);
+  check(
+    'and everything engraved is inside the outline',
+    engraved.every((p) => {
+      for (let i = 0; i < p.points.length; i += 2) {
+        if (p.points[i] < 0 || p.points[i] > w) return false;
+        if (p.points[i + 1] < 0 || p.points[i + 1] > h) return false;
+      }
+      return true;
+    }),
+  );
+
+  /*
+   * Every size asked for has to appear, or the figure quietly answers a
+   * different question than the one it was given.
+   */
+  const heights = new Set();
+  for (const p of engraved) {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 1; i < p.points.length; i += 2) {
+      lo = Math.min(lo, p.points[i]);
+      hi = Math.max(hi, p.points[i]);
+    }
+    heights.add(Math.round((hi - lo) * 100) / 100);
+  }
+  check(
+    'a stroke exists at every size asked for',
+    DEFAULT_GLYPH_TEST.sizes.every((size) =>
+      [...heights].some((v) => Math.abs(v - size) < size * 0.02),
+    ),
+    `${DEFAULT_GLYPH_TEST.sizes.join(', ')} mm`,
+  );
+
+  const fewer = glyphTestDocument({ sizes: [3], pairs: ['38'] });
+  check('fewer rows make a smaller figure', fewer.polylines.length < doc.polylines.length);
+  check('and still one outline', fewer.polylines.filter((p) => p.layer === 'CUT').length === 1);
 }
 
 console.log('font: layout');

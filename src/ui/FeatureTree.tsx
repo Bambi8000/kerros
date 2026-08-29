@@ -33,6 +33,12 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
   // Before the stage test, not after it. Legs and pins are RIG too, and
   // matching the stage is what made the fixture inspector unreachable for its
   // whole life.
+  if (f.kind === 'boss') {
+    const attached = typeof f.params.attachTo === 'string' && f.params.attachTo !== '';
+    return `Ø${(Number(f.params.radius) || 0) * 2} · ${Number(f.params.spokes) || 0} spokes${
+      attached ? '' : ' · no rod'
+    }`;
+  }
   if (f.kind === 'pins') {
     const n = Math.max(Math.round(Number(f.params.pinCount) || 3), 1);
     return `${n} per gap · Ø${Number(f.params.diameter) || 0} at ${Number(f.params.radius) || 0} mm`;
@@ -86,6 +92,7 @@ export function FeatureTree() {
   const addRod = useKerros((s) => s.addRod);
   const addLegs = useKerros((s) => s.addLegs);
   const addPins = useKerros((s) => s.addPins);
+  const addBoss = useKerros((s) => s.addBoss);
   const addShell = useKerros((s) => s.addShell);
   const addPattern = useKerros((s) => s.addPattern);
   const addWindow = useKerros((s) => s.addWindow);
@@ -242,6 +249,11 @@ export function FeatureTree() {
           </button>
           <button type="button" className="btn" onClick={addPins}>
             Pins
+          </button>
+        </div>
+        <div className="add-row">
+          <button type="button" className="btn" onClick={addBoss}>
+            Boss
           </button>
         </div>
         <div className="add-row-three">
