@@ -3,7 +3,8 @@ import { PREVIEW_RESOLUTIONS, SLICE_RESOLUTIONS, useKerros } from '../core/store
 import { layerPitch } from '../core/types';
 import type { GapReport, SliceSet } from '../core/slice';
 import { kerfTestDocument, writeDxfR12 } from '../core/dxf';
-import { manifestText, sheetToDxf } from '../core/job';
+import { assemblyDocument, manifestText, sheetToDxf } from '../core/job';
+import { writePdf } from '../core/pdf';
 import { KERROS_VERSION } from '../version';
 import { parseProject, projectFilename, serializeProject } from '../core/project';
 import { NumberField } from './NumberField';
@@ -152,6 +153,51 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
           }),
         },
         'text/plain',
+      ),
+    );
+  };
+
+  /**
+   * The pages that go to the bench with the parts.
+   *
+   * A separate button from the manifest rather than a replacement for it. The
+   * manifest is text that gets printed and marked up with a pencil; this is
+   * drawings, and what it is for is telling one part from another — which is
+   * the thing that turned out to be hard once there was a pile to sort.
+   */
+  const exportAssembly = async () => {
+    if (!slices) return;
+    announce(
+      await saveText(
+        {
+          name: 'kerros-assembly.pdf',
+          contents: writePdf(
+            assemblyDocument({
+              set: slices,
+              sheets: sheets.sheets,
+              spacers: sheets.spacers,
+              machineName: machine.name,
+              materialName: material.name,
+              thickness: material.thickness,
+              kerf: material.kerf,
+              spacerHeight: stack.spacerHeight,
+              spacerAchieved: sheets.spacerAchieved,
+              version: KERROS_VERSION,
+              // A ring is what you pick up off the bench, so the gaps are given
+              // in rings — and 0 means the rings are the stock.
+              // Read here rather than from `ringT` below, which is declared
+              // further down the component: this closure would reach it fine,
+              // but a value used above its own declaration is the shape of a
+              // bug this file has already had once.
+              ringThickness:
+                (stack.spacerThickness ?? 0) > 0
+                  ? (stack.spacerThickness as number)
+                  : material.thickness,
+              projectName,
+            }),
+          ),
+        },
+        'application/pdf',
       ),
     );
   };
@@ -765,6 +811,14 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
           onClick={() => void exportManifest()}
         >
           Export build manifest
+        </button>
+        <button
+          type="button"
+          className="btn btn-wide"
+          disabled={!slices || sheets.busy}
+          onClick={() => void exportAssembly()}
+        >
+          Export assembly PDF
         </button>
         <button type="button" className="btn btn-wide" onClick={() => void exportKerfTest()}>
           Export kerf test
