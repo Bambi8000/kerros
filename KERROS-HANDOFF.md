@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.21.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.22.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -82,6 +82,8 @@ quietly revert them.**
 | polygon booleans for a leg hole over the rim | cut legs from the field | estimated at eighty lines, honestly nearer two hundred, and its failure mode is a plausible-looking wrong polygon — the field does it in none, and gives kerf and the empty case away free |
 | `polygonFitsInPart` guards every per-slice hole | it guards the ones with no partial shape | right for a rod and a socket, wrong for a leg, which should take a bite out of the rim rather than vanish |
 | a window's width is limited by where the wedge stops being exact | by what can be glued back together | 178° was the mathematics; 100° is the bench, and only when the plexi plugs are not cut |
+| seven-segment digits are unambiguous at 3 mm | they are one unburnt segment apart | measured on the cell: the closest seven-segment pair differs in 2.8% of its area, the shape-led digits in 20%. Written as fact and never checked until a pile of parts could not be sorted |
+| bounds come from the SHAPE stage | anything that **adds** material sets bounds, whatever its stage | true for the whole program's life because every RIG feature removed. A boss adds, and a spoke past the form was clipped at the grid — a flat plate in the preview and a whole layer's outer ring dropped in the slicer |
 
 ## The recurring failure mode
 
@@ -285,6 +287,10 @@ and it will be a second tool rather than a second set of canvas handlers.
 - **Project files record an import's path, not its geometry.** A grid is megabytes
   and the project file is meant to stay readable, so imports must be located again
   after opening.
+- **A pin's removal keys do not survive a change in sheet count.** They are
+  `gap:position` against the layer numbering, so changing the material thickness
+  points them at different sheets. The same fragility hand placements on the bed
+  already carry, but structural here rather than cosmetic.
 - **A leg hole is not guarded.** `polygonFitsInPart` refuses a rod or a socket
   that crosses a contour, because a partial one of those is not a thing; a leg
   is cut from the field precisely so it *can* notch the rim, which means a thin
@@ -412,6 +418,10 @@ when a layer ends up held on one side only.
   taller than planned is eighteen millimetres of extra height. The program
   planned correctly for the number it was given, and a sphere is not obtainable
   from unmeasured stock.
+- **Cut the glyph test with it.** `glyphTestDocument` answers what size a layer
+  number has to be on *this* board. Seven-segment digits were adopted on
+  reasoning and had to be replaced after a pile of parts could not be sorted;
+  the size is the same kind of question and gets the same treatment.
 - **Cut the kerf test into the real material before anything else**, and measure
   the outer square and inner square separately. If they disagree the beam is not
   perpendicular and no single kerf value will save the fit.
@@ -431,6 +441,23 @@ when a layer ends up held on one side only.
   gives layers in two groups, and each group needs a rod through it or the smaller
   piece has nothing holding it. It is easy to miss because the Model view looks
   continuous.
+
+## Two right things in the wrong order
+
+A fourth family, and it is invisible to every validator because **both halves
+are correct on their own**. Three instances:
+
+- `stage === 'RIG'` tested before the kind, so `FixtureInspector` was
+  unreachable — and legs and pins would each have repeated it.
+- A state declaration read by a dependency array above the line that declares
+  it: a temporal dead zone, caught by an error boundary rather than by `tsc`.
+- Pin colours stroked before the selection highlight, which paints over every
+  hole belonging to the selected feature — so the colours vanished exactly when
+  the pins feature was selected.
+
+Nothing type-checks this and nothing can: order is not a property either piece
+has. The habit that helps is to ask, of any two things that touch the same
+object, *which of these runs second, and does it overwrite the other?*
 
 ## The ghost is a second implementation
 

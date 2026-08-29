@@ -1,18 +1,18 @@
-KERROS INVENTORY  2026-08-28  version 0.21.0
+KERROS INVENTORY  2026-08-29  version 0.22.0
 
 --- source, lines each
-   26199 total
-    1953 src/ui/Inspector.tsx
-    1714 src/core/store.ts
+   28301 total
+    2315 src/ui/Inspector.tsx
+    1831 src/core/store.ts
     1605 src/core/sdf.ts
+    1484 tools/validate-nest.mjs
     1397 src/ui/Viewport.tsx
     1271 src/core/nest.ts
-    1168 tools/validate-nest.mjs
-     948 src/core/slice.ts
-     935 src/core/pipeline.ts
-     851 src/ui/ProfilePanel.tsx
-     829 tools/validate-pipeline.mjs
-     803 src/ui/SliceInspector.tsx
+    1180 src/core/pipeline.ts
+    1010 tools/validate-pipeline.mjs
+     952 src/core/slice.ts
+     892 src/ui/SliceInspector.tsx
+     871 src/ui/ProfilePanel.tsx
      768 tools/validate-window.mjs
      759 src/index.css
      685 tools/validate-sdf.mjs
@@ -20,6 +20,7 @@ KERROS INVENTORY  2026-08-28  version 0.21.0
      579 tools/validate-slice.mjs
      526 src/core/window.ts
      453 tools/validate-rig-export.mjs
+     446 src/core/rig.ts
      410 src/core/voxelise.ts
      409 src/core/project.ts
      392 tools/validate-pattern.mjs
@@ -30,12 +31,13 @@ KERROS INVENTORY  2026-08-28  version 0.21.0
      334 src/core/fixture.ts
      330 src/core/legs.ts
      327 tools/validate-project.mjs
-     300 src/ui/Layout.tsx
-     299 src/core/rig.ts
+     307 src/ui/Layout.tsx
      287 src/core/job.ts
      283 src/ui/download.ts
      283 src/core/meshImport.ts
-     256 src/ui/FeatureTree.tsx
+     277 src/ui/FeatureTree.tsx
+     275 tools/validate-boss.mjs
+     255 src/core/font.ts
      251 tools/validate-fixture.mjs
      239 src/core/layers.ts
      231 src/core/dxf.ts
@@ -43,9 +45,9 @@ KERROS INVENTORY  2026-08-28  version 0.21.0
      220 tools/validate-layers.mjs
      203 tools/validate-surfacenets.mjs
      202 src/core/surfaceNets.ts
+     199 src/core/boss.ts
      182 src/ui/workerBridge.ts
      136 src/core/types.ts
-     136 src/core/font.ts
      131 src/ui/PartInspector.tsx
      107 src/ui/useSlices.ts
       88 src/ui/kerros.worker.ts
@@ -70,11 +72,14 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-pipeline.mjs
+check: node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pipeline.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+e6fd419 Interleaved pins that check their own work, bosses kept inside the form, and digits that can be told apart
+41b5cba Interleaved pins that check their own work, in two colours, and removable by hand
+30f31fd Docs and inventory at 0.21.0
 832b78e Measuring in the slice and model views, window ceilings from the bench, and what a shape actually measures
 c12d1fb Docs and inventory at 0.20.0: legs from the field, and the layer selector
 577903d Legs cut from the field, so one over the rim takes a bite instead of vanishing
@@ -102,6 +107,3 @@ d89f42e Imports get a gizmo and a uniform scale, sized by longest axis in mm
 739d669 STL and OBJ import baked to a signed distance grid, with parity signs and object-scaled reach
 daafe81 M10: Tauri shell with native save and open dialogs, batch export into one chosen folder
 5bc7571 M8.3: windows attach to a shape, following translation and Z rotation, and can be detached
-7740b53 M6.1: sculpt strokes stored in the attached shape's frame, so moving or turning the shape carries them
-566d6dd M9.1: fixtures drawn as clickable ghost volumes in the model view
-9aea7a4 M9: E27 socket mount, cable channel and Wago chamber as dimensioned per-slice fixtures; centre-on-model for windows and fixtures

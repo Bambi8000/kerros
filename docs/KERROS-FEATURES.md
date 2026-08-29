@@ -1261,6 +1261,151 @@ Model view's ghost, which drew them converging at the floor while the holes were
 right the whole time — a picture disagreeing with the geometry, which is the
 worse way round to find out.
 
+## Interleaved pins — **shipped**
+
+`pinGaps` and `loosePins` in `src/core/rig.ts`. Short pins joining one sheet to
+the next, instead of a threaded rod through the whole stack. A stack of n
+sheets has n−1 gaps, and every gap needs at least one pin or the two sheets
+either side of it are not fastened to each other.
+
+### Why they have to be interleaved
+
+The pins in gap k−1 pass through sheets k−1 and k. The pins in gap k pass
+through sheets k and k+1. **Both drill sheet k** — so at the same angle the two
+pins would meet inside it. Turning each gap from the one below is not
+decoration; it is what makes the idea possible at all.
+
+Every sheet except the two ends therefore carries two rings of holes, one from
+the gap below and one from the gap above. That arithmetic is also the proof
+that pins are being drilled into *both* sheets of each gap rather than one, and
+a validator counts it.
+
+`stagger` defaults to half a position, which is as far apart as neighbouring
+gaps can be. Zero — or a whole turn, the same thing — falls back to that rather
+than obeying.
+
+**The default keeps the rings upright rather than climbing.** Half a position
+twice is a whole position, so with three pins the pattern repeats every second
+gap and every sheet looks alike. That is a choice and not an oversight: turning
+each gap as far as possible from its neighbour and making the pattern climb are
+different goals. The panel says which one you have — and what to type for the
+other, since a turn that does not divide the spacing evenly spirals up the
+stack.
+
+### The generator checks its own work
+
+`loosePins` names the sheets left held on one side only. A pattern of holes is
+not a structure: if a gap's pins do not fit the sheets they pass through, those
+two sheets are simply not fastened together, and a stack that comes apart in the
+middle is worse than one that was never pinned.
+
+It returns **which sheets**, not how many. The two ends of the run are left out,
+because the lowest sheet has no gap below it and the highest none above, and
+crying wolf on every stack teaches somebody to stop reading the warning.
+
+The count also appears in the profiles panel rather than only in the pins
+inspector. A thin wall is a warning about how a part will cut; a sheet fastened
+on one side is a warning about whether the lamp stands up, and that is checked
+once before exporting rather than by clicking through features.
+
+**A pin has to fit both sheets, not one.** Half a pin is not a joint, so a hole
+that lands on material below and off the edge above is refused in both —
+otherwise the stack would carry a hole that fastens nothing and reads as if it
+did.
+
+### Two colours, and the order they are drawn in
+
+On any one sheet half a pin's holes carry on upwards and half downwards, so each
+hole carries `pinTo`, the other sheet it reaches, and the slice view strokes it
+green going up and violet going down. A ring of identical holes hides the
+interleave, which is the only thing about pins worth seeing.
+
+The first version drew them **before** the selection highlight, which strokes
+every hole belonging to the selected feature — so the colours were painted over
+in amber exactly when the pins feature was selected, which is when anybody looks
+at them. Two correct things in the wrong order, and no validator can see that
+because both halves are right on their own.
+
+### Taken out by hand
+
+A pin can be pointed at in the slice view and removed with Backspace, and put
+back the same way. The keys live on the feature as a space-separated string of
+`gap:position` keys — a handful of short keys is not bulk data the way sculpt
+strokes are, so it needs no array of its own and no change to the project
+format, and `12:0 12:2` is something a person can read in the file.
+
+**A removed pin is not a miss.** It never had to fit, so counting it as one
+would put a warning next to a deliberate act. It does still count as *absent*
+for the structural check, which is the point: empty a gap by hand and the two
+sheets either side are genuinely unfastened, and saying so is why that check
+exists.
+
+The keys survive a re-slice but not a change in the number of sheets: change the
+material thickness and sheet 12 is a different sheet. Same fragility as hand
+placements on the bed, and structural here rather than cosmetic.
+
+## Bosses — **shipped**
+
+`src/core/boss.ts`. A local thickening around a rod, so that a rod standing
+where there is no material has something to be drilled through. The word comes
+from moulding, where a boss is the lump of plastic around a screw hole; the
+problem is the same. A shelled lamp is a ring on every layer and the middle is
+cavity, so a rod near the axis lands in air — `circleFitsInPart` refuses the
+hole, correctly, and the rod fastens nothing.
+
+**A boss is not just a cylinder.** A cylinder alone in the cavity gives every
+layer an island: a disc floating inside the ring, which `groupContours` makes a
+part of its own, which falls off the sheet loose and has to be placed back by
+hand on every layer. So a boss carries **spokes**, which are the same thing as a
+rib in a moulding, and they are what make it one piece.
+
+### Additive, which is the whole difficulty
+
+Everything else in RIG removes material. A boss adds it, so it has to be applied
+**after the shell has hollowed the form** — put it before and the shell carves
+the boss out again and the point is lost. `composeField`'s `solid` is already
+the accumulated SHAPE and CARVE tree, so unioning there is after the shell and
+before the windows, which should still be able to cut through a boss.
+
+**No per-layer work.** A leg's hole differs on every sheet because the sweep
+depends on the sheet's thickness. A boss is a straight column with the same
+section at every height, so the layer selector collapses to a z range and the
+field costs one expression per sample rather than a layer lookup.
+
+### Kept inside the form
+
+Each boss is intersected with the **envelope** — the shape tree without the
+shell — before being unioned in. Without that, a spoke long enough to reach the
+wall carries straight on through it and hangs off the outside as a fin.
+
+Two things follow. **Aiming past the wall costs nothing**, so the reach can be
+left at 0 and the wall decides where each spoke stops — which matters because
+the distance that lands is different on every layer of a curved form, and a
+typed number is right exactly once. And the sampling grid stays honest: a boss
+confined to the form cannot push the model's bounds outwards.
+
+**The blend has to be clipped too, not only the boss.** A fillet pulls the union
+outwards by up to a quarter of its radius, and at the outer wall the boss and
+the form are both on the surface — so they blend into each other and the outline
+grows a bump exactly where a spoke lands. Half a millimetre at k = 2, which is
+small and completely wrong: the outline is the design. Clipping the result costs
+nothing elsewhere, since the shell only removes material and the form is already
+inside its own envelope.
+
+### What fails quietly
+
+`spokesStickOut` compares the reach against the boss's own radius. A spoke
+shorter than the boss is inside it, the boss is then an island, and an island
+shows up as a loose disc on the sheet — on every layer, and only once it is cut.
+
+Whether a spoke reaches the *wall* cannot be answered in this module, which has
+no idea where the wall is. Reaching past its own edge can be, and that is the
+mistake people actually make.
+
+A boss whose rod has been deleted or switched off contributes **nothing** rather
+than falling back to the axis: a boss silently jumping to the middle of the lamp
+is worse than one that is missing, and the inspector says which rod it wanted.
+
 ## PATTERN — **shipped** (M7)
 
 `src/core/pattern.ts`. Perforation in the wall of each slice.
@@ -1503,6 +1648,52 @@ Digits are drawn seven-segment style, which stays readable at 3 mm on scorched
 plywood where a stylised 6 or 9 does not. A–Z and a few symbols are stroked.
 Unknown characters render as a hyphen rather than vanishing, so a wrong label
 is visible instead of silent.
+
+### The digits are not seven-segment, and this file used to say they should be
+
+`font.ts` claimed seven segments stay unambiguous at 3 mm on scorched board
+where a stylised 6 or 9 does not. It was reasoned, never measured, and cutting a
+real lamp disproved it: 3 and 8 could not be told apart on a pile of parts.
+
+The reason is structural. In seven segments a 6 differs from an 8 by two short
+verticals and nothing else, so **every digit is one unburnt segment away from
+another one**. Rasterised on the cell and compared pair by pair:
+
+| | closest pair | 6 against 8 |
+| --- | --- | --- |
+| seven-segment | **2.8%** of the cell | 2.8% |
+| shape-led | **20%** | 33% |
+
+So the digits carry their differences in the shape. The **8 has a waist** — two
+loops pinched at the middle, and no other digit has one, which is what stopped
+3, 6 and 0 being read as 8s. The **3's middle runs out to the left** past the
+centre, so the open left side reads as deliberate rather than as a segment that
+failed to burn. The **7 is crossed**, the **1 has a foot**, the **0 keeps its
+slash**.
+
+A validator pins the 12% threshold, between the two measurements, so this fails
+if anybody quietly reverts to segments. The waist is pinned separately, and a
+mutation test shows why: putting the seven-segment 8 back fails only that one
+check, because the other digits are still shape-led.
+
+Cut and read at 3, 4 and 5 mm before being adopted. 3 mm is legible, so
+`findLabelSpot`'s fallback to 60% height stays as it was.
+
+### The figure that says what size to use
+
+`glyphTestDocument` in `font.ts` — digits at five sizes with the confusable
+pairs after them, each row labelled with its own height at a fixed comfortable
+size so the label stays readable on the row that turns out not to be.
+
+It lives in `font.ts` rather than beside `kerfTestDocument` in `dxf.ts` because
+that module may not import values, and a figure made of glyphs has to reach the
+font. The `DxfDocument` import is type-only, so both constraints hold.
+
+**Its question changed once already.** It was built to compare two fonts; that
+comparison is over and the seven-segment digits are gone. What is left is the
+part that recurs: a new board scorches differently, and 3 mm on cardboard is not
+3 mm on plywood. It is the kerf test's sibling — cut once per material, read,
+and stop guessing.
 
 ### Sheet view
 
