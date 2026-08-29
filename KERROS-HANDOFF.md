@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.22.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.23.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -175,6 +175,7 @@ src/core/
                   placement, collision, rotation, labels           [no imports]
   font.ts         stroke font for engraved labels                  [no imports]
   dxf.ts          DXF R12 writer, kerf test figure                 [no imports]
+  pdf.ts          hand-written PDF, ASCII only                     [no imports]
   project.ts      .kerros.json read and write                      [no imports]
   meshImport.ts   STL binary/ASCII and OBJ parsing                 [no imports]
   voxelise.ts     triangle soup to signed grid                     [no imports]
@@ -264,7 +265,8 @@ so sculpting a spout and then shelling hollows the spout too.
 6. **LAYOUT** — nesting per material in the worker, either bounding-box shelves
    or raster true-shape; stroke-font layer numbers engraved; manual placement with pinning
    and rotation; true-shape collision reporting.
-7. **EXPORT** — DXF R12 per sheet, build manifest, kerf test figure, project file.
+7. **EXPORT** — DXF R12 per sheet, build manifest, assembly PDF, kerf test and
+   glyph test figures, project file.
    Native save dialogs through Tauri; the browser download path still works.
 
 Four workspace modes: **Model** (preview, direct manipulation, sculpting),
@@ -341,10 +343,11 @@ about to happen when this handoff was written; ask before assuming.
 
 ## Candidates, in the order I would take them
 
-1. **Assembly PDF.** A numbered stack is not self-explanatory once it is a pile of
-   parts on a bench. Deliberately *after* the next real cut: what it has to say —
-   whether a gap takes one ring or two, which plexi plug goes in which hole — is a
-   guess until there is a pile of parts on the bench.
+1. ~~**Assembly PDF.**~~ **Shipped**, and waiting for the cut was right: the
+   thing that turned out to be hard was telling one part from another, not
+   remembering the order, so the drawings became the document and the table the
+   appendix. All at one scale, because fitting each to its own box makes a 40 mm
+   ring and a 200 mm ring identical on the page.
 2. **Cross-slicing (fin / eggcrate mode)**, discussed and scoped. Phase A is
    part paid for: the swept-section arithmetic legs needed — a tilted solid met
    by a plane, and the sweep between two faces of a sheet — is the same

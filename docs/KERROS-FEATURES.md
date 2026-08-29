@@ -1911,6 +1911,66 @@ with chords.
 Numbers are fixed notation to four decimals, with no exponent form and no
 negative zero — both of which some older laser front-ends choke on.
 
+### The assembly document — **shipped**
+
+`src/core/pdf.ts` writes it, `assemblyDocument` in `job.ts` composes it. The
+pages that go to the bench with the parts.
+
+**The drawings are the document and the table is the appendix**, which is the
+other way round from the manifest — and that ordering came from the bench, not
+from a plan. A numbered stack is not self-explanatory once it is a pile of
+parts, but what was actually hard turned out to be *telling one part from
+another*, not remembering the order.
+
+It was deliberately built after a real lamp had been cut. What it has to say —
+whether a gap takes one ring or two, which sheet a layer ended up on — was a
+guess before there was a pile to sort.
+
+#### One scale for every drawing
+
+The whole trick. Fitting each layer to its own box makes a 40 mm ring and a
+200 mm ring the same size on the page, and telling those two apart is the job.
+`commonScale` works the factor out from the largest drawing and applies it to
+all of them, so the size progression up the stack is the first thing the eye
+gets.
+
+Gaps are given in **rings**, not millimetres: a ring is what you pick up off the
+bench and half of one does not exist.
+
+#### ASCII only, and that is a constraint rather than a style
+
+Every file leaves through `download.ts`, which writes **strings** — a Blob in
+the browser, `write_text_file` in the native shell. So the PDF has to be a
+string: no compression, no binary streams, no byte offsets a string cannot
+count. An uncompressed content stream of `m`, `l`, `S` and numbers is plain
+text, and the cross-reference table's byte offsets are then just character
+counts. A validator asserts every byte is printable.
+
+That constraint was found by reading `download.ts` before writing anything, and
+it decided the whole design. Reaching for a PDF library would have produced a
+binary file that the one export boundary in this program cannot carry.
+
+#### No font in the file, and none in the output
+
+Labels arrive as polylines from `font.ts` — the same strokes the laser engraves.
+No font to embed, no encoding to get wrong, and no reader that can render it
+differently from another one. It is the same argument that keeps the DXF free of
+TEXT entities, and it means the assembly pages and the engraved parts are set in
+the same digits.
+
+#### What the validator can prove
+
+That a reader will accept it, which is the failure that is total rather than
+partial. The header and the marker, a catalogue and a page tree, and the parts
+that are silently wrong or exactly right: **every cross-reference offset lands
+on its object**, and the declared stream length is the stream length. A reader
+seeks to those offsets and either finds an object or gives up.
+
+Plus the drawing itself: millimetres become points, a closed path is closed,
+paths are stroked and never filled, and state is emitted only when it changes —
+not as an optimisation, but because a stream that restates the same width a
+thousand times is unreadable when something goes wrong in it.
+
 ### Kerf test figure
 
 `kerfTestDocument()` produces the figure to cut once per material:

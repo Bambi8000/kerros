@@ -1,7 +1,7 @@
-KERROS INVENTORY  2026-08-29  version 0.22.0
+KERROS INVENTORY  2026-08-29  version 0.23.0
 
 --- source, lines each
-   28301 total
+   28857 total
     2315 src/ui/Inspector.tsx
     1831 src/core/store.ts
     1605 src/core/sdf.ts
@@ -11,14 +11,15 @@ KERROS INVENTORY  2026-08-29  version 0.22.0
     1180 src/core/pipeline.ts
     1010 tools/validate-pipeline.mjs
      952 src/core/slice.ts
+     925 src/ui/ProfilePanel.tsx
      892 src/ui/SliceInspector.tsx
-     871 src/ui/ProfilePanel.tsx
      768 tools/validate-window.mjs
      759 src/index.css
      685 tools/validate-sdf.mjs
      644 src/ui/SheetView.tsx
      579 tools/validate-slice.mjs
      526 src/core/window.ts
+     499 src/core/job.ts
      453 tools/validate-rig-export.mjs
      446 src/core/rig.ts
      410 src/core/voxelise.ts
@@ -32,7 +33,6 @@ KERROS INVENTORY  2026-08-29  version 0.22.0
      330 src/core/legs.ts
      327 tools/validate-project.mjs
      307 src/ui/Layout.tsx
-     287 src/core/job.ts
      283 src/ui/download.ts
      283 src/core/meshImport.ts
      277 src/ui/FeatureTree.tsx
@@ -47,6 +47,8 @@ KERROS INVENTORY  2026-08-29  version 0.22.0
      202 src/core/surfaceNets.ts
      199 src/core/boss.ts
      182 src/ui/workerBridge.ts
+     153 src/core/pdf.ts
+     137 tools/validate-pdf.mjs
      136 src/core/types.ts
      131 src/ui/PartInspector.tsx
      107 src/ui/useSlices.ts
@@ -72,11 +74,14 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pipeline.mjs
+check: node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-pipeline.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+93d5c30 An assembly PDF whose drawings are the document, at one scale so parts can be told apart
+3c5a350 Import the pin helpers from rig, not from font
+5dbe462 Docs and inventory at 0.22.0
 e6fd419 Interleaved pins that check their own work, bosses kept inside the form, and digits that can be told apart
 41b5cba Interleaved pins that check their own work, in two colours, and removable by hand
 30f31fd Docs and inventory at 0.21.0
@@ -104,6 +109,3 @@ c8616fa Three-colour icon, bundle metadata, and fix a three event type that only
 1bcddc4 Slicing moved to a Web Worker behind a pure pipeline module, validated end to end
 c5a9295 Rewrite the handoff to describe Kerros as built rather than as planned
 d89f42e Imports get a gizmo and a uniform scale, sized by longest axis in mm
-739d669 STL and OBJ import baked to a signed distance grid, with parity signs and object-scaled reach
-daafe81 M10: Tauri shell with native save and open dialogs, batch export into one chosen folder
-5bc7571 M8.3: windows attach to a shape, following translation and Z rotation, and can be detached
