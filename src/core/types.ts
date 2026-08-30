@@ -63,6 +63,14 @@ export interface Feature {
    * something a person can read and diff.
    */
   strokes?: SculptStroke[];
+  /**
+   * A profile's rings, on profile features only.
+   *
+   * Bulk data like strokes, but deliberately **not** written to the project
+   * file: the path is, and the outline is read again from it. Small enough to
+   * travel with the tree to the worker, which is what a mesh grid is not.
+   */
+  rings?: number[][];
 }
 
 export interface MachineProfile {

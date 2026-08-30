@@ -47,6 +47,8 @@ import { generatePattern } from './pattern.ts';
 import { resolveLayerSet, resolveLayers, selectorFromParams } from './layers.ts';
 import { legSections, sectionsDistance } from './legs.ts';
 import { bossField } from './boss.ts';
+import { extrudeProfile, indexProfile, profileBounds } from './profile2d.ts';
+import type { FillRule } from './profile2d.ts';
 import type { BossSpec } from './boss.ts';
 import type { LegSection, LegSpec } from './legs.ts';
 import type { LayerSelector } from './layers.ts';
@@ -877,6 +879,43 @@ export function bossesFromFeatures(
   return out;
 }
 
+/**
+ * A profile's rings as an extruded volume, or nothing when the file is gone.
+ *
+ * The index is built here, once per composition, rather than per sample: it is
+ * what turns a 17-microsecond walk into a 1.35-microsecond lookup, and building
+ * it inside the sampler would pay for it on every point.
+ */
+export function profileVolume(feature: Feature, needed = 0) {
+  const rings = feature.rings;
+  if (!rings || rings.length === 0) return undefined;
+
+  const fill = (typeof feature.params.fill === 'string' ? feature.params.fill : 'holes') as FillRule;
+  const height = Math.max(Number(feature.params.height) || 0, 0.1);
+  const round = Math.max(Number(feature.params.round) || 0, 0);
+
+  /*
+   * The index is exact out to a reach and clamped beyond it, and the caller has
+   * to say how deep this lamp needs. A shell takes its wall off the inside, so
+   * where the distance is clamped the cavity lands on the clamp — which on a
+   * complicated outline looks like stray lines through the middle of the shape.
+   *
+   * Capped, because a reach the size of the whole drawing costs four times what
+   * a useful one does and buys nothing: past the widest wall anybody cuts, no
+   * part of this program reads the number.
+   */
+  const box = profileBounds({ rings, fill });
+  const span = Math.max(box.maxX - box.minX, box.maxY - box.minY, 1);
+  const reach = Math.min(Math.max(needed, Number(feature.params.k) || 0), span * 0.6);
+
+  const index = indexProfile({ rings, fill }, 1, 0.06, reach);
+  return {
+    sample: (x: number, y: number, z: number) => extrudeProfile(index, height, round, x, y, z),
+    min: [box.minX, box.minY, -height / 2] as [number, number, number],
+    max: [box.maxX, box.maxY, height / 2] as [number, number, number],
+  };
+}
+
 export function pinsFromFeatures(features: Feature[], kerf: number): PinSpec[] {
   const out: PinSpec[] = [];
   for (const f of features) {
@@ -1039,9 +1078,34 @@ export function composeField(
 ) {
   // Imports carry their baked volume through to the evaluator here, since the
   // grids live outside the store.
-  const fieldFeatures = features.filter(isFieldFeature).map((f) =>
-    f.kind === 'import' ? { ...f, volume: volumes.get(f.id) } : f,
-  );
+  /*
+   * Volumes, from two sources that look the same to the evaluator.
+   *
+   * A mesh's grid comes in from outside, because it is megabytes and is cached
+   * on each side of the worker boundary. A profile's rings arrive on the
+   * feature itself — they are kilobytes of plain numbers and travel with the
+   * tree — and the extruded field is built here, so `sdf.ts` sees one shape of
+   * thing and imports nothing.
+   */
+  /*
+   * How deep any shell in the tree cuts, plus half again.
+   *
+   * A profile's interior only has to be exact as far as something reads it, and
+   * the shell is the thing that reads deepest. Working it out here rather than
+   * defaulting high means a lamp with no shell pays nothing for one.
+   */
+  const wallNeeded =
+    features.reduce(
+      (deepest, f) =>
+        f.kind === 'shell' && f.enabled ? Math.max(deepest, Number(f.params.t) || 0) : deepest,
+      0,
+    ) * 1.6;
+
+  const fieldFeatures = features.filter(isFieldFeature).map((f) => {
+    if (f.kind === 'import') return { ...f, volume: volumes.get(f.id) };
+    if (f.kind === 'profile') return { ...f, volume: profileVolume(f, wallNeeded) };
+    return f;
+  });
   const prepared = prepareFeatures(fieldFeatures);
   const windows = windowsFromFeatures(features, kerf, seed);
   const bounds = modelBounds(fieldFeatures);

@@ -3,11 +3,16 @@ import { useKerros } from '../core/store';
 import { OP_LABELS, SHAPE_MODULES, findModule, text } from '../core/sdf';
 import type { Op } from '../core/sdf';
 import { STAGES, STAGE_NOTES } from '../core/types';
-import { openBinary } from './download';
+import { openBinary, openText } from './download';
 import type { Feature } from '../core/types';
 
 /** One line under a feature's name, saying what it does at a glance. */
 function subtitleFor(f: Feature, index: number, op: Op): string {
+  if (f.kind === 'profile') {
+    const rings = Number(f.params.ringCount) || 0;
+    if (rings === 0) return 'outline · not loaded';
+    return `outline · ${rings} path${rings === 1 ? '' : 's'} · ${Number(f.params.height) || 0} mm tall`;
+  }
   if (f.kind === 'import') {
     const triangles = Number(f.params.triangles) || 0;
     return triangles > 0 ? `mesh · ${triangles.toLocaleString('en-US')} triangles` : 'mesh · not loaded';
@@ -99,6 +104,7 @@ export function FeatureTree() {
   const addFixture = useKerros((s) => s.addFixture);
   const ensureSculpt = useKerros((s) => s.ensureSculpt);
   const loadImport = useKerros((s) => s.loadImport);
+  const loadProfile = useKerros((s) => s.loadProfile);
   const removeFeature = useKerros((s) => s.removeFeature);
   const moveFeature = useKerros((s) => s.moveFeature);
   const toggleFeature = useKerros((s) => s.toggleFeature);
@@ -241,6 +247,19 @@ export function FeatureTree() {
             }}
           >
             Import…
+          </button>
+        </div>
+        <div className="add-row">
+          <button
+            type="button"
+            className="btn btn-wide"
+            onClick={() => {
+              void openText(['svg'], '.svg,image/svg+xml').then((file) => {
+                if (file) loadProfile(null, file.name, file.contents);
+              });
+            }}
+          >
+            SVG outline…
           </button>
         </div>
         <div className="add-row">

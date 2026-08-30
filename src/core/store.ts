@@ -20,11 +20,13 @@ import {
   frameToLocal,
   frameToWorld,
   modelBounds,
+  num,
   shellModifier,
 } from './sdf';
 import type { Frame } from './sdf';
 import { WINDOW_WORLD, windowToLocal, windowToWorld } from './window';
 import { importMesh, openEdgeCount } from './meshImport';
+import { fitProfile, parseSvg } from './profile2d';
 import type { TriangleSoup } from './meshImport';
 import { meshGridBounds, sampleMeshGrid, voxelise } from './voxelise';
 import type { MeshGrid } from './voxelise';
@@ -184,6 +186,9 @@ interface KerrosState {
   addLegs: () => void;
   addPins: () => void;
   addBoss: () => void;
+  /** Read an SVG outline and make, or replace, a profile feature. */
+  loadProfile: (id: string | null, name: string, svg: string) => string;
+  setProfileSize: (id: string, size: number) => void;
   /** Take one pin out by hand, or put it back. */
   togglePin: (id: string, key: string) => void;
   /** Put every hand-removed pin back. */
@@ -866,6 +871,106 @@ export const useKerros = create<KerrosState>((set, get) => ({
    * position at all — it is not a shape that stands somewhere, it is a lump
    * around something that does.
    */
+  /**
+   * An SVG outline, extruded.
+   *
+   * The rings live **on the feature**, not in a map beside the store. They are
+   * kilobytes of plain numbers, so they travel with the tree to the worker for
+   * nothing — unlike a mesh grid, which is megabytes of Float32 and has to be
+   * sent once per bake and cached on both sides.
+   *
+   * They are still not saved: `project.ts` copies `params` and `strokes` and
+   * nothing else, so a reopened profile has its path and no geometry and has to
+   * be located again. That is mesh import's trade, made deliberately again.
+   */
+  loadProfile: (id, name, svg) => {
+    const s = get();
+    const target = id ?? `f${s.nextFeatureNumber}`;
+    const short = (name.split(/[\\/]/).pop() ?? name).replace(/\.svg$/i, '');
+
+    const parsed = parseSvg(svg);
+    const existing = s.features.find((f) => f.id === target);
+    const size = existing ? num(existing.params, 'size', 120) : 120;
+    const rings = parsed.rings.length > 0 ? fitProfile(parsed.rings, Math.max(size, 1)) : [];
+
+    if (existing) {
+      set({
+        features: s.features.map((f) =>
+          f.id === target
+            ? {
+                ...f,
+                rings,
+                params: {
+                  ...f.params,
+                  path: name,
+                  ringCount: rings.length,
+                  warnings: parsed.warnings.length,
+                },
+              }
+            : f,
+        ),
+        selectedId: target,
+      });
+      return target;
+    }
+
+    set({
+      features: [
+        ...s.features,
+        {
+          id: target,
+          kind: 'profile',
+          stage: SHAPE,
+          name: short.slice(0, 24) || 'Profile',
+          enabled: true,
+          rings,
+          params: {
+            op: s.features.some((f) => f.stage === SHAPE) ? 'smoothUnion' : 'union',
+            k: 10,
+            px: 0,
+            py: 0,
+            pz: 0,
+            rx: 0,
+            ry: 0,
+            rz: 0,
+            path: name,
+            // Holes by default: an SVG with an inner path usually means one.
+            fill: 'holes',
+            size,
+            height: 100,
+            round: 0,
+            ringCount: rings.length,
+            warnings: parsed.warnings.length,
+          },
+        },
+      ],
+      nextFeatureNumber: s.nextFeatureNumber + 1,
+      selectedId: target,
+    });
+    return target;
+  },
+
+  /**
+   * Re-fit a profile's rings when its size changes.
+   *
+   * Refitting rather than re-reading: the file may be long gone, and scaling
+   * rings that are already in millimetres is exact.
+   */
+  setProfileSize: (id, size) =>
+    set((s) => ({
+      features: s.features.map((f) => {
+        if (f.id !== id || !f.rings) return f;
+        const from = num(f.params, 'size', 120);
+        if (from <= 0) return f;
+        const factor = Math.max(size, 1) / from;
+        return {
+          ...f,
+          rings: f.rings.map((ring) => ring.map((v) => v * factor)),
+          params: { ...f.params, size: Math.max(size, 1) },
+        };
+      }),
+    })),
+
   addBoss: () =>
     set((s) => {
       const rod = [...s.features].reverse().find((f) => f.kind === 'rod' && f.enabled);

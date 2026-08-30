@@ -1116,6 +1116,14 @@ export interface EvalFeature {
   kind: string;
   enabled: boolean;
   params: Params;
+  /**
+   * A profile feature carries its rings here rather than in params.
+   *
+   * Bulk data, but small bulk: kilobytes of plain numbers, so unlike a mesh
+   * grid it can travel with the tree instead of being cached either side of the
+   * worker.
+   */
+  rings?: number[][];
   /** Sculpt features carry their strokes here rather than in params. */
   strokes?: SculptStroke[];
   /**
@@ -1186,7 +1194,13 @@ export function prepareFeatures(features: EvalFeature[]): PreparedStep[] {
     const f = features[index];
     if (!f.enabled) continue;
 
-    if (f.kind === 'import') {
+    /*
+     * An import or a profile. Both are **volumes somebody else baked**, handed
+     * in as `{ sample, min, max }` — which is the whole reason this module can
+     * carry them without importing anything. The boundary was built for meshes
+     * and an extruded SVG outline fits through it unchanged.
+     */
+    if (f.kind === 'import' || f.kind === 'profile') {
       // Nothing to evaluate until the file has been located and baked.
       if (f.volume) {
         out.push({
@@ -1366,10 +1380,11 @@ export function modelBounds(
     maxZ = Math.max(maxZ, hi[2]);
   };
 
-  // An import is a solid, so its box sets bounds — transformed, since the box
-  // was baked in the mesh's own coordinates.
+  // An import or a profile is a solid, so its box sets bounds — transformed,
+  // since the box was baked in the volume's own coordinates.
   for (const feature of features) {
-    if (feature.kind !== 'import' || !feature.enabled || !feature.volume) continue;
+    if (feature.kind !== 'import' && feature.kind !== 'profile') continue;
+    if (!feature.enabled || !feature.volume) continue;
     if (!opIsAdditive(text(feature.params, 'op', 'union') as Op)) continue;
     const frame = frameOf(feature.params);
     const box = feature.volume;
