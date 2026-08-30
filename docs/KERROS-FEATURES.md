@@ -2090,6 +2090,123 @@ with a count** and imported anyway: a mesh with a few holes usually still
 voxelises usefully near the parts that matter, and the person is better placed to
 judge that than the program is.
 
+## 2D profiles and SVG import — **shipped**
+
+`src/core/profile2d.ts`. An outline in a plane, kept as a **distance function**
+rather than as a polygon. The sources are an SVG file now, a brush stroke or a
+slice of the field later; once read they are all the same thing.
+
+Keeping it as a field is what makes morphing possible at all. Two profiles are
+interpolated by mixing their distances, with no correspondence between their
+points to work out — which is the whole difficulty of morphing polygons and is
+solvable only badly.
+
+### Two fill rules, and the first one was the wrong idea
+
+| Rule | Means |
+| --- | --- |
+| `holes` | even-odd: a path inside another is a hole, one inside that is solid again |
+| `outline` | **union**: solid wherever any path encloses |
+
+`outline` started as "keep the rings that are inside nothing", which quietly
+assumes the rings *nest*. Given a drawing of eleven circles laid over each other
+it kept whichever ones happened to have their first vertex outside the others
+and dropped the rest, so parts of the drawing went missing and the outer edge
+came apart. Reported from exactly that.
+
+A union covers both things people mean by "ignore the inner paths": a letter O
+comes out a disc because its counter is inside the union, and crossing rings
+merge instead of fighting.
+
+### A union is the minimum of signed distances
+
+Not the smallest magnitude with a sign decided separately, and the difference is
+not subtle. Inside one ring and next to another's boundary, the second reading
+says *almost at the edge* when the point is deep in material — and a shell
+believes it, so `max(d, -(d + t))` leaves a wall standing along every interior
+outline. On eleven overlapping circles that is most of them.
+
+Even-odd is the other case, and there the smallest magnitude **is** right,
+because every ring's boundary really does bound the region.
+
+### The y axis, flipped once
+
+SVG's y points down. It is flipped on the way in, in one place, or every import
+is silently mirrored — which does not look like a bug, it looks like a drawing
+somebody made, and it is found after it is cut. A validator pins it, and
+removing the flip fails nine checks.
+
+### The index is the whole cost, again
+
+Measured before it was written: the plain walk costs **17 microseconds** a
+sample, which is 6.2 seconds for one preview grid, and that was 200 segments —
+a real drawing with flattened curves has thousands.
+
+Two structures, because the two questions are different shapes: segments in a
+uniform grid for distance, searched outward a ring of cells at a time; and
+segments in row bands for the crossing test, so the parity ray walks one band
+instead of the whole outline. After that, **1.35 microseconds**.
+
+Three things came out of measuring rather than reasoning:
+
+- **Bigger cells are slower.** The cost is in testing segments, not in walking
+  cells, so a coarse grid makes every query test a handful it did not need. One
+  segment a cell won.
+- **`Math.hypot` was half the time.** It guards against overflow and charges for
+  it; comparing squares and taking one root at the end is the same answer.
+- **The bound that ends the search was one ring too generous**, so it stopped
+  while a closer segment was unexamined and the field came out up to a cell
+  wrong — 5.2 mm on a real drawing, which is a shape nobody notices is wrong
+  until it is cut.
+
+This is the third time this project has needed the same idea — sculpt strokes
+index whole strokes, `EdgeIndex` buckets contour segments, and now this. They
+cannot share code, because each is loaded by a validator as the real thing and
+may not import. If a fourth appears, the rule is worth revisiting rather than
+copying again.
+
+### The reach, sized from the tree
+
+Distances are exact out to a reach and clamped beyond it — the same contract a
+mesh import carries, and for the same reason: a field only has to be true where
+something reads it. The sign stays right everywhere, because parity is cheap.
+
+But a profile can do something an import cannot. **An import's grid is baked
+once and its reach is frozen with it; a profile's index is rebuilt on every
+composition**, so the pipeline works out what this lamp actually needs — the
+deepest shell in the tree, half again — and pays for exactly that. A lamp with
+no shell pays nothing for one.
+
+### A profile is a volume
+
+`sdf.ts` may not import values, so it cannot call the extrusion. It does not
+need to: `MeshVolume` is `{ sample, min, max }` and an extruded outline is the
+same shape of thing. The change there is one condition — `kind === 'import' ||
+kind === 'profile'` — and the frame, the scale, the bounds and the picking all
+work unchanged, because everything downstream reads the prepared step's *type*
+rather than the feature's kind.
+
+The boundary was built for meshes and took an SVG outline without being touched.
+
+### Height is not scale
+
+An import carries a uniform scale, deliberately, because non-uniform scaling
+destroys the distance property. A profile's **height** stretches Z only and
+leaves the outline alone, so the field stays true and the number can be anything.
+Sizing the outline is a separate control, and that one is uniform.
+
+### The rings travel, the file does not
+
+Rings live **on the feature**, like sculpt strokes rather than like an import's
+grid. They are kilobytes of plain numbers, so they cross to the worker with the
+tree for nothing, where a megabyte of Float32 has to be sent once per bake and
+cached on both sides.
+
+They are still not saved. `project.ts` copies `params` and `strokes` and nothing
+else, so a reopened profile has its path and no geometry and the SVG has to be
+located again — the trade mesh import already made, made deliberately a second
+time.
+
 ## Native shell — **shipped** (M10)
 
 Tauri 2 wraps the same Vite app in a native window. `src-tauri/` is a sibling of

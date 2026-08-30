@@ -251,7 +251,7 @@ Feature tree stages evaluate in order. A shell or a window applies where it sits
 so sculpting a spout and then shelling hollows the spout too.
 
 1. **SHAPE** — eight SDF primitives with six combine ops; sculpt strokes; mesh
-   imports. `roundBox` at `r = 0` is an exact box; `prism` and `cone` cover the
+   imports; extruded SVG outlines. `roundBox` at `r = 0` is an exact box; `prism` and `cone` cover the
    angular forms it cannot. No scale on primitives, deliberately; imports carry a uniform one.
    Shapes can be grouped under other shapes.
 2. **CARVE** — shell with optional solid caps; windows, which subtract a wedge and
@@ -383,7 +383,7 @@ once is the whole saving.
 | --- | --- |
 | ~~**An explicit layer plan**~~ — **shipped**, as `{ index, z0, z, thickness, gapAbove }` | varying gaps *(shipped)*; interleaved short pins; per-layer cable holes; per-layer sculpting |
 | ~~**One `LayerSelector`**~~ — **shipped**, for per-slice features; windows keep their band, and legs count planes because the field precedes the sheets | interleaved pins and per-layer cable holes are now mostly wiring |
-| **`profile2d.ts`** — a 2D profile as a first-class thing, from SVG, a brush, or a slice of the field | SVG import; morph between key layers; per-layer editing |
+| ~~**`profile2d.ts`**~~ — **shipped**, an indexed 2D distance field with two fill rules | SVG import *(shipped)*; morph between key layers and per-layer editing, both now mostly composition |
 | **A material library** — calliper, flute pitch and profile, direction, phase | corrugated sheet as stock; stack pitch that depends on it |
 
 The layer plan breaks a binding convention on purpose: `layerPitch()` in
