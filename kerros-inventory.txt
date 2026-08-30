@@ -1,39 +1,39 @@
-KERROS INVENTORY  2026-08-30  version 0.24.0
+KERROS INVENTORY  2026-08-30  version 0.25.0
 
 --- source, lines each
-   30562 total
-    2462 src/ui/Inspector.tsx
-    1936 src/core/store.ts
-    1620 src/core/sdf.ts
+   31389 total
+    2490 src/ui/Inspector.tsx
+    1950 src/core/store.ts
+    1704 src/core/sdf.ts
     1484 tools/validate-nest.mjs
-    1397 src/ui/Viewport.tsx
+    1463 src/ui/Viewport.tsx
+    1352 src/core/pipeline.ts
     1271 src/core/nest.ts
-    1244 src/core/pipeline.ts
     1010 tools/validate-pipeline.mjs
+     993 src/ui/ProfilePanel.tsx
      952 src/core/slice.ts
-     925 src/ui/ProfilePanel.tsx
      906 src/core/profile2d.ts
      892 src/ui/SliceInspector.tsx
+     805 tools/validate-sdf.mjs
      768 tools/validate-window.mjs
      759 src/index.css
-     685 tools/validate-sdf.mjs
      644 src/ui/SheetView.tsx
      579 tools/validate-slice.mjs
+     533 src/core/job.ts
      526 src/core/window.ts
-     499 src/core/job.ts
      453 tools/validate-rig-export.mjs
      446 src/core/rig.ts
      441 tools/validate-profile.mjs
+     422 src/core/project.ts
      410 src/core/voxelise.ts
-     409 src/core/project.ts
      392 tools/validate-pattern.mjs
      388 src/core/pattern.ts
      384 tools/validate-import.mjs
      383 tools/validate-sculpt.mjs
      379 tools/validate-legs.mjs
+     354 tools/validate-project.mjs
      334 src/core/fixture.ts
      330 src/core/legs.ts
-     327 tools/validate-project.mjs
      307 src/ui/Layout.tsx
      296 src/ui/FeatureTree.tsx
      283 src/ui/download.ts
@@ -49,11 +49,13 @@ KERROS INVENTORY  2026-08-30  version 0.24.0
      202 src/core/surfaceNets.ts
      199 src/core/boss.ts
      182 src/ui/workerBridge.ts
+     158 src/core/types.ts
      153 src/core/pdf.ts
-     144 src/core/types.ts
      137 tools/validate-pdf.mjs
+     137 src/core/twist.ts
      131 src/ui/PartInspector.tsx
-     107 src/ui/useSlices.ts
+     113 src/ui/useSlices.ts
+     104 tools/validate-twist.mjs
       88 src/ui/kerros.worker.ts
       87 src/ui/usePreview.ts
       78 src-tauri/src/lib.rs
@@ -61,8 +63,8 @@ KERROS INVENTORY  2026-08-30  version 0.24.0
       52 src/assets/hero.png
       51 tools/check-version.mjs
       45 src/ui/ErrorBoundary.tsx
+      45 src/core/profiles.ts
       43 src/ui/NumberField.tsx
-      41 src/core/profiles.ts
       18 src/core/mesh.ts
       10 src/main.tsx
       10 src/App.tsx
@@ -76,11 +78,13 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-pipeline.mjs
+check: node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-pipeline.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+e34b9da A capsule that bends into a sausage, and layers turned at assembly so the stack spirals
+aa019ba Docs and inventory at 0.24.0
 0f40250 SVG outlines as a first-class 2D profile, indexed, and unioned rather than nested
 56b2d9f Docs and inventory at 0.23.0
 93d5c30 An assembly PDF whose drawings are the document, at one scale so parts can be told apart
@@ -109,5 +113,3 @@ f1ff563 Handoff at 0.16.0, including session conventions and untested-in-materia
 21d725a Group shapes by attaching them to a leader, inheriting the full transform
 1675ba1 Fixtures attach to a shape; preview surface moved into the shared worker
 371a105 Record that tsc --noEmit against the root tsconfig checks nothing
-c8616fa Three-colour icon, bundle metadata, and fix a three event type that only tsc -b caught
-1bcddc4 Slicing moved to a Web Worker behind a pure pipeline module, validated end to end

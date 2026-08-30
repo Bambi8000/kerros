@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.23.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.25.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -83,6 +83,10 @@ quietly revert them.**
 | `polygonFitsInPart` guards every per-slice hole | it guards the ones with no partial shape | right for a rod and a socket, wrong for a leg, which should take a bite out of the rim rather than vanish |
 | a window's width is limited by where the wedge stops being exact | by what can be glued back together | 178° was the mathematics; 100° is the bench, and only when the plexi plugs are not cut |
 | seven-segment digits are unambiguous at 3 mm | they are one unburnt segment apart | measured on the cell: the closest seven-segment pair differs in 2.8% of its area, the shape-led digits in 20%. Written as fact and never checked until a pile of parts could not be sorted |
+| "ignore the inner paths" means keep the outermost rings | it means **union** | the first form assumes the rings nest. Eleven circles laid over each other kept whichever happened to have their first vertex outside the others and dropped the rest |
+| a union is the smallest distance with the right sign | a union is the smallest **signed** distance | inside one ring beside another's boundary, the first form reads "almost at the edge" while the point is deep in material — and a shell believes it and leaves a wall along every interior outline |
+| a bend is a domain warp on the query point | a bend is an **arc**, and the distance to one is closed form | a warp is not an isometry, so the gradient stops being unit and every blend and kerf iso-level that reads the field is off by however much it stretches |
+| the corrugation in board is a texture inside it | the sheet itself is the wave | so a layer's cut outline is the model met by the wave surface, not by a plane — and turning a layer changes the part rather than only its edge |
 | bounds come from the SHAPE stage | anything that **adds** material sets bounds, whatever its stage | true for the whole program's life because every RIG feature removed. A boss adds, and a spoke past the form was clipped at the grid — a flat plate in the preview and a whole layer's outer ring dropped in the slicer |
 
 ## The recurring failure mode
@@ -171,6 +175,8 @@ src/core/
   rig.ts          rod clearances, spans, spacer ring planning      [no imports]
   layers.ts       which layers a per-slice feature applies to     [no imports]
   legs.ts         splayed leg holes: the swept ellipse hull        [no imports]
+  profile2d.ts    2D outlines from SVG, indexed, as a field         [no imports]
+  twist.ts        the angle each sheet is turned at assembly        [no imports]
   nest.ts         shelf packing, raster true-shape packing,
                   placement, collision, rotation, labels           [no imports]
   font.ts         stroke font for engraved labels                  [no imports]
@@ -283,6 +289,14 @@ and it will be a second tool rather than a second set of canvas handlers.
   shell uses it. `npm run dev` in a browser is still the faster way to develop.
 - **True-shape nesting resolution is not monotonic.** Greedy bottom-left packing
   can do better at 1.5 mm than at 1 mm. The panel offers the dial and says so.
+- **A profile's field is exact only to its reach**, which the pipeline sizes
+  from the deepest shell in the tree. A blend wider than the reach reads a
+  clamped number, and the inspector says so.
+- **A profile's SVG is not saved**, only its path — the same trade mesh import
+  makes, and it has to be located again after opening.
+- **A twisted sheet's outline is identical to an untwisted one**, so nothing
+  about a cut part says which way round it goes. The assembly PDF carries the
+  angle; without it, the parts alone cannot be assembled.
 - **An import's field is exact only to `reach × scale`** from the surface, clamped
   beyond. A shell thicker than that puts its cavity on the clamp. The inspector
   warns; raising the resolution or the scale fixes it.
@@ -384,7 +398,7 @@ once is the whole saving.
 | ~~**An explicit layer plan**~~ — **shipped**, as `{ index, z0, z, thickness, gapAbove }` | varying gaps *(shipped)*; interleaved short pins; per-layer cable holes; per-layer sculpting |
 | ~~**One `LayerSelector`**~~ — **shipped**, for per-slice features; windows keep their band, and legs count planes because the field precedes the sheets | interleaved pins and per-layer cable holes are now mostly wiring |
 | ~~**`profile2d.ts`**~~ — **shipped**, an indexed 2D distance field with two fill rules | SVG import *(shipped)*; morph between key layers and per-layer editing, both now mostly composition |
-| **A material library** — calliper, flute pitch and profile, direction, phase | corrugated sheet as stock; stack pitch that depends on it |
+| **A material library** — calliper, flute pitch and profile, direction, phase | corrugated sheet as stock; stack pitch that depends on it. Two things are already in place: layer twist, which is what turns a wave strong enough to be geometry, and a slice sampler that takes its height per layer, so the wave arrives as `z = const + wave(u, v)` in one place. The gap between two sheets will depend on the angle between their waves, and `planLayers` already carries `gapAbove` per plane rather than one pitch |
 
 The layer plan breaks a binding convention on purpose: `layerPitch()` in
 `types.ts` is currently the one place pitch is derived, and with varying gaps
@@ -461,6 +475,25 @@ are correct on their own**. Three instances:
 Nothing type-checks this and nothing can: order is not a property either piece
 has. The habit that helps is to ask, of any two things that touch the same
 object, *which of these runs second, and does it overwrite the other?*
+
+## Where the views deliberately disagree
+
+Everywhere else, two pictures of the same thing agreeing is a requirement — a
+validator checks that the preview and the slicer put the top of the model in the
+same place, because if they ever stop agreeing the shape on screen is not the
+shape that gets cut.
+
+**Layer twist is the one exception, and it is on purpose.** The field knows
+nothing about it, because the turning happens when the stack is assembled:
+
+- **Model** shows the design the parts are cut from.
+- **Slice** shows a part as the laser cuts it, holes turned against the outline.
+- **Stack** shows the lamp, sheets turned and holes back in line.
+
+Because it is an exception to a rule this file states elsewhere, it is said out
+loud where somebody meets it: the model view's readout carries it whenever a
+twist is set. An exception that lives only in the code is indistinguishable from
+the bug it resembles.
 
 ## The ghost is a second implementation
 

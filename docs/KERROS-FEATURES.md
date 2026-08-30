@@ -118,6 +118,31 @@ and both hold `|∇d| = 1` to four decimals across the whole sampled volume. Tha
 unit gradient is the property smooth blends and the kerf iso-level depend on;
 it is what "exact" means here, not that the zero level is in the right place.
 
+### Sausage: a capsule bent into an arc
+
+`bend` is a third parameter on the capsule rather than a ninth module, and at
+zero it **is** the capsule, bit for bit — so no saved lamp changes the day it
+appears. `h` is the length along the centreline and `bend` the total turn, so
+the bend radius is `h / bend` and a sausage keeps the length asked for however
+far it curves.
+
+**Exact, and that is the whole point.** The obvious way to bend a field is to
+warp the query point, and it is wrong here for the reason this program has
+refused non-uniform scale three times: a warp is not an isometry, so `|∇d|` stops
+being 1 and every smooth blend and every kerf iso-level that reads the field is
+corrupted by however much it stretches.
+
+A capsule is a segment with a radius. A bent capsule is an **arc** with a
+radius, and the distance to a circular arc is closed form: take the point into
+the arc's plane, clamp its angle to the arc's span, and measure to the point
+that lands on. The same shape of answer as the straight case, where the clamp is
+along a segment instead of around a circle.
+
+Measured: `|∇d| − 1` under 2 × 10⁻⁹ at every bend, the centreline exactly the
+length asked for, and the bounding box tight without leaking. Removing the arc
+clamp fails five checks; deriving the bend radius from anything but the arc
+length fails twelve.
+
 ### A parameter is not always a dimension
 
 Some primitives are dimensioned by a part of themselves. A capsule's length is
@@ -1260,6 +1285,82 @@ and the legs would have had to bend to fit. It was wrong a second time in the
 Model view's ghost, which drew them converging at the floor while the holes were
 right the whole time — a picture disagreeing with the geometry, which is the
 worse way round to find out.
+
+## Layer twist — **shipped**
+
+`src/core/twist.ts`. The angle each sheet is turned by **when the stack goes
+together**, not when it is cut. A spiral offset turns each layer a little
+further than the one below, and any single layer can be overridden by hand.
+
+The rule is one line, and it is worth stating in one line because it is the
+whole feature: **the outline is cut as designed, the holes are drilled at
+−twist, and the sheet is turned by +twist when it is assembled.**
+
+### Why it is about holes
+
+A turned sheet cuts exactly the outline it always did, so the DXF, the nesting
+and the part count are untouched. What cannot stay where it was is anything that
+has to line up *through* the stack: a rod is straight, so its clearance hole has
+to be drilled turned back by the same angle, or the sheet will not go on.
+
+Rods, fixtures and pins are turned after their holes are made. Legs are turned
+one step earlier, where their sections are built, because a leg is cut from the
+field rather than drilled per slice and its hole is part of the outline.
+
+**Perforation is deliberately not turned.** It belongs to the sheet rather than
+to the stack — nothing lines up with it — so turning it would only rotate a
+pattern against its own part.
+
+The sign is the one thing here that looks fine on screen and cannot be
+assembled, so a validator measures it: a 2° spiral over eighteen layers moves a
+hole 5.3 mm, which is more than a rod's clearance forgives.
+
+### An override replaces the spiral, it does not add to it
+
+"This one at 40 degrees" is what people mean, and a value that quietly compounded
+with the spiral would be impossible to aim. The overrides live on the stack as a
+space-separated string of `layer:degrees` — the same shape the hand-removed pins
+already use, and the same fragility: change the material thickness and layer 12
+is a different sheet.
+
+### The Model view and the Stack view disagree on purpose
+
+The field knows nothing about twist, because the turning happens at assembly. So
+**Model shows the design the parts are cut from and Stack shows the lamp**. On a
+form of revolution they look identical; on anything else the difference is the
+whole point.
+
+That is the one place this program deliberately shows something other than what
+gets built, and it is the class of thing it treats as its worst bug — so the
+model view says so in its readout rather than leaving it to be discovered.
+
+The slice view does not turn anything either, and for the same reason from the
+other side: it draws the part as the laser cuts it, so the holes appear turned
+against the outline, which is exactly what is drilled. Turning it there would
+have two views claiming different things about one part.
+
+### A spiral that comes back round
+
+`twistPeriod` says whether a turn divides evenly into 360. At 45° every eighth
+sheet lies the same way as the one eight below it — a choice, not a fault, but
+not one anybody can work out from a single number, so the panel says which one
+you have.
+
+### What the assembly document has to add
+
+A turned sheet is cut exactly like an untwisted one, so **nothing about the part
+says which way round it goes**. The assembly PDF grows a turn column when there
+is a twist, and the angle goes under the layer number in the identification
+drawings — on the bench the drawing is what you match a part against, and the
+turn is the next thing you need once you have found it.
+
+### Written so the corrugated stock can arrive later
+
+Twist does not appear in the sampler. The wave in a corrugated sheet is fixed to
+the sheet, and slicing happens in the sheet's own frame, so that future is
+`z = const` becoming `z = const + wave(u, v)` — and the twist is not in that
+expression. The two are orthogonal, which is what keeps the material library a
+change of surface rather than a rewrite.
 
 ## Interleaved pins — **shipped**
 
