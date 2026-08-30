@@ -2215,7 +2215,35 @@ function overallSize(kind: string, params: Feature['params']): string | null {
   if (kind === 'capsule') {
     const h = n('h', 80);
     const r = n('r', 25);
-    return `${h} mm straight plus two ${r} mm caps — ${(h + 2 * r).toFixed(1)} mm tall, ${(2 * r).toFixed(1)} mm across.`;
+    const bend = n('bend', 0);
+    if (Math.abs(bend) < 1e-9) {
+      return `${h} mm straight plus two ${r} mm caps — ${(h + 2 * r).toFixed(1)} mm tall, ${(2 * r).toFixed(1)} mm across.`;
+    }
+    /*
+     * Bent, the length is still the centreline and the caps still add a radius
+     * at each end — but it no longer stands that tall, because the ends have
+     * curved away. So the extent is measured off the arc rather than added up.
+     */
+    const theta = (bend * Math.PI) / 180;
+    const R = h / theta;
+    let minX = 0;
+    let maxX = 0;
+    let minZ = 0;
+    let maxZ = 0;
+    for (let i = 0; i <= 64; i++) {
+      const phi = -theta / 2 + (theta * i) / 64;
+      const px = R - R * Math.cos(phi);
+      const pz = R * Math.sin(phi);
+      minX = Math.min(minX, px);
+      maxX = Math.max(maxX, px);
+      minZ = Math.min(minZ, pz);
+      maxZ = Math.max(maxZ, pz);
+    }
+    return (
+      `${h} mm along the centreline, bent ${bend}° on a ${Math.abs(R).toFixed(1)} mm radius — ` +
+      `${(maxZ - minZ + 2 * r).toFixed(1)} mm tall, ${(maxX - minX + 2 * r).toFixed(1)} mm across the bend, ` +
+      `${(2 * r).toFixed(1)} mm thick.`
+    );
   }
   if (kind === 'torus') {
     const R = n('R', 60);

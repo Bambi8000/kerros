@@ -144,6 +144,58 @@ export function sdCapsuleZ(
   return len3(x, y, z - zc) - r;
 }
 
+/**
+ * A capsule bent into a circular arc: a sausage.
+ *
+ * **Exact, and that is the whole point.** The obvious way to bend a field is to
+ * warp the query point — `p.xz = rot(p.z * k) * p.xz` — and it is wrong here for
+ * the reason this program has already refused non-uniform scale three times: a
+ * warp is not an isometry, so `|grad d|` stops being 1 and every smooth blend
+ * and every kerf iso-level that reads the field is corrupted.
+ *
+ * A capsule is a segment with a radius. A bent capsule is an **arc** with a
+ * radius, and the distance to a circular arc is closed form: take the point into
+ * the arc's plane, clamp its angle to the arc's span, and measure to the point
+ * that lands on. Exactly the same shape of answer as the straight case, where
+ * the clamp is along a segment instead of around a circle.
+ *
+ * `h` is the length **along the centreline** and `bend` the total turn, so the
+ * bend radius is `h / bend` and the sausage keeps the length you asked for
+ * however far it curves. At `bend = 0` the arc radius goes to infinity and this
+ * is the straight capsule, bit for bit.
+ */
+export function sdCapsuleBentZ(
+  x: number,
+  y: number,
+  z: number,
+  h: number,
+  r: number,
+  bendDegrees: number,
+): number {
+  const theta = (bendDegrees * Math.PI) / 180;
+
+  // A turn too small to measure is a straight capsule, and taking the limit
+  // here rather than dividing by it keeps the two exactly equal.
+  if (!(Math.abs(theta) > 1e-9) || h <= 0) return sdCapsuleZ(x, y, z, h, r);
+
+  const R = h / theta;
+  // The centreline runs from -theta/2 to +theta/2 about a centre on the local
+  // X axis, so it passes through the origin heading along +Z, exactly as the
+  // straight capsule does.
+  const u = x - R;
+  const w = z;
+
+  const half = Math.abs(theta) / 2;
+  let phi = Math.atan2(w, -u * Math.sign(R));
+  if (phi > half) phi = half;
+  else if (phi < -half) phi = -half;
+
+  const nearU = -Math.abs(R) * Math.cos(phi) * Math.sign(R);
+  const nearW = Math.abs(R) * Math.sin(phi);
+
+  return len3(u - nearU, y, w - nearW) - r;
+}
+
 /** Torus in the local XY plane, major radius R, tube radius r. */
 export function sdTorusZ(
   x: number,
@@ -387,12 +439,44 @@ export const SHAPE_MODULES: ShapeModule[] = [
   {
     key: 'capsule',
     name: 'Capsule',
-    params: [mm('h', 'Straight length', 80, 0, 700), mm('r', 'Radius', 25, 0.5, 400)],
-    sdf: (x, y, z, p) => sdCapsuleZ(x, y, z, num(p, 'h', 80), num(p, 'r', 25)),
+    params: [
+      mm('h', 'Straight length', 80, 0, 700),
+      mm('r', 'Radius', 25, 0.5, 400),
+      // Degrees, not millimetres, and clamped short of a full turn: at 360 the
+      // two ends meet and the shape is a torus, which is its own module.
+      { key: 'bend', label: 'Bend', def: 0, min: -350, max: 350, step: 5, unit: '\u00b0' },
+    ],
+    sdf: (x, y, z, p) =>
+      sdCapsuleBentZ(x, y, z, num(p, 'h', 80), num(p, 'r', 25), num(p, 'bend', 0)),
     bounds: (p) => {
-      const h = num(p, 'h', 80) / 2;
+      const h = num(p, 'h', 80);
       const r = num(p, 'r', 25);
-      return [-r, -r, -h - r, r, r, h + r];
+      const bend = num(p, 'bend', 0);
+      if (Math.abs(bend) < 1e-9 || h <= 0) {
+        return [-r, -r, -h / 2 - r, r, r, h / 2 + r];
+      }
+      /*
+       * Sampled rather than solved. A bent capsule's extent depends on where the
+       * arc's own extremes fall inside its span, which is four cases before the
+       * radius is added — and bounds are asked for once per edit, not once per
+       * sample, so the arithmetic that is obviously right wins.
+       */
+      const theta = (bend * Math.PI) / 180;
+      const R = h / theta;
+      let minX = 0;
+      let maxX = 0;
+      let minZ = 0;
+      let maxZ = 0;
+      for (let i = 0; i <= 64; i++) {
+        const phi = -theta / 2 + (theta * i) / 64;
+        const px = R - R * Math.cos(phi);
+        const pz = R * Math.sin(phi);
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (pz < minZ) minZ = pz;
+        if (pz > maxZ) maxZ = pz;
+      }
+      return [minX - r, -r, minZ - r, maxX + r, r, maxZ + r];
     },
   },
   {

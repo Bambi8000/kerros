@@ -12,6 +12,7 @@ import type { SliceSet } from '../core/slice';
 import { rodDiameter, rodSpan } from '../core/rig';
 import { socketDiameter } from '../core/fixture';
 import { legAzimuths, MAX_TILT } from '../core/legs';
+import { parseTwistOverrides, twistAt } from '../core/twist';
 import { composeField } from '../core/store';
 import { resolveLayers, selectorFromParams } from '../core/layers';
 import {
@@ -173,11 +174,35 @@ function tidy(value: number) {
 
 /** Wireframe box around the selected feature's own bounds. */
 function makeSelectionOutline(feature: Feature): THREE.Object3D | null {
-  // An import has no module to ask, so its box comes from the baked mesh — and
-  // it has to be scaled, or the outline sits nowhere near the thing it marks.
+  /*
+   * A baked volume has no module to ask, so its box comes from what was baked.
+   *
+   * This is where a mesh import was once missed and where an SVG profile was
+   * missed again: the box, the gizmo and the picking all read the shape
+   * registry, and a volume is not in it. A gizmo without an outline is worse
+   * than neither, because it moves something with no mark on it.
+   */
   let b: [number, number, number, number, number, number];
 
-  if (feature.kind === 'import') {
+  if (feature.kind === 'profile') {
+    const rings = feature.rings;
+    if (!rings || rings.length === 0) return null;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const ring of rings) {
+      for (let i = 0; i < ring.length; i += 2) {
+        minX = Math.min(minX, ring[i]);
+        maxX = Math.max(maxX, ring[i]);
+        minY = Math.min(minY, ring[i + 1]);
+        maxY = Math.max(maxY, ring[i + 1]);
+      }
+    }
+    if (!Number.isFinite(minX)) return null;
+    const half = Math.max(num(feature.params, 'height', 100), 0.1) / 2;
+    b = [minX, minY, -half, maxX, maxY, half];
+  } else if (feature.kind === 'import') {
     const entry = importEntry(feature.id);
     if (!entry) return null;
     const s = Math.max(num(feature.params, 'scale', 1), 1e-4);
@@ -252,6 +277,8 @@ export function Viewport({ slices }: ViewportProps) {
   const displayMode = useKerros((s) => s.displayMode);
   const sculptMode = useKerros((s) => s.sculptMode);
   const measureMode = useKerros((s) => s.measureMode);
+  const twistPerLayer = useKerros((s) => s.stack.twistPerLayer);
+  const twistOverrides = useKerros((s) => s.stack.twistOverrides);
 
   /**
    * The measuring tape, in model millimetres.
@@ -290,6 +317,9 @@ export function Viewport({ slices }: ViewportProps) {
 
   const [stats, setStats] = useState<Stats | null>(null);
   const fixtureCount = features.filter((f) => f.kind.startsWith('fixture:') && f.enabled).length;
+  const twisted =
+    (Number(twistPerLayer) || 0) !== 0 ||
+    (typeof twistOverrides === 'string' && twistOverrides.trim() !== '');
   const legCount = features
     .filter((f) => f.kind === 'legs' && f.enabled)
     .reduce((sum, f) => sum + Math.max(Math.round(Number(f.params.legCount) || 0), 1), 0);
@@ -1198,8 +1228,26 @@ export function Viewport({ slices }: ViewportProps) {
       metalness: 0.02,
     });
 
+    /*
+     * The stack is the only view that turns anything.
+     *
+     * A twisted sheet is cut exactly as the slice view draws it — flat, in the
+     * orientation the laser sees — and turned when it is assembled. Turning it
+     * in the slice view as well would have two views claiming different things
+     * about the same part, and the one that matters there is what gets cut.
+     *
+     * Here it is the opposite: this is the lamp, so the sheets are placed the
+     * way they go together, and the counter-turned holes come back into line.
+     */
+    const twistSpec = {
+      perLayer: Number(twistPerLayer) || 0,
+      overrides: typeof twistOverrides === 'string' ? twistOverrides : '',
+    };
+    const twistTable = parseTwistOverrides(twistSpec.overrides);
+
     for (const slice of slices.slices) {
       if (hideAbove && slice.index > currentLayer) continue;
+      const turn = (twistAt(twistSpec, slice.index, twistTable) * Math.PI) / 180;
 
       for (const group of groupContours(slice.contours)) {
         const shape = new THREE.Shape();
@@ -1240,10 +1288,11 @@ export function Viewport({ slices }: ViewportProps) {
           slice.index === currentLayer ? highlighted : plain,
         );
         mesh.position.z = slice.zBottom;
+        if (turn !== 0) mesh.rotation.z = turn;
         stack.add(mesh);
       }
     }
-  }, [mode, slices, currentLayer, hideAbove]);
+  }, [mode, slices, currentLayer, hideAbove, twistPerLayer, twistOverrides]);
 
   /*
    * Draw whatever the preview hook last produced.
@@ -1376,6 +1425,23 @@ export function Viewport({ slices }: ViewportProps) {
               }${
                 ghostCount > 0
                   ? ` · ${ghostCount} ghost${ghostCount === 1 ? '' : 's'}, cut per slice`
+                  : ''
+              }${
+                /*
+                 * Said out loud, because this is the one place the program
+                 * deliberately shows something other than what gets built. The
+                 * field knows nothing about twist — the sheets are turned when
+                 * they are assembled — so this is the design the parts are cut
+                 * from, and the Stack view is the lamp.
+                 *
+                 * On a round form the two look identical and the note costs
+                 * nothing. On anything else the difference is the whole point,
+                 * and finding it by surprise in the Stack view would be exactly
+                 * the silent disagreement this program treats as its worst
+                 * class of bug.
+                 */
+                twisted
+                  ? ' · layers are turned at assembly — this is the design, Stack is the lamp'
                   : ''
               }`}
         </span>

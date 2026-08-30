@@ -16,6 +16,7 @@ import {
   sdSphere,
   sdRoundBox,
   sdCapsuleZ,
+  sdCapsuleBentZ,
   sdTorusZ,
   sdEllipsoid,
   SHAPE_MODULES,
@@ -71,6 +72,125 @@ check(
 
 check('capsule cap distance', near(sdCapsuleZ(0, 0, 60, 80, 10), 10));
 check('capsule side distance', near(sdCapsuleZ(30, 0, 0, 80, 10), 20));
+
+/*
+ * The bent capsule: a sausage.
+ *
+ * The obvious way to bend a field is to warp the query point, and it is wrong
+ * for the reason this program has refused non-uniform scale three times: a warp
+ * is not an isometry, so |grad d| stops being 1 and every smooth blend and kerf
+ * iso-level that reads the field is corrupted by however much it stretches.
+ *
+ * A capsule is a segment with a radius; a bent one is an **arc** with a radius,
+ * and the distance to a circular arc is closed form. These checks are what say
+ * the difference: exactness, unit gradient, and a length that survives bending.
+ */
+{
+  const h = 80;
+  const r = 25;
+
+  // Zero bend must be the straight capsule, bit for bit, or every saved lamp
+  // with a capsule in it changes the day this parameter appears.
+  let drift = 0;
+  for (let i = 0; i < 4000; i++) {
+    const x = Math.sin(i * 1.1) * 120;
+    const y = Math.cos(i * 1.7) * 120;
+    const z = Math.sin(i * 2.3) * 120;
+    drift = Math.max(drift, Math.abs(sdCapsuleBentZ(x, y, z, h, r, 0) - sdCapsuleZ(x, y, z, h, r)));
+  }
+  check('a bend of zero is the straight capsule exactly', drift === 0, `off by ${drift}`);
+  check('and so is a bend too small to measure', sdCapsuleBentZ(30, 0, 0, h, r, 1e-12) === sdCapsuleZ(30, 0, 0, h, r));
+
+  for (const bend of [30, 90, 180, -90]) {
+    const theta = (bend * Math.PI) / 180;
+    const R = h / theta;
+
+    // The centreline still passes through the origin along +Z, so the midpoint
+    // is one radius in and a point a radius out sits on the surface.
+    check(`bend ${bend}: the middle is one radius in`, near(sdCapsuleBentZ(0, 0, 0, h, r, bend), -r, 1e-9));
+    check(`bend ${bend}: a radius out is the surface`, near(sdCapsuleBentZ(0, r, 0, h, r, bend), 0, 1e-9));
+
+    // The ends of the arc, which is where a clamp that does not clamp shows up.
+    const endX = R - R * Math.cos(theta / 2);
+    const endZ = R * Math.sin(theta / 2);
+    check(`bend ${bend}: the far cap is on the surface`, near(sdCapsuleBentZ(endX, r, endZ, h, r, bend), 0, 1e-9));
+    check(
+      `bend ${bend}: past the cap is the distance past it`,
+      near(sdCapsuleBentZ(endX, r + 12, endZ, h, r, bend), 12, 1e-9),
+    );
+
+    /*
+     * The length is measured along the centreline, so a sausage keeps the length
+     * asked for however far it curves — which is the whole reason `h` is the arc
+     * length and the bend radius is derived rather than typed.
+     */
+    let arcLength = 0;
+    let prev = null;
+    for (let k = 0; k <= 4000; k++) {
+      const phi = -theta / 2 + (theta * k) / 4000;
+      const point = [R - R * Math.cos(phi), R * Math.sin(phi)];
+      if (prev) arcLength += Math.hypot(point[0] - prev[0], point[1] - prev[1]);
+      prev = point;
+    }
+    check(`bend ${bend}: the centreline is still ${h} mm`, near(arcLength, h, 1e-4), `${arcLength.toFixed(4)}`);
+
+    // Unit gradient, away from the arc's centre where a distance field creases.
+    let worst = 0;
+    for (let i = 0; i < 4000; i++) {
+      const x = Math.sin(i * 1.1) * 90;
+      const y = Math.cos(i * 1.7) * 90;
+      const z = Math.sin(i * 2.3) * 90;
+      if (Math.hypot(x - R, z) < r * 0.5) continue;
+      const e = 1e-5;
+      const at = (a, b, c) => sdCapsuleBentZ(a, b, c, h, r, bend);
+      const g = Math.hypot(
+        (at(x + e, y, z) - at(x - e, y, z)) / (2 * e),
+        (at(x, y + e, z) - at(x, y - e, z)) / (2 * e),
+        (at(x, y, z + e) - at(x, y, z - e)) / (2 * e),
+      );
+      if (Number.isFinite(g)) worst = Math.max(worst, Math.abs(g - 1));
+    }
+    check(`bend ${bend}: the gradient stays unit`, worst < 1e-6, `off by ${worst.toExponential(1)}`);
+  }
+
+  // Bending one way and the other are mirror images, not different shapes.
+  check(
+    'a negative bend mirrors a positive one',
+    near(sdCapsuleBentZ(-18, 7, 22, h, r, -90), sdCapsuleBentZ(18, 7, 22, h, r, 90), 1e-9),
+  );
+
+  /*
+   * The clamp is what makes it an arc rather than a whole circle. Without it the
+   * sausage would close into a torus, which is a different module — so a point
+   * beyond the far end has to read as beyond the end.
+   */
+  const beyond = sdCapsuleBentZ(0, 0, -70, h, r, 180);
+  check('the arc stops where it is told to', beyond > 0, `${beyond.toFixed(3)} past the end`);
+}
+
+/** The capsule's bounds have to hold the bend, not just the straight case. */
+{
+  const capsule = findModule('capsule');
+  for (const bend of [0, 30, 90, 180, 300, -180]) {
+    const params = { h: 80, r: 25, bend };
+    const [x0, y0, z0, x1, y1, z1] = capsule.bounds(params);
+    let deepest = -Infinity;
+    for (let i = 0; i < 2000; i++) {
+      const t = i / 2000;
+      const u = ((i * 7) % 2000) / 2000;
+      const faces = [
+        [x0, y0 + (y1 - y0) * t, z0 + (z1 - z0) * u],
+        [x1, y0 + (y1 - y0) * t, z0 + (z1 - z0) * u],
+        [x0 + (x1 - x0) * t, y0, z0 + (z1 - z0) * u],
+        [x0 + (x1 - x0) * t, y1, z0 + (z1 - z0) * u],
+        [x0 + (x1 - x0) * t, y0 + (y1 - y0) * u, z0],
+        [x0 + (x1 - x0) * t, y0 + (y1 - y0) * u, z1],
+      ];
+      for (const q of faces) deepest = Math.max(deepest, -capsule.sdf(q[0], q[1], q[2], params));
+    }
+    check(`bend ${bend}: nothing escapes the bounding box`, deepest <= 1e-9, `${deepest.toFixed(4)} inside`);
+  }
+}
 
 check('torus tube surface', near(sdTorusZ(65, 0, 0, 50, 15), 0));
 check('torus hole centre', near(sdTorusZ(0, 0, 0, 50, 15), 35));

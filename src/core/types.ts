@@ -118,6 +118,20 @@ export interface StackSettings {
    * it needs 62. Nobody stacks 372 washers by hand.
    */
   spacerThickness?: number;
+
+  /**
+   * Degrees each sheet is turned from the one below it, when the stack is
+   * assembled. 0 is a stack with no spiral.
+   *
+   * A turned sheet cuts the **same outline** — the model decides the part
+   * shapes and the twist decides how they are stacked, so the lamp comes out
+   * turned relative to the model rather than the parts coming out different.
+   * What cannot stay put is anything that lines up *through* the stack: a rod
+   * is straight, so its hole is drilled turned back by the same angle.
+   */
+  twistPerLayer?: number;
+  /** Layers turned by hand, as `layer:degrees` pairs in one string. */
+  twistOverrides?: string;
 }
 
 /**

@@ -5,6 +5,7 @@ import type { GapReport, SliceSet } from '../core/slice';
 import { kerfTestDocument, writeDxfR12 } from '../core/dxf';
 import { assemblyDocument, manifestText, sheetToDxf } from '../core/job';
 import { writePdf } from '../core/pdf';
+import { parseTwistOverrides, twistPeriod } from '../core/twist';
 import { KERROS_VERSION } from '../version';
 import { parseProject, projectFilename, serializeProject } from '../core/project';
 import { NumberField } from './NumberField';
@@ -194,6 +195,8 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
                   ? (stack.spacerThickness as number)
                   : material.thickness,
               projectName,
+              twistPerLayer: stack.twistPerLayer ?? 0,
+              twistOverrides: stack.twistOverrides ?? '',
             }),
           ),
         },
@@ -610,6 +613,71 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
             did not fit both sheets, so the stack is not fastened through there.
           </div>
         ) : null}
+      </div>
+
+      <div className="group">
+        <div className="group-head">Layer twist</div>
+        <NumberField
+          label="Turn per layer"
+          value={stack.twistPerLayer ?? 0}
+          unit="°"
+          step={1}
+          min={-359}
+          max={359}
+          onChange={(twistPerLayer) => setStack({ twistPerLayer })}
+        />
+        <label className="field">
+          <span className="field-label">By hand</span>
+          <span className="field-input">
+            <input
+              type="text"
+              value={stack.twistOverrides ?? ''}
+              placeholder="7:15 12:-20"
+              onChange={(e) => setStack({ twistOverrides: e.target.value })}
+            />
+          </span>
+        </label>
+        {/*
+          The rule in one line, because it is the whole feature and getting the
+          direction backwards is a stack that will not go together.
+        */}
+        <div className="derived">
+          Sheets are turned when the stack is assembled, so they cut exactly the
+          same outline — what moves is anything that lines up through the stack.
+          A rod is straight, so its hole is drilled turned back by the same
+          angle. A layer named here takes that angle instead of the spiral, not
+          as well as it.
+        </div>
+        {(() => {
+          const turn = stack.twistPerLayer ?? 0;
+          const byHand = parseTwistOverrides(stack.twistOverrides ?? '').size;
+          if (turn === 0 && byHand === 0) {
+            return (
+              <div className="derived">
+                No twist: every sheet goes on the same way round, and the Model
+                view is the lamp.
+              </div>
+            );
+          }
+          /*
+           * A spiral that divides into 360 comes back round, which is invisible
+           * until the stack is built: at 45 degrees every eighth sheet lies the
+           * same way as the one eight below it. That is a choice and not a
+           * fault, but nobody can work out which they have from one number.
+           */
+          const period = twistPeriod(turn);
+          return (
+            <div className="derived">
+              {byHand > 0 ? `${byHand} layer${byHand === 1 ? '' : 's'} set by hand. ` : ''}
+              {turn === 0
+                ? 'No spiral, so only the layers named above are turned.'
+                : period > 0
+                  ? `The spiral comes back round every ${period} sheets, so those lie the same way. A turn that does not divide 360 evenly never repeats.`
+                  : 'The spiral never comes back round, so no two sheets lie the same way.'}
+              {' '}Model shows the design; Stack shows the lamp.
+            </div>
+          );
+        })()}
       </div>
 
       <div className="group">

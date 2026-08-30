@@ -48,6 +48,7 @@ import { resolveLayerSet, resolveLayers, selectorFromParams } from './layers.ts'
 import { legSections, sectionsDistance } from './legs.ts';
 import { bossField } from './boss.ts';
 import { extrudeProfile, indexProfile, profileBounds } from './profile2d.ts';
+import { parseTwistOverrides, twistAt, untwistPoint } from './twist.ts';
 import type { FillRule } from './profile2d.ts';
 import type { BossSpec } from './boss.ts';
 import type { LegSection, LegSpec } from './legs.ts';
@@ -101,6 +102,10 @@ export interface SliceJob {
   spacerHeightTop?: number;
   /** Thickness of one spacer ring, mm. Omitted means the stock's. */
   spacerThickness?: number;
+  /** Degrees each sheet is turned from the one below at assembly. */
+  twistPerLayer?: number;
+  /** Layers turned by hand, as `layer:degrees` pairs. */
+  twistOverrides?: string;
   resolution: number;
   tolerance: number;
   smoothing: number;
@@ -258,6 +263,8 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     spacerHeight,
     spacerHeightTop,
     spacerThickness,
+    twistPerLayer,
+    twistOverrides,
     resolution,
     tolerance,
     smoothing,
@@ -268,7 +275,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     kerf,
     job.seed,
     thickness,
-    { spacerHeight, spacerHeightTop, spacerThickness },
+    { spacerHeight, spacerHeightTop, spacerThickness, twistPerLayer, twistOverrides },
     volumes,
   );
   const bounds = field.bounds;
@@ -477,6 +484,64 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     legGaps[spec.id] = missing;
   }
 
+  /* --- layer twist --- */
+
+  /*
+   * A turned sheet cuts the same outline; what moves is everything that has to
+   * line up *through* the stack. So this runs after the holes are made and
+   * before the perforation: rods, fixtures and pins are drilled turned back by
+   * the layer's angle, so that turning the sheet forward at assembly puts them
+   * on the axes they belong to.
+   *
+   * Perforation is deliberately left out. It belongs to the sheet rather than to
+   * the stack — nothing lines up with it — so turning it would only rotate a
+   * pattern against its own part.
+   *
+   * Legs are left out here too, and handled in the field where their sections
+   * are built: a leg is cut from the field rather than drilled per slice, so its
+   * hole is part of the outline and cannot be moved afterwards.
+   */
+  const twistSpec = {
+    perLayer: Number(twistPerLayer) || 0,
+    overrides: typeof twistOverrides === 'string' ? twistOverrides : '',
+  };
+  const twistTable = parseTwistOverrides(twistSpec.overrides);
+  const twistedOwners = new Set(
+    features
+      .filter((f) => f.kind === 'rod' || f.kind === 'pins' || f.kind.startsWith('fixture:'))
+      .map((f) => f.id),
+  );
+
+  const anyTwist =
+    twistSpec.perLayer !== 0 || twistTable.size > 0;
+
+  const twisted =
+    !anyTwist || twistedOwners.size === 0
+      ? pinned
+      : pinned.map((slice) => {
+          const angle = twistAt(twistSpec, slice.index, twistTable);
+          if (angle === 0) return slice;
+
+          return {
+            ...slice,
+            circles: slice.circles.map((circle) => {
+              if (!circle.owner || !twistedOwners.has(circle.owner)) return circle;
+              const [x, y] = untwistPoint(circle.x, circle.y, angle);
+              return { ...circle, x, y };
+            }),
+            contours: slice.contours.map((contour) => {
+              if (!contour.owner || !twistedOwners.has(contour.owner)) return contour;
+              const points = new Array<number>(contour.points.length);
+              for (let i = 0; i < contour.points.length; i += 2) {
+                const [x, y] = untwistPoint(contour.points[i], contour.points[i + 1], angle);
+                points[i] = x;
+                points[i + 1] = y;
+              }
+              return { ...contour, points };
+            }),
+          };
+        });
+
   /* --- perforation --- */
 
   const patterns = features.filter((f) => f.stage === 'PATTERN' && f.enabled);
@@ -495,8 +560,8 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
 
   const perforated =
     patterns.length === 0
-      ? pinned
-      : pinned.map((slice) => {
+      ? twisted
+      : twisted.map((slice) => {
           const circles = slice.circles.slice();
           for (const feature of patterns) {
             if (!patternLayers.get(feature.id)?.has(slice.index)) continue;
@@ -1067,7 +1132,14 @@ export function composeField(
    * Per-layer windows key on the layer a height falls in, so once gaps vary the
    * field has to know the whole plan rather than a single spacing.
    */
-  stack: { spacerHeight: number; spacerHeightTop?: number; spacerThickness?: number },
+  stack: {
+    spacerHeight: number;
+    spacerHeightTop?: number;
+    spacerThickness?: number;
+    /** Carried so legs, which are cut from the field, can turn with their layer. */
+    twistPerLayer?: number;
+    twistOverrides?: string;
+  },
   /**
    * Where to find baked import grids.
    *
@@ -1190,6 +1262,12 @@ export function composeField(
    * selection in terms of its own result. The two agree unless the model has a
    * void along Z, and where they do not, `legGaps` says so.
    */
+  const legTwist = {
+    perLayer: Number(stack.twistPerLayer) || 0,
+    overrides: typeof stack.twistOverrides === 'string' ? stack.twistOverrides : '',
+  };
+  const legTwistTable = parseTwistOverrides(legTwist.overrides);
+
   const legs = legsFromFeatures(features, kerf, plan.length > 0 ? plan[0].z0 : 0);
   const legSectionsByPlane = new Map<number, LegSection[]>();
   for (const spec of legs) {
@@ -1202,7 +1280,37 @@ export function composeField(
       const plane = plan[ordinal - 1];
       if (!plane) continue;
       const existing = legSectionsByPlane.get(plane.index) ?? [];
-      existing.push(...legSections(spec, plane.z0, plane.thickness));
+
+      /*
+       * Turned back with everything else that has to line up through the stack.
+       * A leg is a straight rod, so its hole has to be drilled at −twist — but
+       * it is cut from the field rather than drilled per slice, so it cannot be
+       * moved after the fact the way a rod hole can. Turning the section here is
+       * the same correction applied one step earlier.
+       *
+       * Layer numbers count sheets and planes count what was examined, so the
+       * ordinal is what the twist is asked about — the same number the slice
+       * inspector shows.
+       */
+      const angle = twistAt(legTwist, ordinal, legTwistTable);
+      const sections = legSections(spec, plane.z0, plane.thickness).map((section) => {
+        if (angle === 0) return section;
+        const [cx, cy] = untwistPoint(section.cx, section.cy, angle);
+        const a = (-angle * Math.PI) / 180;
+        const cos = Math.cos(a);
+        const sin = Math.sin(a);
+        return {
+          ...section,
+          cx,
+          cy,
+          // The direction turns with the centre, or a leg would lean the way it
+          // was drawn while sitting where it was moved to.
+          ux: section.ux * cos - section.uy * sin,
+          uy: section.ux * sin + section.uy * cos,
+        };
+      });
+
+      existing.push(...sections);
       legSectionsByPlane.set(plane.index, existing);
     }
   }

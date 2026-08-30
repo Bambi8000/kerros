@@ -50,7 +50,13 @@ export interface ProjectData {
   name: string;
   machine: { name: string; bedWidth: number; bedHeight: number; margin: number };
   material: { name: string; thickness: number; kerf: number; notes: string };
-  stack: { spacerHeight: number; spacerHeightTop?: number; spacerThickness?: number };
+  stack: {
+    spacerHeight: number;
+    spacerHeightTop?: number;
+    spacerThickness?: number;
+    twistPerLayer?: number;
+    twistOverrides?: string;
+  };
   seed: number;
   features: ProjectFeature[];
   slicing: {
@@ -150,7 +156,7 @@ const DEFAULTS: ProjectData = {
   material: { name: 'Material', thickness: 3, kerf: 0.15, notes: '' },
   // 0 for the ring thickness means "follow the stock", which is what a file
   // written before rings had their own material meant by saying nothing.
-  stack: { spacerHeight: 6, spacerHeightTop: 6, spacerThickness: 0 },
+  stack: { spacerHeight: 6, spacerHeightTop: 6, spacerThickness: 0, twistPerLayer: 0, twistOverrides: '' },
   seed: 1,
   features: [],
   slicing: {
@@ -370,6 +376,13 @@ export function parseProject(text: string): ParseResult {
         0,
       ),
       spacerThickness: Math.max(asNumber(stack.spacerThickness, 0), 0),
+      /*
+       * Absent means no twist, which is what every file written before this
+       * existed meant by saying nothing. Clamped short of a full turn, since a
+       * spiral of 360 a layer is the stack it already was.
+       */
+      twistPerLayer: Math.max(Math.min(asNumber(stack.twistPerLayer, 0), 359), -359),
+      twistOverrides: typeof stack.twistOverrides === 'string' ? stack.twistOverrides : '',
     },
     seed: Math.max(Math.round(asNumber(file.seed, DEFAULTS.seed)), 0),
     features,

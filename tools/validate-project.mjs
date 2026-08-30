@@ -34,7 +34,7 @@ const sample = {
   name: 'Blob Lamp 1',
   machine: { name: 'Laser 730x410', bedWidth: 730, bedHeight: 410, margin: 5 },
   material: { name: 'Cardboard 3 mm', thickness: 3, kerf: 0.22, notes: 'B flute' },
-  stack: { spacerHeight: 6, spacerHeightTop: 6, spacerThickness: 0 },
+  stack: { spacerHeight: 6, spacerHeightTop: 6, spacerThickness: 0, twistPerLayer: 0, twistOverrides: '' },
   seed: 7,
   features: [
     {
@@ -147,6 +147,15 @@ console.log('project: a stack written before gradients existed');
     'and the ring thickness defaults to following the stock',
     opened.data.stack.spacerThickness === 0,
   );
+  /*
+   * A file written before the stack could be turned opens as a stack that is
+   * not turned — which is what saying nothing about it meant. The same promise
+   * as the two gaps above, and worth checking for the same reason: it is the
+   * sort of claim that lives in a comment until something forces it to be
+   * proved, and this file exists to force it.
+   */
+  check('and a file that never heard of twist opens flat', opened.data.stack.twistPerLayer === 0);
+  check('with no layers turned by hand', opened.data.stack.twistOverrides === '');
   check('with nothing to warn about', opened.warnings.length === 0, opened.warnings.join('; '));
 
   // A file that does say so keeps what it says.
@@ -154,7 +163,7 @@ console.log('project: a stack written before gradients existed');
     format: PROJECT_FORMAT,
     formatVersion: PROJECT_FORMAT_VERSION,
     ...sample,
-    stack: { spacerHeight: 3, spacerHeightTop: 12, spacerThickness: 1 },
+    stack: { spacerHeight: 3, spacerHeightTop: 12, spacerThickness: 1, twistPerLayer: 5, twistOverrides: '4:40' },
   });
   const openedGraded = parseProject(graded).data;
   check(
@@ -163,16 +172,34 @@ console.log('project: a stack written before gradients existed');
       openedGraded.stack.spacerHeightTop === 12 &&
       openedGraded.stack.spacerThickness === 1,
   );
+  check(
+    'and a spiral that was written down is kept',
+    openedGraded.stack.twistPerLayer === 5 && openedGraded.stack.twistOverrides === '4:40',
+  );
 
   const nonsense = JSON.stringify({
     format: PROJECT_FORMAT,
     formatVersion: PROJECT_FORMAT_VERSION,
     ...sample,
-    stack: { spacerHeight: 6, spacerHeightTop: -4, spacerThickness: 'thick' },
+    stack: {
+      spacerHeight: 6,
+      spacerHeightTop: -4,
+      spacerThickness: 'thick',
+      twistPerLayer: 900,
+      twistOverrides: 42,
+    },
   });
   const openedBad = parseProject(nonsense).data;
   check('a negative top gap is clamped rather than inverting the stack', openedBad.stack.spacerHeightTop === 0);
   check('a ring thickness that is not a number falls back', openedBad.stack.spacerThickness === 0);
+  /*
+   * A spiral of 900 degrees a layer is the stack it already was, three times
+   * over, so it is clamped rather than obeyed. And overrides that are not a
+   * string are dropped, because a number here would parse as nothing and then
+   * silently turn no layers at all.
+   */
+  check('an impossible spiral is clamped', Math.abs(openedBad.stack.twistPerLayer) <= 359);
+  check('and overrides that are not text fall back to none', openedBad.stack.twistOverrides === '');
 }
 
 console.log('project: filenames');

@@ -29,6 +29,10 @@ export const DEFAULT_STACK: StackSettings = {
    */
   spacerHeightTop: 6,
   spacerThickness: 0,
+  // No spiral by default: a turned stack is a decision, and one that arrives
+  // without being asked for would move every hole in every saved lamp.
+  twistPerLayer: 0,
+  twistOverrides: '',
 };
 
 /** Metric clearance holes, mm. Overridable per rod once RIG lands in M3. */

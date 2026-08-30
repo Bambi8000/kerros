@@ -1773,9 +1773,23 @@ export function hasTransform(feature: Feature): boolean {
   return (
     feature.stage === 'RIG' ||
     feature.kind === 'window' ||
-    feature.kind === 'import' ||
+    isBakedVolume(feature.kind) ||
     findModule(feature.kind) !== undefined
   );
+}
+
+/**
+ * Kinds that are a solid somebody else baked: a mesh grid, an extruded outline.
+ *
+ * Named once because it has now been forgotten twice. A mesh import shipped
+ * without a gizmo or a selection outline because these two predicates were
+ * written for the shape registry and an import is not in it — and an SVG
+ * profile arrived the same way, for the same reason, three hundred commits
+ * later. A volume is a solid you can point at and move; the only thing it does
+ * not have is a module.
+ */
+export function isBakedVolume(kind: string): boolean {
+  return kind === 'import' || kind === 'profile';
 }
 
 
@@ -1787,7 +1801,7 @@ export function hasTransform(feature: Feature): boolean {
  * than a free orientation.
  */
 export function hasRotation(feature: Feature): boolean {
-  return feature.kind === 'import' || findModule(feature.kind) !== undefined;
+  return isBakedVolume(feature.kind) || findModule(feature.kind) !== undefined;
 }
 
 /** Where a feature's gizmo should stand, in world mm. */

@@ -17,6 +17,7 @@ import type { DxfDocument } from './dxf';
 import type { PartGeometry, Sheet } from './nest';
 import { commonScale } from './pdf';
 import type { PdfPage, PdfPolyline } from './pdf';
+import { parseTwistOverrides, twistAt } from './twist';
 
 /** Layer labels, e.g. L07. A layer cut into several pieces gets L07A, L07B. */
 function layerLabel(slice: Slice, partIndex: number, partCount: number): string {
@@ -341,6 +342,10 @@ export interface AssemblyInput extends ManifestInput {
   /** What one spacer ring is, mm, so a gap can be given in rings. */
   ringThickness: number;
   projectName: string;
+  /** Degrees each sheet is turned from the one below at assembly. */
+  twistPerLayer?: number;
+  /** Layers turned by hand, as `layer:degrees` pairs. */
+  twistOverrides?: string;
 }
 
 /**
@@ -388,8 +393,27 @@ export function assemblyDocument(input: AssemblyInput): PdfPage[] {
   pen.push([MARGIN, y, PAGE_W - MARGIN, y], 0.4, 0.4);
   y -= 7;
 
-  const cols = [MARGIN, MARGIN + 18, MARGIN + 42, MARGIN + 66, MARGIN + 96, MARGIN + 126];
-  const header = ['LAYER', 'Z MM', 'PARTS', 'HOLES', 'GAP ABOVE', 'SHEET'];
+  /*
+   * The angle earns a column of its own, and only when there is one.
+   *
+   * A turned sheet is cut exactly like an untwisted one, so nothing about the
+   * part says which way round it goes. Without this you know the stack spirals
+   * and not which sheet goes at what angle, which is the one thing you cannot
+   * work out at the bench from the parts in front of you.
+   */
+  const twistSpec = {
+    perLayer: Number(input.twistPerLayer) || 0,
+    overrides: typeof input.twistOverrides === 'string' ? input.twistOverrides : '',
+  };
+  const twistTable = parseTwistOverrides(twistSpec.overrides);
+  const anyTwist = twistSpec.perLayer !== 0 || twistTable.size > 0;
+
+  const cols = anyTwist
+    ? [MARGIN, MARGIN + 18, MARGIN + 40, MARGIN + 60, MARGIN + 84, MARGIN + 116, MARGIN + 140]
+    : [MARGIN, MARGIN + 18, MARGIN + 42, MARGIN + 66, MARGIN + 96, MARGIN + 126];
+  const header = anyTwist
+    ? ['LAYER', 'Z MM', 'PARTS', 'HOLES', 'GAP ABOVE', 'SHEET', 'TURN']
+    : ['LAYER', 'Z MM', 'PARTS', 'HOLES', 'GAP ABOVE', 'SHEET'];
   header.forEach((h, i) => write(pen, h, cols[i], y, 3, 0.45));
   y -= 5.5;
 
@@ -417,6 +441,7 @@ export function assemblyDocument(input: AssemblyInput): PdfPage[] {
       slice.index === set.slices[set.slices.length - 1].index ? '-' : gap,
       on.join(',') || '-',
     ];
+    if (anyTwist) row.push(`${twistAt(twistSpec, slice.index, twistTable).toFixed(0)}°`);
     row.forEach((cell, i) => write(pen, cell, cols[i], y, 3.2));
     y -= 5;
   }
@@ -487,7 +512,16 @@ export function assemblyDocument(input: AssemblyInput): PdfPage[] {
         p.push(ring, 0.2, 0.3, true);
       }
 
-      const label = `L${String(drawing.slice.index).padStart(2, '0')}`;
+      /*
+       * The angle goes under the number rather than in a corner: on the bench
+       * the drawing is what you match a part against, and the turn is the next
+       * thing you need once you have found it.
+       */
+      const turn = anyTwist ? twistAt(twistSpec, drawing.slice.index, twistTable) : 0;
+      const label =
+        anyTwist
+          ? `L${String(drawing.slice.index).padStart(2, '0')} ${turn.toFixed(0)}°`
+          : `L${String(drawing.slice.index).padStart(2, '0')}`;
       const labelW = textWidth(label, 5);
       write(p, label, cx - labelW / 2, cy - cellH * 0.43, 5);
     });
