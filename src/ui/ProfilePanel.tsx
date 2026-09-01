@@ -264,6 +264,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
   const ringsAt = (mm: number) => (ringT > 0 ? Math.max(Math.round(Math.max(mm, 0) / ringT), 0) : 0);
   const ringsLow = ringsAt(stack.spacerHeight);
   const ringsHigh = ringsAt(stack.spacerHeightTop ?? stack.spacerHeight);
+  const ringsMid = ringsAt(stack.spacerHeightMid ?? stack.spacerHeight);
   /*
    * Three states, not two.
    *
@@ -274,11 +275,30 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
    * nothing, which is the failure this panel exists to prevent.
    */
   const gapTop = stack.spacerHeightTop ?? stack.spacerHeight;
-  const asked = Math.abs(gapTop - stack.spacerHeight) > 1e-9;
-  const graded = ringsLow !== ringsHigh;
-  const gradeLow = (Math.min(ringsLow, ringsHigh) * ringT).toFixed(2);
-  const gradeHigh = (Math.max(ringsLow, ringsHigh) * ringT).toFixed(2);
-  const gradeSteps = Math.abs(ringsHigh - ringsLow) + 1;
+  const gapMid = stack.spacerHeightMid ?? stack.spacerHeight;
+  const asked =
+    Math.abs(gapTop - stack.spacerHeight) > 1e-9 || Math.abs(gapMid - stack.spacerHeight) > 1e-9;
+  /*
+   * With a middle, "graded" is no longer just the two ends differing: tight in
+   * the middle and equal at both ends is a gradient whose ends match, and
+   * reading only the ends would call it uniform and say so confidently.
+   */
+  const graded = ringsLow !== ringsHigh || ringsMid !== ringsLow;
+  const waisted = ringsMid !== ringsLow || ringsMid !== ringsHigh;
+  /*
+   * The range has to include the middle, or the sentence says one thing and the
+   * step count says another — "9.00 → 9.00 mm in 4 steps", which is exactly the
+   * fluent wrong sentence this panel exists to prevent. Worse than silence,
+   * because it stops the person looking.
+   */
+  const gradeLow = (Math.min(ringsLow, ringsMid, ringsHigh) * ringT).toFixed(2);
+  const gradeHigh = (Math.max(ringsLow, ringsMid, ringsHigh) * ringT).toFixed(2);
+  const gradeSteps =
+    Math.max(
+      Math.abs(ringsMid - ringsLow),
+      Math.abs(ringsHigh - ringsMid),
+      Math.abs(ringsHigh - ringsLow),
+    ) + 1;
 
   const gaps = slices?.planes.map((plane) => plane.gapAbove) ?? [];
   const pitchLow = gaps.length > 0 ? material.thickness + Math.min(...gaps) : layerPitch(material, stack);
@@ -427,6 +447,14 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
           onChange={(spacerHeight) => setStack({ spacerHeight })}
         />
         <NumberField
+          label="Gap in the middle"
+          value={stack.spacerHeightMid ?? stack.spacerHeight}
+          unit="mm"
+          step={0.5}
+          min={0}
+          onChange={(spacerHeightMid) => setStack({ spacerHeightMid })}
+        />
+        <NumberField
           label="Gap at the top"
           value={stack.spacerHeightTop ?? stack.spacerHeight}
           unit="mm"
@@ -435,6 +463,18 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
           onChange={(spacerHeightTop) => setStack({ spacerHeightTop })}
         />
         {/*
+          Halfway up in **height**, not halfway up in layers. The number of
+          layers depends on the gradient, so a midpoint counted in sheets would
+          be defined in terms of its own result.
+        */}
+        {waisted ? (
+          <div className="derived">
+            The middle is halfway up the form, not halfway up the sheet count —
+            the number of sheets depends on the gaps, so counting them would
+            define the middle by its own result.
+          </div>
+        ) : null}
+        {/*
           A gradient is only as smooth as the ring material lets it be, and the
           number of steps it can actually take is not something anyone can work
           out from two millimetre readings. Saying it here is the difference
@@ -442,7 +482,11 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
         */}
         {graded ? (
           <div className="derived">
-            {`${ringT} mm rings, so the gap goes ${gradeLow} → ${gradeHigh} mm in ${gradeSteps} steps.`}
+            {waisted
+              ? `${ringT} mm rings, so the gap runs ${(ringsLow * ringT).toFixed(2)} → ${(
+                  ringsMid * ringT
+                ).toFixed(2)} → ${(ringsHigh * ringT).toFixed(2)} mm, in ${gradeSteps} steps at the widest.`
+              : `${ringT} mm rings, so the gap goes ${gradeLow} → ${gradeHigh} mm in ${gradeSteps} steps.`}
           </div>
         ) : asked ? (
           <div className="warn">

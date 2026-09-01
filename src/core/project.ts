@@ -53,6 +53,7 @@ export interface ProjectData {
   stack: {
     spacerHeight: number;
     spacerHeightTop?: number;
+    spacerHeightMid?: number;
     spacerThickness?: number;
     twistPerLayer?: number;
     twistOverrides?: string;
@@ -156,7 +157,14 @@ const DEFAULTS: ProjectData = {
   material: { name: 'Material', thickness: 3, kerf: 0.15, notes: '' },
   // 0 for the ring thickness means "follow the stock", which is what a file
   // written before rings had their own material meant by saying nothing.
-  stack: { spacerHeight: 6, spacerHeightTop: 6, spacerThickness: 0, twistPerLayer: 0, twistOverrides: '' },
+  stack: {
+    spacerHeight: 6,
+    spacerHeightMid: 6,
+    spacerHeightTop: 6,
+    spacerThickness: 0,
+    twistPerLayer: 0,
+    twistOverrides: '',
+  },
   seed: 1,
   features: [],
   slicing: {
@@ -366,11 +374,19 @@ export function parseProject(text: string): ParseResult {
     stack: {
       spacerHeight: Math.max(asNumber(stack.spacerHeight, DEFAULTS.stack.spacerHeight), 0),
       /*
-       * Both default to the uniform stack a file written before them described:
-       * the top gap to the bottom one, and the ring thickness to the stock's.
-       * An older project therefore opens as exactly the lamp it was, which is
-       * the whole reason the defaults are these and not something tidier.
+       * All three default to the stack a file written before them described:
+       * the middle and the top to the bottom gap, and the ring thickness to the
+       * stock's. An older project therefore opens as exactly the lamp it was,
+       * which is the whole reason the defaults are these and not something
+       * tidier — and it is checked rather than promised.
+       *
+       * They are written bottom, middle, top because that is the order they are
+       * physically in and the order the panel shows them.
        */
+      spacerHeightMid: Math.max(
+        asNumber(stack.spacerHeightMid, asNumber(stack.spacerHeight, 0)),
+        0,
+      ),
       spacerHeightTop: Math.max(
         asNumber(stack.spacerHeightTop, asNumber(stack.spacerHeight, DEFAULTS.stack.spacerHeight)),
         0,

@@ -25,6 +25,8 @@ const COLORS = {
    */
   pinUp: '#6bbf8a',
   pinDown: '#c07ad4',
+  paint: '#e6c34a',
+  carve: '#e04a2f',
 };
 
 /** How close to a hole's edge still counts as pointing at it, in screen pixels. */
@@ -41,7 +43,7 @@ const GRAB_SLOP_PX = 4;
  * the same button. Model mode already learned this: sculpting is a *mode*, and
  * orbit moves to the right button for its duration.
  */
-type SliceTool = 'select' | 'measure';
+type SliceTool = 'select' | 'measure' | 'paint';
 
 /** Where a measured end landed, and on what. */
 interface Snap {
@@ -152,6 +154,32 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [hovering, setHovering] = useState(false);
   const [tool, setTool] = useState<SliceTool>('select');
+  /**
+   * Onion skin: the sheets either side, drawn behind this one.
+   *
+   * Off by default, because most of the time a part is read on its own and two
+   * extra outlines are noise. It earns its place while a layer is being edited,
+   * where a stroke drawn against its neighbours is a different stroke from one
+   * drawn against nothing.
+   */
+  const [onion, setOnion] = useState(false);
+  const ensurePaint = useKerros((s) => s.ensurePaint);
+  const addStroke = useKerros((s) => s.addStroke);
+  const brushRadius = useKerros((s) => s.brushRadius);
+  const [carving, setCarving] = useState(false);
+  /**
+   * The stroke being laid down, in model millimetres.
+   *
+   * Held here and committed on release. The field is not re-evaluated while the
+   * button is down — a sculpt stroke learned that first and a dragged hole
+   * learned it again: writing on every move restarts the 250 ms slice and the
+   * line arrives a quarter of a second behind the hand.
+   */
+  const [painting, setPainting] = useState<number[] | null>(null);
+  const paintingRef = useRef<number[] | null>(null);
+  /** Where the stroke began, so Shift can draw straight back to it. */
+  const paintStartRef = useRef<[number, number, number] | null>(null);
+  const setBrushRadius = useKerros((s) => s.setBrushRadius);
   const [measure, setMeasure] = useState<{ from: Snap; to: Snap | null } | null>(null);
   const [cursor, setCursor] = useState<Snap | null>(null);
 
@@ -339,9 +367,24 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
       onMeasureDown(event);
       return;
     }
-    if (tool !== 'select') return;
+
     const world = toWorld(event.clientX, event.clientY);
     if (!world) return;
+
+    if (tool === 'paint') {
+      if (!slice) return;
+      const started = [world[0], world[1], slice.z];
+      paintStartRef.current = [world[0], world[1], slice.z];
+      paintingRef.current = started;
+      setPainting(started);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+
+    // Below here is the select tool only. The guard sits *after* the branches
+    // above rather than before them, or a tool added later is unreachable —
+    // which is the same shape as the dispatch that hid the fixture inspector.
+    if (tool !== 'select') return;
 
     const hit = hitAt(world[0], world[1]);
     if (!hit) return;
@@ -391,6 +434,39 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
       return;
     }
 
+    if (tool === 'paint') {
+      const active = paintingRef.current;
+      if (!active) {
+        setCursor({ x: world[0], y: world[1], on: 'free' });
+        return;
+      }
+
+      /*
+       * Shift draws straight back to where the stroke began.
+       *
+       * A modifier rather than a fourth button: it is the convention everywhere
+       * else, it costs no room in the bar, and it can be taken up and put down
+       * in the middle of a gesture — start a curve, hold Shift, and the tail
+       * runs straight to where you started.
+       */
+      const start = paintStartRef.current;
+      if (event.shiftKey && start) {
+        const straight = [start[0], start[1], start[2], world[0], world[1], start[2]];
+        paintingRef.current = straight;
+        setPainting(straight);
+        return;
+      }
+      // A point every third of a brush width: dense enough to read as a tube,
+      // sparse enough to store. The same rule the 3D brush uses.
+      const lastX = active[active.length - 3];
+      const lastY = active[active.length - 2];
+      if (Math.hypot(world[0] - lastX, world[1] - lastY) < brushRadius * 0.35) return;
+      const next = [...active, world[0], world[1], active[2]];
+      paintingRef.current = next;
+      setPainting(next);
+      return;
+    }
+
     const active = dragRef.current;
     if (!active || active.settling) {
       setHovering(hitAt(world[0], world[1]) !== null);
@@ -406,7 +482,36 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     setDrag(next);
   };
 
+  const endPaint = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const points = paintingRef.current;
+    paintingRef.current = null;
+    paintStartRef.current = null;
+    setPainting(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    if (!points || points.length < 3) return;
+    // The feature is made on release, not on arming the tool: a tool picked up
+    // and put down again should leave nothing behind.
+    /*
+     * The stroke carries its own operation, because `SculptStroke` already
+     * does. One brush feature then holds both what was painted on and what was
+     * carved off, which is how a person works — rather than a feature per
+     * direction and a tree full of them.
+     */
+    addStroke(ensurePaint(), {
+      op: carving ? 'subtract' : 'union',
+      k: 0,
+      radius: brushRadius,
+      points,
+    });
+  };
+
   const endDrag = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (tool === 'paint') {
+      endPaint(event);
+      return;
+    }
     const active = dragRef.current;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
@@ -456,6 +561,29 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [pickedPin, togglePin]);
+
+  /**
+   * The wheel sizes the brush while the tool is out.
+   *
+   * There is no zoom in this view to argue with — the scale is fixed to the
+   * model's footprint on purpose — so the wheel is free, and sizing a brush is
+   * what a hand already on the mouse wants to do.
+   *
+   * Attached here rather than as `onWheel`, because React registers that one
+   * passively: `preventDefault` would do nothing and the page would scroll out
+   * from under the brush.
+   */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || tool !== 'paint') return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const step = brushRadius <= 2 ? 0.2 : brushRadius <= 6 ? 0.5 : 1;
+      setBrushRadius(Math.round((brushRadius - Math.sign(event.deltaY) * step) * 100) / 100);
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, [tool, brushRadius, setBrushRadius]);
 
   /** Escape puts the tape away. Changing layer keeps it, which is the point. */
   useEffect(() => {
@@ -573,7 +701,38 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
         return path;
       };
 
-      if (!fitToLayer && widest && widest.index !== slice.index) {
+      /*
+       * The sheets either side, in the same two colours the pin holes use:
+       * green is the one above, violet the one below. One convention for
+       * "which way through the stack" rather than two.
+       *
+       * Not turned, even when the stack is twisted. This view draws parts as
+       * the laser cuts them, and a neighbour turned here would be a picture of
+       * something that is never cut that way.
+       */
+      if (onion && slices) {
+        ctx.lineWidth = 1;
+        for (const [step, colour] of [
+          [-1, COLORS.pinDown],
+          [1, COLORS.pinUp],
+        ] as [number, string][]) {
+          const neighbour = slices.slices.find((s2) => s2.index === slice.index + step);
+          if (!neighbour) continue;
+          ctx.save();
+          ctx.globalAlpha = 0.45;
+          ctx.strokeStyle = colour;
+          ctx.stroke(tracePath(neighbour.contours));
+          for (const circle of neighbour.circles) {
+            ctx.beginPath();
+            ctx.arc(toScreenX(circle.x), toScreenY(circle.y), circle.r * scale, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+      } else if (!fitToLayer && widest && widest.index !== slice.index) {
+        // One reference at a time: the widest layer says how the form narrows,
+        // the onion skin says what is next to this sheet, and both at once is
+        // three outlines nobody can read apart.
         ctx.strokeStyle = COLORS.ghost;
         ctx.lineWidth = 1;
         ctx.stroke(tracePath(widest.contours));
@@ -726,6 +885,41 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
         ctx.stroke();
       }
 
+      /*
+       * The stroke being laid down, as a plain line.
+       *
+       * The field is not touched until the button comes up, so this overlay is
+       * the only feedback during the gesture — the same arrangement the 3D
+       * brush uses, and for the same reason: on a shape that takes a quarter of
+       * a second to sample, that is the difference between painting and
+       * waiting.
+       */
+      if (painting && painting.length >= 3) {
+        ctx.strokeStyle = carving ? COLORS.carve : COLORS.paint;
+        ctx.lineWidth = Math.max(brushRadius * 2 * scale, 2);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalAlpha = 0.55;
+        ctx.beginPath();
+        ctx.moveTo(toScreenX(painting[0]), toScreenY(painting[1]));
+        for (let i = 3; i < painting.length; i += 3) {
+          ctx.lineTo(toScreenX(painting[i]), toScreenY(painting[i + 1]));
+        }
+        if (painting.length === 3) ctx.lineTo(toScreenX(painting[0]), toScreenY(painting[1]));
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.lineCap = 'butt';
+        ctx.lineJoin = 'miter';
+      } else if (tool === 'paint' && cursor) {
+        // The brush itself, so its size is a thing you see rather than a number
+        // you remember.
+        ctx.strokeStyle = carving ? COLORS.carve : COLORS.paint;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(toScreenX(cursor.x), toScreenY(cursor.y), brushRadius * scale, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
       // Scale bar, so the eye has something absolute to hold on to.
       const barLength = 10 * scale;
       ctx.strokeStyle = COLORS.label;
@@ -747,7 +941,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     const observer = new ResizeObserver(draw);
     observer.observe(wrap);
     return () => observer.disconnect();
-  }, [slice, extent, fitToLayer, widest, report, selectedId, drag, tool, measure, cursor, pickedPin]);
+  }, [slice, extent, fitToLayer, widest, report, selectedId, drag, tool, measure, cursor, pickedPin, onion, slices, painting, carving, brushRadius]);
 
   const selected = features.find((f) => f.id === selectedId) ?? null;
   const selectedHere =
@@ -771,7 +965,16 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
       <div className="slice-canvas-wrap" ref={wrapRef}>
         <canvas
           ref={canvasRef}
-          style={{ cursor: tool === 'measure' ? 'crosshair' : drag ? 'grabbing' : hovering ? 'grab' : 'default' }}
+          style={{
+            cursor:
+              tool === 'measure' || tool === 'paint'
+                ? 'crosshair'
+                : drag
+                  ? 'grabbing'
+                  : hovering
+                    ? 'grab'
+                    : 'default',
+          }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
@@ -791,6 +994,51 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
           a second set of canvas handlers, which is the whole reason the layer
           is there.
         */}
+        <button
+          type="button"
+          className={`btn${tool === 'paint' && !carving ? ' is-active' : ''}`}
+          title="Paint material onto this sheet"
+          onClick={() => {
+            setCarving(false);
+            setTool(tool === 'paint' && !carving ? 'select' : 'paint');
+            setMeasure(null);
+          }}
+        >
+          Paint
+        </button>
+        <button
+          type="button"
+          className={`btn${tool === 'paint' && carving ? ' is-active' : ''}`}
+          title="Carve material off this sheet"
+          onClick={() => {
+            setCarving(true);
+            setTool(tool === 'paint' && carving ? 'select' : 'paint');
+            setMeasure(null);
+          }}
+        >
+          Carve
+        </button>
+        {tool === 'paint' ? (
+          <label className="slice-brush" title="Brush radius. The wheel over the canvas does this too.">
+            <input
+              type="number"
+              value={brushRadius}
+              step={brushRadius <= 2 ? 0.2 : 0.5}
+              min={0.2}
+              max={60}
+              onChange={(e) => setBrushRadius(Number(e.target.value))}
+            />
+            mm
+          </label>
+        ) : null}
+        <button
+          type="button"
+          className={`btn${onion ? ' is-active' : ''}`}
+          title="Show the sheets either side: violet below, green above"
+          onClick={() => setOnion(!onion)}
+        >
+          Onion
+        </button>
         <button
           type="button"
           className={`btn${tool === 'measure' ? ' is-active' : ''}`}
@@ -829,7 +1077,9 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
         </button>
 
         <span className="slice-readout">
-          {tool === 'measure' ? (
+          {tool === 'paint' ? (
+            `${carving ? 'Carving' : 'Painting'} layer ${layerIndex} · brush ${brushRadius} mm · wheel resizes, Shift draws straight, and it lands on this sheet only`
+          ) : tool === 'measure' ? (
             (() => {
               const live = measure?.to ?? cursor;
               if (!measure || !live) {
@@ -848,6 +1098,9 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
               {partCount} {partCount === 1 ? 'part' : 'parts'}
               {holeCount > 0 ? ` · ${holeCount} holes` : ''} ·{' '}
               {area.toFixed(0)} mm² · sliced in {ms.toFixed(0)} ms
+              {onion ? (
+                <span className="slice-note"> · onion: violet below, green above</span>
+              ) : null}
               {report?.tooThin ? (
                 <span className="slice-warn">
                   {' '}

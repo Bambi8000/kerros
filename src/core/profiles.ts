@@ -31,6 +31,7 @@ export const DEFAULT_STACK: StackSettings = {
   spacerThickness: 0,
   // No spiral by default: a turned stack is a decision, and one that arrives
   // without being asked for would move every hole in every saved lamp.
+  spacerHeightMid: 6,
   twistPerLayer: 0,
   twistOverrides: '',
 };

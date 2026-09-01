@@ -34,7 +34,14 @@ const sample = {
   name: 'Blob Lamp 1',
   machine: { name: 'Laser 730x410', bedWidth: 730, bedHeight: 410, margin: 5 },
   material: { name: 'Cardboard 3 mm', thickness: 3, kerf: 0.22, notes: 'B flute' },
-  stack: { spacerHeight: 6, spacerHeightTop: 6, spacerThickness: 0, twistPerLayer: 0, twistOverrides: '' },
+  stack: {
+    spacerHeight: 6,
+    spacerHeightMid: 6,
+    spacerHeightTop: 6,
+    spacerThickness: 0,
+    twistPerLayer: 0,
+    twistOverrides: '',
+  },
   seed: 7,
   features: [
     {
@@ -154,6 +161,18 @@ console.log('project: a stack written before gradients existed');
    * sort of claim that lives in a comment until something forces it to be
    * proved, and this file exists to force it.
    */
+  /*
+   * A file written before the stack had a middle opens as a straight run
+   * between its two ends — which is what saying nothing about it meant. The
+   * same promise as the twist below and the two gaps above, and it is checked
+   * for the same reason: this is the sort of claim that lives in a comment
+   * until something forces it to be proved.
+   */
+  check(
+    'a file with no middle reads it as the bottom gap',
+    opened.data.stack.spacerHeightMid === opened.data.stack.spacerHeight,
+    `${opened.data.stack.spacerHeightMid}`,
+  );
   check('and a file that never heard of twist opens flat', opened.data.stack.twistPerLayer === 0);
   check('with no layers turned by hand', opened.data.stack.twistOverrides === '');
   check('with nothing to warn about', opened.warnings.length === 0, opened.warnings.join('; '));
@@ -163,7 +182,14 @@ console.log('project: a stack written before gradients existed');
     format: PROJECT_FORMAT,
     formatVersion: PROJECT_FORMAT_VERSION,
     ...sample,
-    stack: { spacerHeight: 3, spacerHeightTop: 12, spacerThickness: 1, twistPerLayer: 5, twistOverrides: '4:40' },
+    stack: {
+      spacerHeight: 3,
+      spacerHeightMid: 1,
+      spacerHeightTop: 12,
+      spacerThickness: 1,
+      twistPerLayer: 5,
+      twistOverrides: '4:40',
+    },
   });
   const openedGraded = parseProject(graded).data;
   check(
@@ -171,6 +197,11 @@ console.log('project: a stack written before gradients existed');
     openedGraded.stack.spacerHeight === 3 &&
       openedGraded.stack.spacerHeightTop === 12 &&
       openedGraded.stack.spacerThickness === 1,
+  );
+  check(
+    'a waisted stack keeps its middle',
+    openedGraded.stack.spacerHeightMid === 1,
+    `${openedGraded.stack.spacerHeightMid}`,
   );
   check(
     'and a spiral that was written down is kept',
@@ -185,6 +216,7 @@ console.log('project: a stack written before gradients existed');
       spacerHeight: 6,
       spacerHeightTop: -4,
       spacerThickness: 'thick',
+      spacerHeightMid: -5,
       twistPerLayer: 900,
       twistOverrides: 42,
     },
@@ -198,6 +230,7 @@ console.log('project: a stack written before gradients existed');
    * string are dropped, because a number here would parse as nothing and then
    * silently turn no layers at all.
    */
+  check('a negative middle is clamped to nothing', openedBad.stack.spacerHeightMid >= 0);
   check('an impossible spiral is clamped', Math.abs(openedBad.stack.twistPerLayer) <= 359);
   check('and overrides that are not text fall back to none', openedBad.stack.twistOverrides === '');
 }

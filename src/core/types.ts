@@ -111,6 +111,16 @@ export interface StackSettings {
    */
   spacerHeightTop?: number;
   /**
+   * Gap in the **middle** of the stack, mm. Omitted is a straight run between
+   * the ends.
+   *
+   * Three numbers rather than two, so a stack can be tight in the middle and
+   * open out both ways. Quantised the same way: every gap is still a whole
+   * number of rings, so the panel has to say how many steps the ring material
+   * allows in each direction.
+   */
+  spacerHeightMid?: number;
+  /**
    * Thickness of one spacer ring, mm — its own material, not the stock's.
    *
    * Separating the two is what makes thin stock usable at all. A 200 mm lamp

@@ -240,6 +240,8 @@ interface KerrosState {
    * Returns its id, because the viewport needs it the moment a stroke starts.
    */
   ensureSculpt: () => string;
+  /** Start a per-layer brush feature, or reuse the one already selected. */
+  ensurePaint: () => string;
   /** `stroke` arrives in world coordinates; it is stored in the parent's frame. */
   addStroke: (id: string, stroke: SculptStroke) => void;
   /** Re-attach a sculpt to another shape, carrying its strokes across. */
@@ -1212,6 +1214,48 @@ export const useKerros = create<KerrosState>((set, get) => ({
   setBrushOp: (brushOp) => set({ brushOp }),
   setBrushRadius: (brushRadius) => set({ brushRadius: Math.max(brushRadius, 0.2) }),
   setBrushBlend: (brushBlend) => set({ brushBlend: Math.max(brushBlend, 0) }),
+
+  /**
+   * A per-layer brush.
+   *
+   * Its strokes are sculpt strokes whose z never changes, so the project file
+   * already knows how to write them and the parser already knows how to be
+   * careful with them. What differs is where they are evaluated: a sculpt
+   * stroke is a volume in the form, a paint stroke lives in one sheet's band.
+   *
+   * Applied after the shell, like a boss, so that painting material on does not
+   * hand it straight to the shell to be hollowed out again.
+   */
+  ensurePaint: () =>
+    (() => {
+      const s = get();
+      const selected = s.features.find((f) => f.id === s.selectedId);
+      // Reuse the one in hand, so a session of painting does not leave a
+      // feature per stroke behind it. Each stroke carries whether it adds or
+      // carves, so one feature holds both.
+      if (selected && selected.kind === 'paint') return selected.id;
+
+      const id = `f${s.nextFeatureNumber}`;
+      const count = s.features.filter((f) => f.kind === 'paint').length + 1;
+
+      set({
+        features: [
+          ...s.features,
+          {
+            id,
+            kind: 'paint',
+            stage: 'RIG' as Stage,
+            name: `Brush ${count}`,
+            enabled: true,
+            strokes: [],
+            params: { radius: 6 },
+          },
+        ],
+        nextFeatureNumber: s.nextFeatureNumber + 1,
+        selectedId: id,
+      });
+      return id;
+    })(),
 
   ensureSculpt: () => {
     const s = get();

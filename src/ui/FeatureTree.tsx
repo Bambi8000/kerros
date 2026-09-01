@@ -17,6 +17,12 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
     const triangles = Number(f.params.triangles) || 0;
     return triangles > 0 ? `mesh · ${triangles.toLocaleString('en-US')} triangles` : 'mesh · not loaded';
   }
+  if (f.kind === 'paint') {
+    const strokes = f.strokes ?? [];
+    const carved = strokes.filter((s) => s.op === 'subtract').length;
+    if (strokes.length === 0) return 'brush · nothing drawn yet';
+    return `brush · ${strokes.length - carved} on, ${carved} off`;
+  }
   if (f.kind === 'sculpt') {
     const count = f.strokes?.length ?? 0;
     const attached = typeof f.params.attachTo === 'string' && f.params.attachTo !== '';

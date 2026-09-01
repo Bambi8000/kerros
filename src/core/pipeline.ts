@@ -49,6 +49,8 @@ import { legSections, sectionsDistance } from './legs.ts';
 import { bossField } from './boss.ts';
 import { extrudeProfile, indexProfile, profileBounds } from './profile2d.ts';
 import { parseTwistOverrides, twistAt, untwistPoint } from './twist.ts';
+import { paintDistance, strokesBounds, strokesByPlane } from './paint.ts';
+import type { PaintStroke } from './paint.ts';
 import type { FillRule } from './profile2d.ts';
 import type { BossSpec } from './boss.ts';
 import type { LegSection, LegSpec } from './legs.ts';
@@ -100,6 +102,8 @@ export interface SliceJob {
   spacerHeight: number;
   /** Gap at the top of the stack, mm. Omitted means uniform. */
   spacerHeightTop?: number;
+  /** Gap in the middle of the stack, mm. Omitted is a straight run. */
+  spacerHeightMid?: number;
   /** Thickness of one spacer ring, mm. Omitted means the stock's. */
   spacerThickness?: number;
   /** Degrees each sheet is turned from the one below at assembly. */
@@ -262,6 +266,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     kerf,
     spacerHeight,
     spacerHeightTop,
+    spacerHeightMid,
     spacerThickness,
     twistPerLayer,
     twistOverrides,
@@ -275,16 +280,33 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     kerf,
     job.seed,
     thickness,
-    { spacerHeight, spacerHeightTop, spacerThickness, twistPerLayer, twistOverrides },
+    {
+      spacerHeight,
+      spacerHeightTop,
+      spacerHeightMid,
+      spacerThickness,
+      twistPerLayer,
+      twistOverrides,
+    },
     volumes,
   );
   const bounds = field.bounds;
   if (!bounds) return EMPTY_OUTPUT;
 
   const started = Date.now();
+  /*
+   * Everything the layer plan is built from, in one place.
+   *
+   * Listed by name rather than spread, which is what let the middle gap reach
+   * the field and not the slicer: `composeField` takes the whole stack object,
+   * so it saw the new number the day it existed, while this list had to be
+   * edited by hand and was not. The stack came out uniform while the panel
+   * described a gradient.
+   */
   const layerOptions = {
     thickness,
     spacerHeight,
+    spacerHeightMid,
     spacerHeightTop,
     spacerThickness,
     resolution,
@@ -981,6 +1003,28 @@ export function profileVolume(feature: Feature, needed = 0) {
   };
 }
 
+/**
+ * Every enabled brush feature, split by what each stroke does.
+ *
+ * The operation is on the **stroke**, not the feature, because `SculptStroke`
+ * already carries one — so a single brush holds what was painted on and what
+ * was carved off, in the order they were made.
+ */
+export function paintFromFeatures(
+  features: Feature[],
+): { id: string; cut: boolean; strokes: PaintStroke[] }[] {
+  const out: { id: string; cut: boolean; strokes: PaintStroke[] }[] = [];
+  for (const f of features) {
+    if (f.kind !== 'paint' || !f.enabled) continue;
+    const usable = (f.strokes ?? []).filter((s) => s.points.length >= 3);
+    const add = usable.filter((s) => s.op !== 'subtract');
+    const cut = usable.filter((s) => s.op === 'subtract');
+    if (add.length > 0) out.push({ id: f.id, cut: false, strokes: add });
+    if (cut.length > 0) out.push({ id: f.id, cut: true, strokes: cut });
+  }
+  return out;
+}
+
 export function pinsFromFeatures(features: Feature[], kerf: number): PinSpec[] {
   const out: PinSpec[] = [];
   for (const f of features) {
@@ -1135,6 +1179,7 @@ export function composeField(
   stack: {
     spacerHeight: number;
     spacerHeightTop?: number;
+    spacerHeightMid?: number;
     spacerThickness?: number;
     /** Carried so legs, which are cut from the field, can turn with their layer. */
     twistPerLayer?: number;
@@ -1180,13 +1225,20 @@ export function composeField(
   });
   const prepared = prepareFeatures(fieldFeatures);
   const windows = windowsFromFeatures(features, kerf, seed);
-  const bounds = modelBounds(fieldFeatures);
+  /*
+   * The box the shape tree asks for, before anything painted on widens it.
+   *
+   * Kept separate because the layer plan is built from *this* one: a paint
+   * stroke can only reach sideways, so growing z here would move the sheets and
+   * reroll every per-layer window for nothing.
+   */
+  const rawBounds = modelBounds(fieldFeatures);
 
   // Per-layer windows have to land on the same planes the slicer will take, so
   // the plan is built by the same function, from the same numbers. It is the
   // list of planes rather than a pitch, which is what lets the gaps differ
   // later without the windows losing track of which sheet they are on.
-  const plan: LayerPlan = bounds ? planLayers(bounds, { thickness, ...stack }) : [];
+  const plan: LayerPlan = rawBounds ? planLayers(rawBounds, { thickness, ...stack }) : [];
 
   const solid = (x: number, y: number, z: number) => evaluatePoint(prepared, x, y, z);
 
@@ -1207,8 +1259,8 @@ export function composeField(
    */
   // Far enough that a spoke from anywhere inside the model leaves it, so an
   // automatic spoke is stopped by the envelope rather than by its own length.
-  const reachToEdge = bounds
-    ? Math.hypot(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1])
+  const reachToEdge = rawBounds
+    ? Math.hypot(rawBounds.max[0] - rawBounds.min[0], rawBounds.max[1] - rawBounds.min[1])
     : 1e4;
   const bosses = bossesFromFeatures(features, plan, reachToEdge);
 
@@ -1235,7 +1287,56 @@ export function composeField(
   const withBoss = bossField(solid, bosses, envelope);
 
   /*
-   * The bounds are deliberately left alone.
+   * Per-layer brush strokes, after the shell for the same reason a boss is:
+   * painting material on and then handing it to the shell to hollow out again
+   * is not what anybody means by painting it on.
+   *
+   * Each stroke is anchored to the height it was drawn at and confined to that
+   * sheet's own band, so it edits one layer and reaches neither neighbour. The
+   * grouping is done once here rather than per sample — a lookup by plane index
+   * costs nothing, and searching every stroke at every point would cost what
+   * sculpt strokes had to be indexed to avoid.
+   */
+  const painted = paintFromFeatures(features);
+  const paintByPlane = new Map<number, { cut: boolean; strokes: PaintStroke[] }[]>();
+
+  if (plan.length > 0) {
+    const planeAt = (z: number) => {
+      const index = layerIndexAt(plan, z);
+      const at = index - plan[0].index;
+      return at >= 0 && at < plan.length ? plan[at].index : null;
+    };
+    for (const feature of painted) {
+      for (const [planeIndex, strokes] of strokesByPlane(feature.strokes, planeAt)) {
+        const list = paintByPlane.get(planeIndex) ?? [];
+        list.push({ cut: feature.cut, strokes });
+        paintByPlane.set(planeIndex, list);
+      }
+    }
+  }
+
+  const withPaint =
+    paintByPlane.size === 0
+      ? withBoss
+      : (x: number, y: number, z: number) => {
+          let d = withBoss(x, y, z);
+          const index = layerIndexAt(plan, z);
+          const groups = paintByPlane.get(index);
+          if (!groups) return d;
+
+          const plane = plan[index - plan[0].index];
+          if (!plane) return d;
+          const half = Math.max(plane.thickness + plane.gapAbove, 1e-6) / 2;
+
+          for (const group of groups) {
+            const stroke = paintDistance(group.strokes, x, y, z, plane.z, half);
+            d = group.cut ? Math.max(d, -stroke) : Math.min(d, stroke);
+          }
+          return d;
+        };
+
+  /*
+   * The rawBounds are deliberately left alone.
    *
    * The first version grew them in XY for every boss, because a spoke reaching
    * further than the form did was clipped at the grid: the preview drew the cut
@@ -1247,7 +1348,29 @@ export function composeField(
    * growth wrong rather than merely unnecessary: a bigger box at the same
    * sample count is a coarser grid everywhere, paid for reach that adds
    * nothing.
+   *
+   * A **paint stroke is the opposite case** and does grow them. A boss is a
+   * thickening inside the form by definition; a stroke painted past the rim is
+   * material somebody deliberately put outside it, and material outside the
+   * grid is material the slicer never sees. Only the additive ones count — a
+   * carve stroke can only remove, so it needs no room of its own.
    */
+  const paintBox = strokesBounds(painted.filter((p) => !p.cut).flatMap((p) => p.strokes));
+  const bounds =
+    paintBox === null || rawBounds === null
+      ? rawBounds
+      : {
+          min: [
+            Math.min(rawBounds.min[0], paintBox.minX),
+            Math.min(rawBounds.min[1], paintBox.minY),
+            rawBounds.min[2],
+          ] as [number, number, number],
+          max: [
+            Math.max(rawBounds.max[0], paintBox.maxX),
+            Math.max(rawBounds.max[1], paintBox.maxY),
+            rawBounds.max[2],
+          ] as [number, number, number],
+        };
 
   /*
    * Legs, cut from the field rather than pasted into the slices.
@@ -1315,7 +1438,7 @@ export function composeField(
     }
   }
 
-  const withWindows = stockField(withBoss, windows, plan);
+  const withWindows = stockField(withPaint, windows, plan);
   const sample =
     legSectionsByPlane.size === 0
       ? withWindows

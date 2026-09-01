@@ -460,6 +460,114 @@ console.log('slice: the layer plan is a list of planes');
     );
   }
 
+  /*
+   * Three steps: tight in the middle and opening out both ways, which is the
+   * shape people ask for once they have a dial with two ends.
+   */
+  const waisted = planLayers(bounds, {
+    ...options,
+    spacerHeight: 9,
+    spacerHeightMid: 3,
+    spacerHeightTop: 9,
+    spacerThickness: 3,
+  });
+  check('a waisted stack has more than a few sheets', waisted.length > 5, `${waisted.length}`);
+  check(
+    'it starts wide',
+    waisted[0].gapAbove === 9,
+    `${waisted[0].gapAbove} mm at the bottom`,
+  );
+  check(
+    'and ends wide',
+    waisted[waisted.length - 2].gapAbove >= 6,
+    `${waisted[waisted.length - 2].gapAbove} mm near the top`,
+  );
+  check('with the tightest gap somewhere in the middle', (() => {
+    let tightest = 0;
+    let smallest = Infinity;
+    waisted.forEach((p, i) => {
+      if (p.gapAbove < smallest) {
+        smallest = p.gapAbove;
+        tightest = i;
+      }
+    });
+    const u = tightest / (waisted.length - 1);
+    return smallest === 3 && u > 0.25 && u < 0.75;
+  })(), `tightest ${Math.min(...waisted.map((p) => p.gapAbove))} mm`);
+  check(
+    'every gap is still a whole number of rings',
+    waisted.every((p) => Math.abs(p.gapAbove % 3) < 1e-12),
+  );
+  check(
+    'sheets still sit on top of the gap below',
+    waisted.every((p, i) =>
+      i === 0 ||
+      Math.abs(p.z0 - (waisted[i - 1].z0 + waisted[i - 1].thickness + waisted[i - 1].gapAbove)) < 1e-9),
+  );
+
+  // The other way round: tight ends, open middle.
+  const bulged = planLayers(bounds, {
+    ...options,
+    spacerHeight: 3,
+    spacerHeightMid: 9,
+    spacerHeightTop: 3,
+    spacerThickness: 3,
+  });
+  check('it goes the other way too', Math.max(...bulged.map((p) => p.gapAbove)) === 9);
+  check('with the widest gap in the middle', (() => {
+    const widest = bulged.findIndex((p) => p.gapAbove === 9);
+    const u = widest / (bulged.length - 1);
+    return u > 0.2 && u < 0.8;
+  })());
+
+  /*
+   * A middle equal to the ends must change nothing at all. Uniform is its own
+   * branch on purpose — the marching form accumulates rounding the closed form
+   * does not — so the middle has to leave that branch alone rather than turn
+   * every uniform stack into a gradient with the same numbers.
+   */
+  const middledUniform = planLayers(bounds, { ...options, spacerHeightMid: options.spacerHeight });
+  check(
+    'a middle equal to the ends is exactly the uniform stack',
+    JSON.stringify(middledUniform) === JSON.stringify(planes),
+  );
+  check(
+    'and a middle that rounds to the same rings is too',
+    JSON.stringify(planLayers(bounds, { ...options, spacerHeightMid: options.spacerHeight + 0.4 })) ===
+      JSON.stringify(planes),
+  );
+
+  // Omitting it leaves the two-ended gradient exactly as it was.
+  check(
+    'no middle is the straight run between the ends',
+    JSON.stringify(planLayers(bounds, { ...options, spacerHeight: 3, spacerHeightTop: 9, spacerThickness: 3 })) ===
+      JSON.stringify(graded),
+  );
+
+  /*
+   * The whole option set, not a hand-written subset.
+   *
+   * `planLayers` picks fields off whatever it is given, and the caller in the
+   * pipeline used to list them by name — so the middle gap reached the field,
+   * which takes the stack whole, and never reached the slicer, which did not.
+   * The stack came out uniform while the panel described a gradient, and no
+   * check here could see it because every check called `planLayers` directly.
+   *
+   * This one asserts the shape of the contract instead: every gap setting
+   * `SliceOptions` names has to change the plan, so a caller that drops one is
+   * a caller that is provably wrong.
+   */
+  for (const key of ['spacerHeight', 'spacerHeightMid', 'spacerHeightTop']) {
+    const base = { ...options, spacerHeight: 3, spacerHeightMid: 3, spacerHeightTop: 3, spacerThickness: 3 };
+    const moved = planLayers(bounds, { ...base, [key]: 12 });
+    const flat = planLayers(bounds, base);
+    check(
+      `${key} changes the plan`,
+      JSON.stringify(moved) !== JSON.stringify(flat),
+      'a gap setting the plan ignores is a control that does nothing',
+    );
+  }
+
   const asGradient = planLayers(bounds, { ...options, spacerHeightTop: options.spacerHeight });
   check(
     'equal ends give exactly the uniform stack',

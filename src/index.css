@@ -682,6 +682,34 @@ select {
   color: var(--k-text-dim);
 }
 
+/*
+ * Brush size, in the bar only while the brush is out.
+ *
+ * Narrow on purpose: the bar already carries the layer slider and four tools,
+ * and the number here is a nudge rather than a setting somebody types often —
+ * the wheel over the canvas does the work.
+ */
+.slice-brush {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--k-mono);
+  font-size: 10px;
+  color: var(--k-text-faint);
+  white-space: nowrap;
+}
+
+.slice-brush input {
+  width: 52px;
+  padding: 4px 6px;
+  background: var(--k-bg);
+  border: 1px solid var(--k-line);
+  border-radius: 2px;
+  font-family: var(--k-mono);
+  font-size: 11px;
+  color: var(--k-text);
+}
+
 .slice-bar .btn {
   white-space: nowrap;
 }

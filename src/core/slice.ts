@@ -121,6 +121,15 @@ export interface SliceOptions {
   spacerHeight: number;
   /** Gap at the top, mm. Omitted or equal to `spacerHeight` means uniform. */
   spacerHeightTop?: number;
+  /**
+   * Gap in the **middle** of the stack, mm. Omitted is a straight run between
+   * the two ends.
+   *
+   * With it, the gradient is two runs rather than one, so the stack can be
+   * tight in the middle and open out both ways — or the other way round. The
+   * shape people actually asked for once they had a dial with two ends.
+   */
+  spacerHeightMid?: number;
   /** Thickness of one spacer ring, mm. Defaults to the sheet thickness. */
   spacerThickness?: number;
   /** Samples along the longest XY axis. */
@@ -629,7 +638,12 @@ export function planLayers(
   bounds: Bounds,
   options: Pick<
     SliceOptions,
-    'thickness' | 'spacerHeight' | 'spacerHeightTop' | 'spacerThickness' | 'maxLayers'
+    | 'thickness'
+    | 'spacerHeight'
+    | 'spacerHeightTop'
+    | 'spacerHeightMid'
+    | 'spacerThickness'
+    | 'maxLayers'
   >,
 ): LayerPlane[] {
   const thickness = options.thickness;
@@ -645,6 +659,10 @@ export function planLayers(
     options.spacerHeightTop === undefined
       ? ringsLow
       : ringsForGap(options.spacerHeightTop, ringT);
+  const ringsMid =
+    options.spacerHeightMid === undefined
+      ? null
+      : ringsForGap(options.spacerHeightMid, ringT);
 
   const z0 = bounds.min[2];
   const height = bounds.max[2] - z0;
@@ -659,7 +677,26 @@ export function planLayers(
    * So a gradient is not a generalisation of uniform here — uniform is its own
    * branch, on purpose.
    */
-  if (ringsLow === ringsHigh) {
+  /*
+   * Two runs when there is a middle, one when there is not.
+   *
+   * **Halfway up in height, not halfway up in layers.** The number of layers
+   * depends on the gradient, so a midpoint defined by layer number would be
+   * defined in terms of its own result — the same reason the two-ended version
+   * interpolates by height. Height is also what a gradient physically means:
+   * the gap depends on where in the form you are.
+   */
+  const ringsAtHeight = (u: number): number => {
+    if (ringsMid === null) return ringsLow + (ringsHigh - ringsLow) * u;
+    return u <= 0.5
+      ? ringsLow + (ringsMid - ringsLow) * (u / 0.5)
+      : ringsMid + (ringsHigh - ringsMid) * ((u - 0.5) / 0.5);
+  };
+
+  const uniform =
+    ringsLow === ringsHigh && (ringsMid === null || ringsMid === ringsLow);
+
+  if (uniform) {
     const pitch = thickness + ringsLow * ringT;
     if (!(pitch > 0)) return [];
     const count = Math.min(Math.max(Math.ceil(height / pitch), 1), cap);
@@ -681,7 +718,7 @@ export function planLayers(
   let bottom = z0;
   for (let k = 0; k < cap; k++) {
     const u = height > 1e-9 ? Math.min(Math.max((bottom - z0) / height, 0), 1) : 0;
-    const rings = Math.max(Math.round(ringsLow + (ringsHigh - ringsLow) * u), 0);
+    const rings = Math.max(Math.round(ringsAtHeight(u)), 0);
     const gap = rings * ringT;
     out.push({ index: k, z0: bottom, z: bottom + thickness / 2, thickness, gapAbove: gap });
     bottom += thickness + gap;

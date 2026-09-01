@@ -971,6 +971,144 @@ function WindowInspector({ feature }: { feature: Feature }) {
   );
 }
 
+interface PaintProps {
+  feature: Feature;
+  slices: SliceSet | null;
+}
+
+function PaintInspector({ feature, slices }: PaintProps) {
+  const setParam = useKerros((s) => s.setParam);
+  const renameFeature = useKerros((s) => s.renameFeature);
+  const undoStroke = useKerros((s) => s.undoStroke);
+  const clearStrokes = useKerros((s) => s.clearStrokes);
+  const brushRadius = useKerros((s) => s.brushRadius);
+  const setBrushRadius = useKerros((s) => s.setBrushRadius);
+
+  const strokes = feature.strokes ?? [];
+  const added = strokes.filter((s) => s.op !== 'subtract').length;
+  const carved = strokes.length - added;
+
+  /*
+   * A stroke is anchored to the height it was drawn at, so changing the
+   * material thickness can leave one outside the stack entirely. It is dropped
+   * rather than clamped to an end — clamping would move somebody's edit onto a
+   * sheet they never drew on — and a drop that says nothing is the silence this
+   * program keeps having to fix.
+   */
+  const planes = slices?.planes ?? [];
+  const lowest = planes.length > 0 ? planes[0].z0 : 0;
+  const highest =
+    planes.length > 0 ? planes[planes.length - 1].z0 + planes[planes.length - 1].thickness : 0;
+  const stranded =
+    planes.length === 0
+      ? 0
+      : strokes.filter((s) => {
+          const z = s.points.length >= 3 ? s.points[2] : 0;
+          return z < lowest || z > highest;
+        }).length;
+
+  /** Which sheets carry a stroke, by the height each was drawn at. */
+  const touched = new Set<number>();
+  for (const stroke of strokes) {
+    const z = stroke.points.length >= 3 ? stroke.points[2] : 0;
+    const slice = slices?.slices.find((s) => Math.abs(s.z - z) < 1e-6);
+    if (slice) touched.add(slice.index);
+  }
+  const layers = [...touched].sort((a, b) => a - b);
+
+  return (
+    <>
+      <div className="group">
+        <div className="group-head">Brush</div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <span className="field-input">
+            <input
+              type="text"
+              value={feature.name}
+              onChange={(e) => renameFeature(feature.id, e.target.value)}
+            />
+          </span>
+        </label>
+        <div className="derived">
+          {strokes.length === 0
+            ? 'No strokes yet. Pick Paint or Carve in the slice view and draw.'
+            : `${added} painted on, ${carved} carved off${
+                layers.length > 0
+                  ? ` · ${layers.length === 1 ? 'layer' : 'layers'} ${layers.join(', ')}`
+                  : ''
+              }`}
+        </div>
+        {stranded > 0 ? (
+          <div className="warn">
+            {stranded} stroke{stranded === 1 ? '' : 's'} sit{stranded === 1 ? 's' : ''} outside the
+            stack and {stranded === 1 ? 'does' : 'do'} nothing. A stroke is anchored to the height
+            it was drawn at, so changing the material thickness can leave one above the top sheet
+            or below the bottom one.
+          </div>
+        ) : null}
+        <div className="derived">
+          Unlike a fixture or a perforation, these are in the field — so the
+          Model view shows them, and each one edits the single sheet it was drawn
+          on and reaches neither neighbour.
+        </div>
+      </div>
+
+      <div className="group">
+        <div className="group-head">The brush</div>
+        <NumberField
+          label="Radius"
+          value={brushRadius}
+          unit="mm"
+          step={brushRadius <= 2 ? 0.2 : 0.5}
+          min={0.2}
+          max={60}
+          onChange={setBrushRadius}
+        />
+        <div className="derived">
+          The next stroke only. Strokes already made keep the radius they were
+          made with, so changing this does not disturb what is there. Shared with
+          the model view's sculpt brush — there is one brush, not two.
+        </div>
+        <NumberField
+          label="Blend"
+          value={num(feature.params, 'k', 0)}
+          unit="mm"
+          step={0.5}
+          min={0}
+          onChange={(v) => setParam(feature.id, 'k', v)}
+        />
+      </div>
+
+      <div className="group">
+        <div className="group-head">Undo</div>
+        {/*
+          A stroke is the unit of undo, the same as in the model view. There is
+          no vertex to take back because there is no vertex: a contour point is
+          produced by the field and has no identity that survives the form
+          changing, which is why this is a brush and not a set of handles.
+        */}
+        <button
+          type="button"
+          className="btn btn-wide"
+          disabled={strokes.length === 0}
+          onClick={() => undoStroke(feature.id)}
+        >
+          Undo last stroke
+        </button>
+        <button
+          type="button"
+          className="btn btn-wide"
+          disabled={strokes.length === 0}
+          onClick={() => clearStrokes(feature.id)}
+        >
+          Clear all {strokes.length} strokes
+        </button>
+      </div>
+    </>
+  );
+}
+
 interface ProfileProps {
   feature: Feature;
 }
@@ -2215,35 +2353,7 @@ function overallSize(kind: string, params: Feature['params']): string | null {
   if (kind === 'capsule') {
     const h = n('h', 80);
     const r = n('r', 25);
-    const bend = n('bend', 0);
-    if (Math.abs(bend) < 1e-9) {
-      return `${h} mm straight plus two ${r} mm caps — ${(h + 2 * r).toFixed(1)} mm tall, ${(2 * r).toFixed(1)} mm across.`;
-    }
-    /*
-     * Bent, the length is still the centreline and the caps still add a radius
-     * at each end — but it no longer stands that tall, because the ends have
-     * curved away. So the extent is measured off the arc rather than added up.
-     */
-    const theta = (bend * Math.PI) / 180;
-    const R = h / theta;
-    let minX = 0;
-    let maxX = 0;
-    let minZ = 0;
-    let maxZ = 0;
-    for (let i = 0; i <= 64; i++) {
-      const phi = -theta / 2 + (theta * i) / 64;
-      const px = R - R * Math.cos(phi);
-      const pz = R * Math.sin(phi);
-      minX = Math.min(minX, px);
-      maxX = Math.max(maxX, px);
-      minZ = Math.min(minZ, pz);
-      maxZ = Math.max(maxZ, pz);
-    }
-    return (
-      `${h} mm along the centreline, bent ${bend}° on a ${Math.abs(R).toFixed(1)} mm radius — ` +
-      `${(maxZ - minZ + 2 * r).toFixed(1)} mm tall, ${(maxX - minX + 2 * r).toFixed(1)} mm across the bend, ` +
-      `${(2 * r).toFixed(1)} mm thick.`
-    );
+    return `${h} mm straight plus two ${r} mm caps — ${(h + 2 * r).toFixed(1)} mm tall, ${(2 * r).toFixed(1)} mm across.`;
   }
   if (kind === 'torus') {
     const R = n('R', 60);
@@ -2456,6 +2566,9 @@ export function Inspector({ slices, patternCounts, holeMisses, legGaps, pinLoose
    */
   if (feature.kind.startsWith('fixture:')) {
     return <FixtureInspector feature={feature} slices={slices} misses={holeMisses[feature.id]} />;
+  }
+  if (feature.kind === 'paint') {
+    return <PaintInspector feature={feature} slices={slices} />;
   }
   if (feature.kind === 'profile') {
     return <ProfileInspector feature={feature} />;

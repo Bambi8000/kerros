@@ -31,6 +31,7 @@ export function useSlices(enabled: boolean): SliceResult {
   // sheet a height falls in, so the field needs the plan and not a spacing.
   const spacerHeightTop = useKerros((s) => s.stack.spacerHeightTop);
   const spacerThickness = useKerros((s) => s.stack.spacerThickness);
+  const spacerHeightMid = useKerros((s) => s.stack.spacerHeightMid);
   const twistPerLayer = useKerros((s) => s.stack.twistPerLayer);
   const twistOverrides = useKerros((s) => s.stack.twistOverrides);
   const resolution = useKerros((s) => s.sliceRes);
@@ -75,6 +76,7 @@ export function useSlices(enabled: boolean): SliceResult {
         spacerHeight,
         spacerHeightTop,
         spacerThickness,
+        spacerHeightMid,
         twistPerLayer,
         twistOverrides,
         resolution,
@@ -99,6 +101,7 @@ export function useSlices(enabled: boolean): SliceResult {
     spacerHeight,
     spacerHeightTop,
     spacerThickness,
+    spacerHeightMid,
     twistPerLayer,
     twistOverrides,
     resolution,
