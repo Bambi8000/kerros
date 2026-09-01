@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.25.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.26.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -85,6 +85,8 @@ quietly revert them.**
 | seven-segment digits are unambiguous at 3 mm | they are one unburnt segment apart | measured on the cell: the closest seven-segment pair differs in 2.8% of its area, the shape-led digits in 20%. Written as fact and never checked until a pile of parts could not be sorted |
 | "ignore the inner paths" means keep the outermost rings | it means **union** | the first form assumes the rings nest. Eleven circles laid over each other kept whichever happened to have their first vertex outside the others and dropped the rest |
 | a union is the smallest distance with the right sign | a union is the smallest **signed** distance | inside one ring beside another's boundary, the first form reads "almost at the edge" while the point is deep in material — and a shell believes it and leaves a wall along every interior outline |
+| per-layer editing is dragged contour vertices | it is **strokes** | a vertex is produced by the field and has no identity that survives the form changing; a stroke is a thing a person made |
+| a brush stroke needs its own bulk type | a paint stroke **is** a sculpt stroke whose z never changes | the project file and the parser already knew how to carry one, and the operation being on the stroke gave one brush that both adds and carves |
 | a bend is a domain warp on the query point | a bend is an **arc**, and the distance to one is closed form | a warp is not an isometry, so the gradient stops being unit and every blend and kerf iso-level that reads the field is off by however much it stretches |
 | the corrugation in board is a texture inside it | the sheet itself is the wave | so a layer's cut outline is the model met by the wave surface, not by a plane — and turning a layer changes the part rather than only its edge |
 | bounds come from the SHAPE stage | anything that **adds** material sets bounds, whatever its stage | true for the whole program's life because every RIG feature removed. A boss adds, and a spoke past the form was clipped at the grid — a flat plate in the preview and a whole layer's outer ring dropped in the slicer |
@@ -177,6 +179,7 @@ src/core/
   legs.ts         splayed leg holes: the swept ellipse hull        [no imports]
   profile2d.ts    2D outlines from SVG, indexed, as a field         [no imports]
   twist.ts        the angle each sheet is turned at assembly        [no imports]
+  paint.ts        per-layer brush strokes, one sheet's band          [no imports]
   nest.ts         shelf packing, raster true-shape packing,
                   placement, collision, rotation, labels           [no imports]
   font.ts         stroke font for engraved labels                  [no imports]
@@ -279,9 +282,11 @@ Four workspace modes: **Model** (preview, direct manipulation, sculpting),
 **Slice** (one layer in 2D, fixed scale, and where per-slice holes are picked up
 and moved), **Stack** (exploded at real pitch), **Sheet** (nesting on the bed).
 
-Slice mode routes the pointer through a **tool**, of which there is one. The
-push brush belongs there — one layer at a time, true scale, neighbours visible —
-and it will be a second tool rather than a second set of canvas handlers.
+Slice mode routes the pointer through a **tool**, of which there are three:
+select, measure, and the brush. That the pointer went through a tool at all is
+what made the brush an addition rather than a rewrite — and the guard that ends
+the select branch sits *after* the others, or a fourth tool is unreachable the
+way `FixtureInspector` was.
 
 ## Known limits
 
@@ -303,6 +308,10 @@ and it will be a second tool rather than a second set of canvas handlers.
 - **Project files record an import's path, not its geometry.** A grid is megabytes
   and the project file is meant to stay readable, so imports must be located again
   after opening.
+- **A paint stroke outside the stack does nothing.** It is anchored to the
+  height it was drawn at, so changing the material thickness can leave one above
+  the top sheet or below the bottom one. It is dropped rather than moved, and
+  the inspector counts them.
 - **A pin's removal keys do not survive a change in sheet count.** They are
   `gap:position` against the layer numbering, so changing the material thickness
   points them at different sheets. The same fragility hand placements on the bed
@@ -398,6 +407,7 @@ once is the whole saving.
 | ~~**An explicit layer plan**~~ — **shipped**, as `{ index, z0, z, thickness, gapAbove }` | varying gaps *(shipped)*; interleaved short pins; per-layer cable holes; per-layer sculpting |
 | ~~**One `LayerSelector`**~~ — **shipped**, for per-slice features; windows keep their band, and legs count planes because the field precedes the sheets | interleaved pins and per-layer cable holes are now mostly wiring |
 | ~~**`profile2d.ts`**~~ — **shipped**, an indexed 2D distance field with two fill rules | SVG import *(shipped)*; morph between key layers and per-layer editing, both now mostly composition |
+| ~~**Per-layer editing**~~ — **shipped**, as brush strokes anchored to a height and confined to one sheet's band | the last of the eleven that needed a foundation rather than wiring |
 | **A material library** — calliper, flute pitch and profile, direction, phase | corrugated sheet as stock; stack pitch that depends on it. Two things are already in place: layer twist, which is what turns a wave strong enough to be geometry, and a slice sampler that takes its height per layer, so the wave arrives as `z = const + wave(u, v)` in one place. The gap between two sheets will depend on the angle between their waves, and `planLayers` already carries `gapAbove` per plane rather than one pitch |
 
 The layer plan breaks a binding convention on purpose: `layerPitch()` in

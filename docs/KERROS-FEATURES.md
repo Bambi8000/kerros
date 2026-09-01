@@ -924,6 +924,37 @@ Looking it up costs **16 ns** against the arithmetic's 26, on a stack of 40
 planes, where one window sample costs 198. The list is cheaper than the thing it
 replaced.
 
+### Gaps that vary up the stack, in three steps
+
+`spacerHeight` is the gap at the bottom, `spacerHeightTop` at the top, and
+`spacerHeightMid` in the middle. All three equal, or the last two omitted, is a
+uniform stack.
+
+**The middle is halfway up in height, not halfway up in layers.** The number of
+layers depends on the gradient, so a midpoint counted in sheets would be defined
+in terms of its own result — the same reason the two-ended version interpolates
+by height.
+
+**A middle equal to the ends must change nothing at all**, and that is checked
+rather than assumed: uniform is its own branch, so the middle has to leave that
+branch alone rather than turn every uniform stack into a gradient with the same
+numbers.
+
+Two things went wrong wiring it up, and both are worth keeping:
+
+- **The slicer did not get it.** `layerOptions` in the pipeline lists its fields
+  by name, while `composeField` takes the whole stack object — so the new number
+  reached the field and not the slicer, and the stack came out uniform while the
+  panel described a gradient. No check could see it, because every check called
+  `planLayers` directly and the missing argument was on the caller's side. There
+  is now a check that asserts the *contract*: every gap setting `SliceOptions`
+  names has to change the plan.
+- **The panel said "9.00 → 9.00 mm in 4 steps".** The range read only the two
+  ends while the step count included the middle. A fluent wrong sentence, which
+  this program treats as worse than silence because it stops the person looking.
+  The `graded` test had the same hole: tight in the middle with equal ends would
+  have been called uniform.
+
 ### Gaps that vary up the stack
 
 `spacerHeight` is the gap at the bottom and `spacerHeightTop` the one at the top;
@@ -1285,6 +1316,86 @@ and the legs would have had to bend to fit. It was wrong a second time in the
 Model view's ghost, which drew them converging at the floor while the holes were
 right the whole time — a picture disagreeing with the geometry, which is the
 worse way round to find out.
+
+## Per-layer brush — **shipped**
+
+`src/core/paint.ts`. A stroke that edits **one sheet**, drawn in the slice view
+at true scale with its neighbours visible. The thing a person wants when they
+say "this layer needs to come out a bit here".
+
+### It is a stroke, not a dragged vertex
+
+Decided before any of it was written, and worth repeating because dragging a
+contour point is the obvious thing to reach for. A contour vertex is produced by
+the field and has no identity that survives the form changing: nudge the sphere
+a millimetre and every vertex is somewhere else by a different amount, so there
+is nothing to store. A stroke is a thing a person made, and it survives.
+
+### A paint stroke is a sculpt stroke whose z never changes
+
+The same type on purpose. `SculptStroke` is already points plus a radius plus an
+operation, so the project file already knows how to write one and the parser
+already knows how to be careful with it — neither had to learn a second kind of
+bulk data.
+
+The operation being **on the stroke rather than on the feature** fell out of
+that, and it is better than what was planned: one brush holds what was painted
+on and what was carved off, in the order they were made, instead of a feature
+per direction and a tree full of them. TypeScript refused the worse model before
+it could be built.
+
+### Anchored to a height, not to a sheet number
+
+Hand-removed pins and hand-set twists key on the layer number and stop meaning
+what they meant the moment the material thickness changes. A stroke keys on the
+millimetre it was drawn at, so it stays where it was put and lands on whichever
+sheet is there.
+
+A stroke whose height falls outside the stack is **dropped, not clamped to an
+end** — clamping would silently move somebody's edit onto a sheet they never
+drew on — and the inspector counts them, because a drop that says nothing is the
+silence this program keeps having to fix.
+
+### One pitch tall, and after the shell
+
+The band is one pitch, centred on the plane the slice is sampled at, so a stroke
+reaches the whole sheet and neither neighbour. The field stays a field:
+continuous within a layer, stepping between layers, which is exactly what a
+stack of separately cut sheets does.
+
+It is applied after the shell, like a boss, for the same reason: painting
+material on and then handing it to the shell to hollow out again is not what
+anybody means by painting it on. **Additive strokes set bounds** — the fifth
+time that has had to be said here — because a stroke painted past the rim is
+material the sampling grid would otherwise cut off.
+
+### The gestures
+
+The pointer goes through the slice view's tool, of which there are now three.
+Nothing is written while the button is down: the stroke draws as a plain line
+and the field is evaluated on release, the same arrangement the 3D brush and the
+hole drag both arrived at.
+
+**Shift draws straight** back to where the stroke began — a modifier rather than
+a fourth button, so it can be picked up mid-gesture. The **wheel sizes the
+brush**, which is free here because this view has no zoom to argue with: the
+scale is fixed to the model's footprint on purpose. It is attached as a
+non-passive listener, since React registers `onWheel` passively and
+`preventDefault` would do nothing.
+
+### Onion skin
+
+The sheets either side, drawn behind this one in **the same two colours the pin
+holes use**: green above, violet below. One convention for "which way through
+the stack" rather than two.
+
+Off by default — most of the time a part is read on its own and two extra
+outlines are noise — and it replaces the widest-layer reference rather than
+joining it, because three outlines at once is a number nobody can read apart.
+
+Neighbours are **not turned** when the stack is twisted. This view draws parts as
+the laser cuts them, and a turned neighbour would be a picture of something that
+is never cut that way.
 
 ## Layer twist — **shipped**
 
