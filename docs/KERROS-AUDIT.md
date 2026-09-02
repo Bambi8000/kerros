@@ -160,4 +160,8 @@ reachability and silence are not, which is exactly where all five came from.
 - Layers 1 and 2: **done** (2026-09-02, at 0.26.0, verify green).
 - Layer 3: **pending** — checklist above. Reading work; safe to defer past the
   morph feature, since it does not get more dangerous by waiting.
-- Fixes A1–A5: **pending**, plan above.
+- Fixes A1–A5: **shipped** (2026-09-02, five commits, verify seen green after
+  each, smoke-tested in the browser). One deviation from the plan as written:
+  the unknown-RIG panel sits at the end of the dispatch rather than at the rod
+  branch, because the chain's tail was ShapeInspector — removing the stage
+  fallback alone would have swapped one wrong panel for another.
