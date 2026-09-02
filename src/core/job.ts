@@ -284,10 +284,6 @@ export function manifestText(input: ManifestInput): string {
   return lines.join('\n');
 }
 
-/** Width the label of a part will occupy, for laying out previews. */
-export function labelWidthOf(label: string, height: number): number {
-  return textWidth(label, height);
-}
 
 /* ------------------------------------------------------------------ *
  * Assembly document
