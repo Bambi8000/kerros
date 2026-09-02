@@ -199,7 +199,9 @@ export interface SpacerOptions {
 }
 
 /** Thickness of one ring: its own material, falling back to the stock's. */
-export function ringThickness(options: SpacerOptions): number {
+export function ringThickness(
+  options: Pick<SpacerOptions, 'thickness' | 'spacerThickness'>,
+): number {
   const own = options.spacerThickness;
   return own !== undefined && own > 0 ? own : options.thickness;
 }

@@ -6,6 +6,7 @@ import { kerfTestDocument, writeDxfR12 } from '../core/dxf';
 import { assemblyDocument, manifestText, sheetToDxf } from '../core/job';
 import { writePdf } from '../core/pdf';
 import { parseTwistOverrides, twistPeriod } from '../core/twist';
+import { ringThickness } from '../core/rig';
 import { KERROS_VERSION } from '../version';
 import { parseProject, projectFilename, serializeProject } from '../core/project';
 import { NumberField } from './NumberField';
@@ -185,15 +186,13 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
               spacerAchieved: sheets.spacerAchieved,
               version: KERROS_VERSION,
               // A ring is what you pick up off the bench, so the gaps are given
-              // in rings — and 0 means the rings are the stock.
-              // Read here rather than from `ringT` below, which is declared
-              // further down the component: this closure would reach it fine,
-              // but a value used above its own declaration is the shape of a
-              // bug this file has already had once.
-              ringThickness:
-                (stack.spacerThickness ?? 0) > 0
-                  ? (stack.spacerThickness as number)
-                  : material.thickness,
+              // in rings — and 0 means the rings are the stock. Resolved by the
+              // same function the spacer plan uses, so the panel and the plan
+              // cannot drift apart.
+              ringThickness: ringThickness({
+                thickness: material.thickness,
+                spacerThickness: stack.spacerThickness,
+              }),
               projectName,
               twistPerLayer: stack.twistPerLayer ?? 0,
               twistOverrides: stack.twistOverrides ?? '',
@@ -260,7 +259,10 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
    * A gap is whole rings and a ring is one sheet of its own material, so these
    * are the numbers the stack will be built from — not the ones typed in.
    */
-  const ringT = (stack.spacerThickness ?? 0) > 0 ? (stack.spacerThickness as number) : material.thickness;
+  const ringT = ringThickness({
+    thickness: material.thickness,
+    spacerThickness: stack.spacerThickness,
+  });
   const ringsAt = (mm: number) => (ringT > 0 ? Math.max(Math.round(Math.max(mm, 0) / ringT), 0) : 0);
   const ringsLow = ringsAt(stack.spacerHeight);
   const ringsHigh = ringsAt(stack.spacerHeightTop ?? stack.spacerHeight);
