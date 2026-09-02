@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.26.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.16.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -72,24 +72,6 @@ quietly revert them.**
 | no-fit polygons for true-shape nesting | raster occupancy | NFP's failure modes are subtly wrong polygons that look plausible until cut; a raster is coarse in a way that is measurable and always conservative |
 | no scale parameter, ever | **uniform** scale on imports | uniform scaling preserves the distance property; a mesh arrives at whatever size the exporter left it |
 | `npx tsc --noEmit` as the type check | `npm run verify` | the root tsconfig is a solution file with `"files": []`, so `--noEmit` against it checks **nothing** and exits happily |
-| marching cubes if the preview's edges start to mislead | dual contouring, if anything | both put vertices on cell edges, so MC chamfers what surface nets rounds; only a vertex placed *inside* the cell gives a corner the grid does not contain |
-| teach Chaikin to keep sharp corners | leave Chaikin alone | measured: it does not round corners at slicing resolution once the order is right, and keeping them lands the corner *further* from true |
-| layer pitch derived in one place, `layerPitch()` | the **layer plan** built in one place, `planLayers()` | `layerPitch` was never called, once, anywhere, while `store.ts` computed the same sum inline — a rule written and never wired to anything. And with gaps that vary there is no single pitch to derive |
-| spacer rings cut from the stock | rings are their own material | 0.5 mm steel wants 372 rings per rod from 0.5 mm rings and 62 from 3 mm ones; and once they differ they cannot share a sheet |
-| a claim in a comment is documentation | a claim in a comment is a guess | `parseProject`'s backwards-compatibility promise was a comment until a broken round-trip test forced it to be proved |
-| four ways to say which layers, one per feature | one `LayerSelector`, resolved in the pipeline | the same shape as the attachment problem; four modules that may not import one another would each have needed a copy of the *logic*, which drifts |
-| dispatch a panel on a feature's stage | dispatch on its kind | `stage === 'RIG'` caught fixtures three lines before the fixture branch, and `FixtureInspector` was unreachable from the day it was written |
-| polygon booleans for a leg hole over the rim | cut legs from the field | estimated at eighty lines, honestly nearer two hundred, and its failure mode is a plausible-looking wrong polygon — the field does it in none, and gives kerf and the empty case away free |
-| `polygonFitsInPart` guards every per-slice hole | it guards the ones with no partial shape | right for a rod and a socket, wrong for a leg, which should take a bite out of the rim rather than vanish |
-| a window's width is limited by where the wedge stops being exact | by what can be glued back together | 178° was the mathematics; 100° is the bench, and only when the plexi plugs are not cut |
-| seven-segment digits are unambiguous at 3 mm | they are one unburnt segment apart | measured on the cell: the closest seven-segment pair differs in 2.8% of its area, the shape-led digits in 20%. Written as fact and never checked until a pile of parts could not be sorted |
-| "ignore the inner paths" means keep the outermost rings | it means **union** | the first form assumes the rings nest. Eleven circles laid over each other kept whichever happened to have their first vertex outside the others and dropped the rest |
-| a union is the smallest distance with the right sign | a union is the smallest **signed** distance | inside one ring beside another's boundary, the first form reads "almost at the edge" while the point is deep in material — and a shell believes it and leaves a wall along every interior outline |
-| per-layer editing is dragged contour vertices | it is **strokes** | a vertex is produced by the field and has no identity that survives the form changing; a stroke is a thing a person made |
-| a brush stroke needs its own bulk type | a paint stroke **is** a sculpt stroke whose z never changes | the project file and the parser already knew how to carry one, and the operation being on the stroke gave one brush that both adds and carves |
-| a bend is a domain warp on the query point | a bend is an **arc**, and the distance to one is closed form | a warp is not an isometry, so the gradient stops being unit and every blend and kerf iso-level that reads the field is off by however much it stretches |
-| the corrugation in board is a texture inside it | the sheet itself is the wave | so a layer's cut outline is the model met by the wave surface, not by a plane — and turning a layer changes the part rather than only its edge |
-| bounds come from the SHAPE stage | anything that **adds** material sets bounds, whatever its stage | true for the whole program's life because every RIG feature removed. A boss adds, and a spoke past the form was clipped at the grid — a flat plate in the preview and a whole layer's outer ring dropped in the slicer |
 
 ## The recurring failure mode
 
@@ -100,44 +82,6 @@ type check that checked nothing.
 The rule that came out of it, and which is now honoured throughout: **a check that
 refuses to do something is obliged to say what it refused and why.** Counts of what
 was placed, what did not fit, and what it would have needed.
-
-A seventh, which is the same disease wearing the opposite coat: the gradient
-panel's "both gaps the same" was **said confidently and wrongly**. 3 mm and 4 mm
-are both one 3 mm ring, so the result was right and the reason was nonsense, and
-the warning written for exactly that case sat in a branch that could not open.
-Silence is one failure; a fluent wrong sentence is worse, because it stops the
-person looking.
-
-There is a sixth, kept separate because the cure is the same but the disease is
-not. `partPlacements` was a dependency of the memo that packed the sheets, so
-every drag of a part re-nested the whole job — half a second with true shape on,
-and the layout redrawn underneath the hand doing the dragging. **Not silence
-about what was refused, but silence about work nobody asked for.** The general
-form is worth having: an expensive derived value should be recomputed only by
-the things it actually depends on, and a hand placement does not depend on the
-packing — it comes after it.
-
-## The third recurring one: written, never wired
-
-Three in a single session, and they look nothing alike until they are put next
-to each other.
-
-- **`layerPitch()`** was named in this file as a binding rule — pitch derived in
-  one place, nothing else allowed to compute it. Nothing called it, while
-  `store.ts` computed the same sum inline.
-- **`parseProject`'s compatibility promise** was a comment saying an older file
-  opens as exactly the lamp it was. Nothing checked it until an unrelated test
-  broke and forced the question.
-- **`FixtureInspector`** was a whole panel, described at length in FEATURES,
-  that could not be reached because the dispatch matched a stage instead of a
-  kind.
-
-The rule that comes out of it: **a green `npm run verify` says the code compiles
-and the algorithms are right. It says nothing about whether anybody can reach
-them.** Fourteen validators were green through all three. The cures are cheap
-and different in each case — call the function, test the claim, click the thing
-— and the habit is to ask, of anything newly written, *what would fail if this
-were never run?*
 
 ## The other recurring one, now closed
 
@@ -175,16 +119,10 @@ src/core/
   fixture.ts      E27 mount, cable channel, Wago chamber, frames   [no imports]
   pattern.ts      perforation generators, EdgeIndex                [no imports]
   rig.ts          rod clearances, spans, spacer ring planning      [no imports]
-  layers.ts       which layers a per-slice feature applies to     [no imports]
-  legs.ts         splayed leg holes: the swept ellipse hull        [no imports]
-  profile2d.ts    2D outlines from SVG, indexed, as a field         [no imports]
-  twist.ts        the angle each sheet is turned at assembly        [no imports]
-  paint.ts        per-layer brush strokes, one sheet's band          [no imports]
   nest.ts         shelf packing, raster true-shape packing,
                   placement, collision, rotation, labels           [no imports]
   font.ts         stroke font for engraved labels                  [no imports]
   dxf.ts          DXF R12 writer, kerf test figure                 [no imports]
-  pdf.ts          hand-written PDF, ASCII only                     [no imports]
   project.ts      .kerros.json read and write                      [no imports]
   meshImport.ts   STL binary/ASCII and OBJ parsing                 [no imports]
   voxelise.ts     triangle soup to signed grid                     [no imports]
@@ -200,8 +138,7 @@ src/ui/
   workerBridge.ts   owns the one worker, the import cache, the fallback
   useSlices.ts      slicing, 250 ms debounce
   usePreview.ts     preview surface, 90 ms debounce
-  useSheets.ts      nesting, 120 ms debounce; hand placement and the
-                    collision check stay on this thread, deliberately
+  useSheets.ts      nesting — still on the main thread
 ```
 
 `pipeline.ts` names its imports with **explicit `.ts` extensions**. That is what
@@ -232,102 +169,54 @@ out of the store for exactly this reason and are re-exported from there.
 - **Import grids live outside the store**, in a module-level map, because a grid is
   megabytes of Float32 and has no business in state that gets compared on every
   render. `importRevision` is what tells the memos to recompute.
-- **The layer plan is built in one place**, `planLayers()` in `slice.ts`. This
-  replaces the old rule about `layerPitch()`, which named a function nobody
-  called. `pitchAt()` answers "which pitch, where" for the one caller that wants
-  a local number.
-- **Gaps are whole rings of the spacer material**, and the plan is built on the
-  gap that can be made, never the one that was asked for. A program that plans a
-  lamp it cannot build is worse than one that rounds and says so.
-- **A worker returns decisions, not geometry.** Slicing and the preview are handed
-  the tree, because a field is closures and closures do not cross a boundary.
-  Nesting is handed parts and returns a placement table, because neither packer
-  touches geometry — and a reply that carried it back would invite one to.
 - **Docs batch immediately after every push**, never deferred: this file plus
   `docs/KERROS-FEATURES.md`.
 - **Command blocks copy-paste ready**, zsh-safe, expected output stated, no `#`
   comments in interactive commands.
 - **Design before code**: plan the feature completely, then implement.
 - **No error boundary means one throw whites out the app.** There are four, around
-  the app, the viewport, the feature tree and the right-hand panel. They earn it:
-  a temporal-dead-zone slip in `Viewport.tsx` showed up as *"VIEWPORT STOPPED ·
-  Cannot access 'measureMode' before initialization"* with the rest of the
-  interface still working, rather than as a white page with nothing to read.
+  the app, the viewport, the feature tree and the right-hand panel.
 
 ## Pipeline as built
 
 Feature tree stages evaluate in order. A shell or a window applies where it sits,
 so sculpting a spout and then shelling hollows the spout too.
 
-1. **SHAPE** — eight SDF primitives with six combine ops; sculpt strokes; mesh
-   imports; extruded SVG outlines. `roundBox` at `r = 0` is an exact box; `prism` and `cone` cover the
-   angular forms it cannot. No scale on primitives, deliberately; imports carry a uniform one.
+1. **SHAPE** — six SDF primitives with six combine ops; sculpt strokes; mesh
+   imports. No scale on primitives, deliberately; imports carry a uniform one.
    Shapes can be grouped under other shapes.
 2. **CARVE** — shell with optional solid caps; windows, which subtract a wedge and
    emit the removed piece as a part in another material.
-3. **RIG** — rods with Z-span and clearance holes, spacer rings, the lamp
-   fixtures, and splayed legs. Legs are the one thing in this stage cut from
-   the field rather than per slice, so that a leg over the rim notches it.
+3. **RIG** — rods with Z-span and clearance holes, spacer rings, and the lamp
+   fixtures.
 4. **SLICE** — mid-plane sampling, marching squares, Chaikin then RDP, kerf at the
    iso-level, thin-feature check.
 5. **PATTERN** — perforation per slice, four generators, one bridge test.
-6. **LAYOUT** — nesting per material in the worker, either bounding-box shelves
-   or raster true-shape; stroke-font layer numbers engraved; manual placement with pinning
+6. **LAYOUT** — nesting per material, either bounding-box shelves or raster
+   true-shape; stroke-font layer numbers engraved; manual placement with pinning
    and rotation; true-shape collision reporting.
-7. **EXPORT** — DXF R12 per sheet, build manifest, assembly PDF, kerf test and
-   glyph test figures, project file.
+7. **EXPORT** — DXF R12 per sheet, build manifest, kerf test figure, project file.
    Native save dialogs through Tauri; the browser download path still works.
 
 Four workspace modes: **Model** (preview, direct manipulation, sculpting),
-**Slice** (one layer in 2D, fixed scale, and where per-slice holes are picked up
-and moved), **Stack** (exploded at real pitch), **Sheet** (nesting on the bed).
-
-Slice mode routes the pointer through a **tool**, of which there are three:
-select, measure, and the brush. That the pointer went through a tool at all is
-what made the brush an addition rather than a rewrite — and the guard that ends
-the select branch sits *after* the others, or a fourth tool is unreachable the
-way `FixtureInspector` was.
+**Slice** (one layer in 2D, fixed scale), **Stack** (exploded at real pitch),
+**Sheet** (nesting on the bed).
 
 ## Known limits
 
+- **Nesting still runs on the main thread.** True-shape costs about 0.5 s per
+  layout and freezes the UI for it. The worker infrastructure exists; moving it is
+  straightforward and is the obvious next piece of housekeeping.
 - **WKWebView is 1.5–2× slower than Chrome** at the numeric work, and the native
   shell uses it. `npm run dev` in a browser is still the faster way to develop.
 - **True-shape nesting resolution is not monotonic.** Greedy bottom-left packing
   can do better at 1.5 mm than at 1 mm. The panel offers the dial and says so.
-- **A profile's field is exact only to its reach**, which the pipeline sizes
-  from the deepest shell in the tree. A blend wider than the reach reads a
-  clamped number, and the inspector says so.
-- **A profile's SVG is not saved**, only its path — the same trade mesh import
-  makes, and it has to be located again after opening.
-- **A twisted sheet's outline is identical to an untwisted one**, so nothing
-  about a cut part says which way round it goes. The assembly PDF carries the
-  angle; without it, the parts alone cannot be assembled.
 - **An import's field is exact only to `reach × scale`** from the surface, clamped
   beyond. A shell thicker than that puts its cavity on the clamp. The inspector
   warns; raising the resolution or the scale fixes it.
 - **Project files record an import's path, not its geometry.** A grid is megabytes
   and the project file is meant to stay readable, so imports must be located again
   after opening.
-- **A paint stroke outside the stack does nothing.** It is anchored to the
-  height it was drawn at, so changing the material thickness can leave one above
-  the top sheet or below the bottom one. It is dropped rather than moved, and
-  the inspector counts them.
-- **A pin's removal keys do not survive a change in sheet count.** They are
-  `gap:position` against the layer numbering, so changing the material thickness
-  points them at different sheets. The same fragility hand placements on the bed
-  already carry, but structural here rather than cosmetic.
-- **A leg hole is not guarded.** `polygonFitsInPart` refuses a rod or a socket
-  that crosses a contour, because a partial one of those is not a thing; a leg
-  is cut from the field precisely so it *can* notch the rim, which means a thin
-  bridge left between a leg and the edge will be cut. The thin-feature check
-  rings it and the profiles panel counts it, but nothing refuses it.
-- **A fixture is skipped on any layer it does not fit**, which is right for a
-  socket and arguable for a Wago chamber selected across the whole stack: a
-  missing pocket in the middle is a floor inside what was meant to be a cavity,
-  and the inspector reports a count rather than which layers. Left alone
-  deliberately — the failure mode was reasoned about, not met, and physical
-  feedback outranks reasoning here. Fix it when a stack refuses to take a
-  connector.
 - **No cross-slicing.** Everything is horizontal layers. See the plan below.
 - **The bundle is unsigned.** It runs on the machine that built it; another Mac
   quarantines it. Proper notarising needs a paid Apple Developer account.
@@ -366,15 +255,11 @@ about to happen when this handoff was written; ask before assuming.
 
 ## Candidates, in the order I would take them
 
-1. ~~**Assembly PDF.**~~ **Shipped**, and waiting for the cut was right: the
-   thing that turned out to be hard was telling one part from another, not
-   remembering the order, so the drawings became the document and the table the
-   appendix. All at one scale, because fitting each to its own box makes a 40 mm
-   ring and a 200 mm ring identical on the page.
-2. **Cross-slicing (fin / eggcrate mode)**, discussed and scoped. Phase A is
-   part paid for: the swept-section arithmetic legs needed — a tilted solid met
-   by a plane, and the sweep between two faces of a sheet — is the same
-   mathematics, and it is written and validated.
+1. **Nesting into the worker.** Removes the last main-thread freeze, and the
+   infrastructure is already there.
+2. **Assembly PDF.** A numbered stack is not self-explanatory once it is a pile of
+   parts on a bench.
+3. **Cross-slicing (fin / eggcrate mode)**, discussed and scoped:
    - **Phase A: generalised slice planes.** `sliceModel` assumes `z = const`, but
      marching squares, Chaikin, RDP, kerf and grouping all work in the plane's own
      coordinates and do not care which plane it is. Generalise to an origin plus
@@ -390,65 +275,13 @@ about to happen when this handoff was written; ask before assuming.
    - **Phase C: assembly.** A fin stack holds nothing up before it is assembled,
      so it needs an order and new refusals: a fin crossing no disc, a disc too
      narrow for a notch, a notch that eats a fin thin enough to snap.
-3. Roadmap, unranked: per-gap spacer heights, polygon-shaped perforation, a lamp
+4. Roadmap, unranked: per-gap spacer heights, polygon-shaped perforation, a lamp
    preview with an emissive source in the cavity, SVG export, a folder of user
    generator modules, material usage and cost, registration notches for glue-stack
    mode.
 
-## Eleven asked for, and the four things they need first
-
-Scoped in conversation and recorded here so the plan does not live only in a chat
-log. Each idea is listed against the foundation it waits on rather than in the
-order it was asked for, because the foundations are shared and building them
-once is the whole saving.
-
-| Foundation | What it unlocks |
-| --- | --- |
-| ~~**An explicit layer plan**~~ — **shipped**, as `{ index, z0, z, thickness, gapAbove }` | varying gaps *(shipped)*; interleaved short pins; per-layer cable holes; per-layer sculpting |
-| ~~**One `LayerSelector`**~~ — **shipped**, for per-slice features; windows keep their band, and legs count planes because the field precedes the sheets | interleaved pins and per-layer cable holes are now mostly wiring |
-| ~~**`profile2d.ts`**~~ — **shipped**, an indexed 2D distance field with two fill rules | SVG import *(shipped)*; morph between key layers and per-layer editing, both now mostly composition |
-| ~~**Per-layer editing**~~ — **shipped**, as brush strokes anchored to a height and confined to one sheet's band | the last of the eleven that needed a foundation rather than wiring |
-| **A material library** — calliper, flute pitch and profile, direction, phase | corrugated sheet as stock; stack pitch that depends on it. Two things are already in place: layer twist, which is what turns a wave strong enough to be geometry, and a slice sampler that takes its height per layer, so the wave arrives as `z = const + wave(u, v)` in one place. The gap between two sheets will depend on the angle between their waves, and `planLayers` already carries `gapAbove` per plane rather than one pitch |
-
-The layer plan breaks a binding convention on purpose: `layerPitch()` in
-`types.ts` is currently the one place pitch is derived, and with varying gaps
-there is no single pitch to derive. The rule is replaced rather than dropped —
-**the layer plan is built in one place** — which is the same idea in a form that
-survives. Everything that computes `k · pitch` reads the list instead.
-
-Two constraints that have to be said before anyone builds against them:
-
-- ~~A gap is always a whole number of spacer rings.~~ **Shipped**, and the ring
-  material is now separate from the stock, which is what makes 0.5 mm sheet
-  usable at all. The panel says how many steps a gradient can actually take.
-- ~~A slanted leg hole is not the mid-plane ellipse.~~ **Shipped.** The sweep
-  between the two faces, as the hull of two ellipses, and measured: 421 points
-  of 720 around a 45° leg's outline at the top face fall outside the mid-plane
-  ellipse. Same mathematics as cross-slicing Phase A, which is now part paid.
-
-Two of the eleven turned out to exist already: solid top and bottom are the
-shell's caps, and measuring the distance between overlapping parts by their real
-outlines is what `analyseSheet` and true-shape nesting already do — though
-true-shape is off by default, so a first look shows bounding boxes.
-
-Two need a decision recorded. Per-layer editing is **brush strokes and 2D
-profiles, not dragged vertices**: a vertex is produced by the field and has no
-identity that survives the form changing, so the durable thing to store is the
-stroke. And interleaved pins **must leave every layer fastened to both
-neighbours**, which means the generator has to check its own output and say so
-when a layer ends up held on one side only.
-
 ## Practical notes from cutting actual lamps
 
-- **Measure the board, not the packet.** A lamp cut at 3 mm settings from 4 mm
-  card came out an ellipsoid rather than a sphere: eighteen sheets a millimetre
-  taller than planned is eighteen millimetres of extra height. The program
-  planned correctly for the number it was given, and a sphere is not obtainable
-  from unmeasured stock.
-- **Cut the glyph test with it.** `glyphTestDocument` answers what size a layer
-  number has to be on *this* board. Seven-segment digits were adopted on
-  reasoning and had to be replaced after a pile of parts could not be sorted;
-  the size is the same kind of question and gets the same treatment.
 - **Cut the kerf test into the real material before anything else**, and measure
   the outer square and inner square separately. If they disagree the beam is not
   perpendicular and no single kerf value will save the fit.
@@ -469,59 +302,6 @@ when a layer ends up held on one side only.
   piece has nothing holding it. It is easy to miss because the Model view looks
   continuous.
 
-## Two right things in the wrong order
-
-A fourth family, and it is invisible to every validator because **both halves
-are correct on their own**. Three instances:
-
-- `stage === 'RIG'` tested before the kind, so `FixtureInspector` was
-  unreachable — and legs and pins would each have repeated it.
-- A state declaration read by a dependency array above the line that declares
-  it: a temporal dead zone, caught by an error boundary rather than by `tsc`.
-- Pin colours stroked before the selection highlight, which paints over every
-  hole belonging to the selected feature — so the colours vanished exactly when
-  the pins feature was selected.
-
-Nothing type-checks this and nothing can: order is not a property either piece
-has. The habit that helps is to ask, of any two things that touch the same
-object, *which of these runs second, and does it overwrite the other?*
-
-## Where the views deliberately disagree
-
-Everywhere else, two pictures of the same thing agreeing is a requirement — a
-validator checks that the preview and the slicer put the top of the model in the
-same place, because if they ever stop agreeing the shape on screen is not the
-shape that gets cut.
-
-**Layer twist is the one exception, and it is on purpose.** The field knows
-nothing about it, because the turning happens when the stack is assembled:
-
-- **Model** shows the design the parts are cut from.
-- **Slice** shows a part as the laser cuts it, holes turned against the outline.
-- **Stack** shows the lamp, sheets turned and holes back in line.
-
-Because it is an exception to a rule this file states elsewhere, it is said out
-loud where somebody meets it: the model view's readout carries it whenever a
-twist is set. An exception that lives only in the code is indistinguishable from
-the bug it resembles.
-
-## The ghost is a second implementation
-
-Worth its own note because it has been wrong three times while the geometry was
-right every time: a leg ghost tilted the wrong way, then drawn the full height
-of the model whatever layers were chosen, then guessing a depth with nothing
-sliced.
-
-A ghost is drawn in three dimensions from the same numbers the holes are cut
-from in two, and **nothing compares the two**. It is the one place in this
-program where the same thing is worked out twice, and a second implementation
-drifts. Every other duplication here is a *shape* — `WindowFrame` and
-`PlaneFrame` — which is safe precisely because shapes do not drift.
-
-The cure, when it is worth paying for, is to derive the ghost from the same
-`legSections` the field uses rather than from the spec. Until then: when a
-picture and a slice disagree, suspect the picture.
-
 ## How these sessions run
 
 Worth knowing, because it is a working agreement rather than a preference.
@@ -534,24 +314,6 @@ Worth knowing, because it is a working agreement rather than a preference.
 - **Work arrives as a zip of changed files only**, unpacked to `/tmp` and rsynced
   over the repo. That is why local edits get overwritten: say so when you have made
   one, and it will be carried into the next bundle.
-- **Grep for the symbol you changed, not the topic you changed.** Before removing
-  or resignaturing an export, search the whole tree for that identifier and paste
-  the result. This rule exists because it was adopted mid-session and then failed
-  anyway: `composeField` gained a parameter, the search was for `spacerHeight`
-  and `.pitch`, and `main` was pushed in a state that would not compile.
-- **Nothing is committed on a verify that was not seen.** The same push happened
-  because a commit was made between a red run and the fix for it.
-- **A test's expected value derived by hand from geometry is a guess.** Three
-  times in one session a check asserted a number worked out on paper — a band
-  edge, a fixture's layers, a mid-plane — and the arithmetic was wrong, not the
-  code. Derive the expectation from the model in the test, or run it once and
-  read it.
-- **And the test's *model* has to suit the feature, not only its numbers.** A
-  fourth time the derived number was right and the shape was wrong: a socket
-  aimed into a shelled sphere's cavity, then legs on a sphere's narrowest
-  sheets, then legs whose spread was measured at the bottom and aimed halfway
-  up. Each read as zero holes and looked like a bug in the code. If a feature is
-  for base sheets, the test model needs a base sheet — a sphere has none.
 - **Every geometry change comes with validator checks in the same batch**, and the
   checks are written to fail for the right reason. Several times a red check has
   been the test being wrong rather than the code, and saying so plainly is part of
