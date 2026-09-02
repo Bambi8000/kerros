@@ -7,6 +7,7 @@ import { assemblyDocument, manifestText, sheetToDxf } from '../core/job';
 import { writePdf } from '../core/pdf';
 import { parseTwistOverrides, twistPeriod } from '../core/twist';
 import { ringThickness } from '../core/rig';
+import { workerAvailable } from './workerBridge';
 import { KERROS_VERSION } from '../version';
 import { parseProject, projectFilename, serializeProject } from '../core/project';
 import { NumberField } from './NumberField';
@@ -814,6 +815,18 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
             onChange={setRingWidth}
           />
         ) : null}
+        {/*
+          The inline fallback works, so this is a note rather than a warning —
+          but running 1.5–2x slower with no worker and saying nothing about it
+          was this program's recurring failure, written down and wired up here.
+        */}
+        {workerAvailable() ? null : (
+          <div className="derived">
+            Running without a background worker: slicing, the preview and
+            nesting happen on the interface thread. Everything works, but a
+            heavy model will feel slower.
+          </div>
+        )}
         {sheetCount > 0 ? (
           <div className="derived derived-strong">
             {sheetCount} {sheetCount === 1 ? 'sheet' : 'sheets'}, {sheets.partCount} parts
