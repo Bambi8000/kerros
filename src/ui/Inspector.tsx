@@ -2582,7 +2582,7 @@ export function Inspector({ slices, patternCounts, holeMisses, legGaps, pinLoose
   if (feature.kind === 'legs') {
     return <LegsInspector feature={feature} slices={slices} gaps={legGaps[feature.id]} />;
   }
-  if (feature.kind === 'rod' || feature.stage === 'RIG') {
+  if (feature.kind === 'rod') {
     return <RodInspector feature={feature} />;
   }
   if (feature.kind === 'import') return <ImportInspector feature={feature} />;
@@ -2597,6 +2597,20 @@ export function Inspector({ slices, patternCounts, holeMisses, legGaps, pinLoose
         slices={slices}
         sliced={sliced}
       />
+    );
+  }
+  /*
+   * An unknown RIG kind is named, not guessed at. Falling through to
+   * ShapeInspector would hand it a shape's panel the way fixtures once got a
+   * rod's — and a wrong panel that looks like it works is worse than one that
+   * says it is missing. A new RIG kind adds its own branch above this.
+   */
+  if (feature.stage === 'RIG') {
+    return (
+      <div className="inspector-empty">
+        No inspector for kind &lsquo;{feature.kind}&rsquo; — a dispatch branch
+        is missing here, not anything in your model.
+      </div>
     );
   }
   return <ShapeInspector feature={feature} />;

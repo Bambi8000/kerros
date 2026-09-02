@@ -237,7 +237,20 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     for (const f of features) {
       if (!f.enabled) continue;
       if (f.stage === 'PATTERN') continue;
-      if (f.kind === 'rod' || f.stage === 'RIG') out.add(f.id);
+      /*
+       * Explicit kinds, not the whole RIG stage. A new RIG kind is added here
+       * deliberately or not at all: grabbable by default, for a feature whose
+       * px/py nothing reads, would be the gizmo-writing-into-the-void bug
+       * again. This list matches the six kinds the store creates with RIG.
+       */
+      const grabbableKind =
+        f.kind === 'rod' ||
+        f.kind === 'boss' ||
+        f.kind === 'pins' ||
+        f.kind === 'legs' ||
+        f.kind === 'paint' ||
+        f.kind.startsWith('fixture:');
+      if (grabbableKind) out.add(f.id);
     }
     return out;
   }, [features]);
