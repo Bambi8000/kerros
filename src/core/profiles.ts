@@ -36,11 +36,3 @@ export const DEFAULT_STACK: StackSettings = {
   twistOverrides: '',
 };
 
-/** Metric clearance holes, mm. Overridable per rod once RIG lands in M3. */
-export const CLEARANCE_HOLES: Record<string, number> = {
-  M3: 3.2,
-  M4: 4.3,
-  M5: 5.3,
-  M6: 6.4,
-  M8: 8.4,
-};
