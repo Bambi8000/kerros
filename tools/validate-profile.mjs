@@ -16,12 +16,15 @@ import {
   profileDistance,
   profileBounds,
   fitProfile,
+  centreProfile,
   ringArea,
   distanceToRing,
   insideRing,
   indexProfile,
   indexedDistance,
   extrudeProfile,
+  morphPlaneDistance,
+  extrudeMorph,
 } from '../src/core/profile2d.ts';
 
 let failures = 0;
@@ -33,6 +36,15 @@ function check(name, condition, detail = '') {
   }
 }
 const near = (a, b, tol = 1e-6) => Math.abs(a - b) < tol;
+
+const circleRing = (cx, cy, r, steps = 64) => {
+  const ring = [];
+  for (let i = 0; i < steps; i++) {
+    const a = (i / steps) * Math.PI * 2;
+    ring.push(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+  }
+  return ring;
+};
 
 const svg = (body) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">${body}</svg>`;
@@ -308,6 +320,28 @@ console.log('profile: sized in millimetres');
   check('an empty set is not a division by zero', fitProfile([], 100).length === 0);
 }
 
+console.log('profile: centred, for keys drawn in different corners');
+{
+  const { rings } = parseSvg(DONUT);
+  const centred = centreProfile(rings);
+  const box = profileBounds({ rings: centred, fill: 'outline' });
+  const before = profileBounds({ rings, fill: 'outline' });
+
+  /*
+   * The Centre button for a morph key. Mixing distances only lines up what the
+   * drawings line up: two outlines drawn in opposite corners of their pages
+   * morph through a sideways sweep nobody asked for. Centring the bounding box
+   * is the predictable alignment; anything finer belongs in the drawing.
+   */
+  check(
+    'the bounding box centre lands on the origin',
+    near((box.minX + box.maxX) / 2, 0, 1e-9) && near((box.minY + box.maxY) / 2, 0, 1e-9),
+  );
+  check('and nothing is scaled', near(box.w, before.w, 1e-9) && near(box.h, before.h, 1e-9));
+  check('every ring is carried', centred.length === rings.length);
+  check('an empty set survives', centreProfile([]).length === 0);
+}
+
 console.log('profile: the index says the same thing, faster');
 {
   /*
@@ -431,6 +465,267 @@ console.log('profile: extruded');
     if (Number.isFinite(g) && g > 0.5) worstGradient = Math.max(worstGradient, Math.abs(g - 1));
   }
   check('the gradient is unit where it should be', worstGradient < 0.02, `off by ${worstGradient.toFixed(4)}`);
+}
+
+console.log('profile: morph between key profiles');
+{
+  /*
+   * The keys are indexed with a reach floor, the same way the pipeline sizes
+   * minReach for a shell: a 64-gon's default reach is only two cells (~15 mm),
+   * and these checks read the field 30 mm deep. Without the floor they read
+   * the clamp — which the first run of this section did, and reported -20
+   * where the geometry says -40.
+   */
+  const A = indexProfile({ rings: [circleRing(0, 0, 30)], fill: 'outline' }, 1, 0.06, 200);
+  const B = indexProfile({ rings: [circleRing(0, 0, 50)], fill: 'outline' }, 1, 0.06, 200);
+  const keys = [
+    { z: 0, index: A },
+    { z: 100, index: B },
+  ];
+
+  const points = [];
+  for (let i = 0; i < 200; i++) points.push([Math.sin(i * 1.3) * 70, Math.cos(i * 2.1) * 70]);
+
+  /*
+   * On a key plane only that key's index is evaluated, so the check is for
+   * identity, not tolerance: a slice taken on a key is that profile bit for
+   * bit, which is what keeps a morph honest about the drawings it was given.
+   */
+  check(
+    'a key plane is its own profile, bit for bit',
+    points.every(
+      ([x, y]) =>
+        morphPlaneDistance(keys, 'linear', x, y, 0) === indexedDistance(A, x, y) &&
+        morphPlaneDistance(keys, 'smooth', x, y, 100) === indexedDistance(B, x, y),
+    ),
+  );
+
+  /*
+   * Beyond the ends the end key holds — clamped, not faded. The extrusion's
+   * slab is a `max` against this value at its own edge, and a value that
+   * changed outside the slab would eat material at the slab edge: the same
+   * reason the layer lookup extrapolates rather than clamping.
+   */
+  check(
+    'beyond the ends the end key holds, unchanged',
+    points.every(
+      ([x, y]) =>
+        morphPlaneDistance(keys, 'smooth', x, y, -40) === indexedDistance(A, x, y) &&
+        morphPlaneDistance(keys, 'linear', x, y, 250) === indexedDistance(B, x, y),
+    ),
+  );
+
+  /*
+   * Derived from the model in the test: concentric circles mix to the circle
+   * of the mixed radius, so midway the origin reads −(30 + 50)/2 — less the
+   * 64-gon's apothem shortfall, hence the tolerance.
+   */
+  const linHalf = morphPlaneDistance(keys, 'linear', 0, 0, 50);
+  const smoHalf = morphPlaneDistance(keys, 'smooth', 0, 0, 50);
+  check('midway between two circles is the mid circle', near(linHalf, -40, 0.2), `${linHalf.toFixed(3)}`);
+
+  /*
+   * smoothstep crosses 0.5 exactly at the midpoint, so the easings agree
+   * there — one geometric check covers both — and disagree at the quarter,
+   * where linear reads r = 35 and smooth r ≈ 33.1. The second check exists
+   * because a dropped easing option would pass every other check here: the
+   * same lesson as the SliceOptions contract, where a setting has to be shown
+   * to change the result.
+   */
+  check('the easings agree at the midpoint, by construction', near(linHalf, smoHalf, 1e-12));
+  const linQuarter = morphPlaneDistance(keys, 'linear', 0, 0, 25);
+  const smoQuarter = morphPlaneDistance(keys, 'smooth', 0, 0, 25);
+  check(
+    'and the easing setting changes the field',
+    Math.abs(linQuarter - smoQuarter) > 1,
+    `linear ${linQuarter.toFixed(2)}, smooth ${smoQuarter.toFixed(2)}`,
+  );
+
+  // Three keys, symmetric, so the same height above and below the middle key
+  // must read the same number — the bracketing picks its segment piecewise.
+  const A2 = indexProfile({ rings: [circleRing(0, 0, 30)], fill: 'outline' }, 1, 0.06, 200);
+  const three = [
+    { z: 0, index: A },
+    { z: 100, index: B },
+    { z: 200, index: A2 },
+  ];
+  check(
+    'three keys bracket piecewise: a symmetric stack reads symmetric',
+    near(
+      morphPlaneDistance(three, 'linear', 17, 9, 50),
+      morphPlaneDistance(three, 'linear', 17, 9, 150),
+      1e-12,
+    ),
+  );
+  check(
+    'and an interior key plane is its own profile too',
+    morphPlaneDistance(three, 'smooth', 12, -8, 100) === indexedDistance(B, 12, -8),
+  );
+
+  /*
+   * The crease at a key is what `smooth` exists to remove: its derivative is
+   * zero at both ends of a segment, so the slope either side of an interior
+   * key is flat, where linear arrives at −0.2 mm/mm and leaves at +0.2.
+   * One-sided differences, because a central one straddling the kink averages
+   * the two slopes, and a symmetric stack averages them to exactly zero.
+   */
+  const dAt = (easing, z) => morphPlaneDistance(three, easing, 0, 0, z);
+  const below = (easing) => (dAt(easing, 100) - dAt(easing, 99.8)) / 0.2;
+  const above = (easing) => (dAt(easing, 100.2) - dAt(easing, 100)) / 0.2;
+  check(
+    'smooth is flat across an interior key',
+    Math.abs(below('smooth')) < 0.02 && Math.abs(above('smooth')) < 0.02,
+    `slopes ${below('smooth').toFixed(4)} / ${above('smooth').toFixed(4)}`,
+  );
+  check(
+    'where linear creases',
+    below('linear') < -0.15 && above('linear') > 0.15,
+    `slopes ${below('linear').toFixed(3)} / ${above('linear').toFixed(3)}`,
+  );
+}
+
+console.log('profile: morph across a topology change');
+{
+  // Reach floor again, so the deep samples of the continuity walk read
+  // geometry rather than the clamp.
+  const one = indexProfile({ rings: [circleRing(0, 0, 40)], fill: 'outline' }, 1, 0.06, 200);
+  const two = indexProfile(
+    { rings: [circleRing(-30, 0, 15), circleRing(30, 0, 15)], fill: 'outline' },
+    1,
+    0.06,
+    200,
+  );
+  const keys = [
+    { z: 0, index: one },
+    { z: 100, index: two },
+  ];
+
+  const flipsAt = (z) => {
+    let count = 0;
+    let prev = 0;
+    for (let x = -80; x <= 80; x += 0.25) {
+      const s = Math.sign(morphPlaneDistance(keys, 'smooth', x, 0, z));
+      if (s === 0) continue;
+      if (prev !== 0 && s !== prev) count++;
+      prev = s;
+    }
+    return count;
+  };
+
+  /*
+   * The reason profiles are fields: one ring at the bottom, two at the top,
+   * and nothing has to decide when to split — the mix is continuous and its
+   * zero level splits on its own.
+   */
+  check('one piece near the bottom', flipsAt(2) === 2, `${flipsAt(2)} sign changes`);
+  check('two pieces near the top', flipsAt(98) === 4, `${flipsAt(98)} sign changes`);
+
+  // Continuity through the split: no height steps the field, anywhere.
+  let worstStep = 0;
+  for (const [x, y] of [[0, 0], [0, 20], [22, 0], [35, 8], [-15, -25]]) {
+    let prev = morphPlaneDistance(keys, 'smooth', x, y, 0);
+    for (let z = 0.5; z <= 100; z += 0.5) {
+      const d = morphPlaneDistance(keys, 'smooth', x, y, z);
+      worstStep = Math.max(worstStep, Math.abs(d - prev));
+      prev = d;
+    }
+  }
+  check(
+    'the field is continuous through the split',
+    worstStep < 1,
+    `largest step ${worstStep.toFixed(3)} mm over 0.5 mm of height`,
+  );
+
+  /*
+   * The measurement that decides whether the kerf iso-shift needs a
+   * normalisation, taken rather than reasoned about. A convex mix of two
+   * 1-Lipschitz plane fields cannot exceed 1, so the shift can only
+   * over-compensate — by 1/|∇| — and only where the keys' nearest edges
+   * disagree in direction, which is near the pinch. The floor is loose on
+   * purpose: what matters is that the number is measured and on record.
+   */
+  let gMin = Infinity;
+  let gMax = 0;
+  const e = 1e-3;
+  const at = (x, y, z) => morphPlaneDistance(keys, 'smooth', x, y, z);
+  for (const z of [30, 50, 70]) {
+    for (let x = -70; x <= 70; x += 1.5) {
+      for (let y = -55; y <= 55; y += 1.5) {
+        const d = at(x, y, z);
+        if (Math.abs(d) > 2) continue;
+        const g = Math.hypot(
+          (at(x + e, y, z) - at(x - e, y, z)) / (2 * e),
+          (at(x, y + e, z) - at(x, y - e, z)) / (2 * e),
+        );
+        gMin = Math.min(gMin, g);
+        gMax = Math.max(gMax, g);
+      }
+    }
+  }
+  check('the mix never steepens the in-plane field', gMax < 1.02, `max |grad| ${gMax.toFixed(4)}`);
+  check(
+    'and near the surface it stays a usable distance',
+    gMin > 0.2,
+    `min |grad| ${gMin.toFixed(3)} — the kerf shift over-compensates by at most 1/this`,
+  );
+}
+
+console.log('profile: morph extruded');
+{
+  const square = { rings: [[-50, -50, 50, -50, 50, 50, -50, 50]], fill: 'outline' };
+  const S = indexProfile(square);
+  const S2 = indexProfile(square);
+  const keys = [
+    { z: -50, index: S },
+    { z: 50, index: S2 },
+  ];
+
+  /*
+   * Two identical keys are the plain extrusion — the identity that makes the
+   * change safe to make. Bit for bit on the key planes; between them the mix
+   * of two equal numbers costs a rounding step, so the hold is 1e-9 rather
+   * than ===.
+   */
+  let worst = 0;
+  let worstRound = 0;
+  for (let i = 0; i < 3000; i++) {
+    const x = Math.sin(i * 1.1) * 90;
+    const y = Math.cos(i * 1.7) * 90;
+    const z = Math.sin(i * 2.3) * 90;
+    for (const easing of ['linear', 'smooth']) {
+      worst = Math.max(
+        worst,
+        Math.abs(extrudeMorph(keys, easing, 0, x, y, z) - extrudeProfile(S, 100, 0, x, y, z)),
+      );
+      worstRound = Math.max(
+        worstRound,
+        Math.abs(extrudeMorph(keys, easing, 10, x, y, z) - extrudeProfile(S, 100, 10, x, y, z)),
+      );
+    }
+  }
+  check('two equal keys are the plain extrusion', worst < 1e-9, `worst ${worst.toExponential(1)}`);
+  check('round included, so the slab clamp matches', worstRound < 1e-9, `worst ${worstRound.toExponential(1)}`);
+  check(
+    'and a round larger than the half-span does not invert it',
+    Number.isFinite(extrudeMorph(keys, 'linear', 80, 0, 0, 0)) &&
+      near(extrudeMorph(keys, 'linear', 80, 0, 0, 0), extrudeProfile(S, 100, 80, 0, 0, 0), 1e-9),
+  );
+
+  check('above the top it is the height above', near(extrudeMorph(keys, 'smooth', 0, 0, 0, 70), 20, 1e-6));
+  check('beside it, the distance beside', near(extrudeMorph(keys, 'linear', 0, 70, 0, 0), 20, 1e-6));
+
+  /*
+   * Refusals a hand-edited project file can provoke. One key has no span to
+   * fill, so it reads as empty — the pipeline falls back to the plain
+   * extrusion for that case and reports it, which is phase 2's job; this only
+   * has to refuse rather than invent a height.
+   */
+  check('one key reads as empty, not as a guess', extrudeMorph([{ z: 0, index: S }], 'linear', 0, 0, 0, 0) > 1000);
+  check('no keys too', extrudeMorph([], 'smooth', 0, 0, 0, 0) > 1000);
+  check(
+    'two keys on one height do not divide by zero',
+    Number.isFinite(extrudeMorph([{ z: 0, index: S }, { z: 0, index: S2 }], 'smooth', 0, 10, 5, 3)),
+  );
 }
 
 console.log('');

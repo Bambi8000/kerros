@@ -28,6 +28,17 @@ export interface ProjectStroke {
   points: number[];
 }
 
+/** One key of a morphing profile. Its rings are not saved; the path is. */
+export interface ProjectProfileKey {
+  /** Height in the feature's local Z, mm. */
+  z: number;
+  /** Longest axis the outline is fitted to when its SVG is read, mm. */
+  size: number;
+  /** 'outline' or 'holes'. */
+  fill: string;
+  path: string;
+}
+
 export interface ProjectFeature {
   id: string;
   kind: string;
@@ -37,6 +48,8 @@ export interface ProjectFeature {
   params: Record<string, ParamValue>;
   /** Sculpt features only. Omitted entirely when there are none. */
   strokes?: ProjectStroke[];
+  /** Profile features only: morph keys. Omitted entirely when there are none. */
+  keys?: ProjectProfileKey[];
 }
 
 export interface ProjectPlacement {
@@ -254,6 +267,44 @@ function parseFeature(
       });
     });
     if (strokes.length > 0) feature.strokes = strokes;
+  }
+
+  if (Array.isArray(row.keys)) {
+    const keys: ProjectProfileKey[] = [];
+    row.keys.forEach((raw2, at) => {
+      const key = asRecord(raw2);
+      const z = asNumber(key.z, NaN);
+      // A key is a profile at a height, and a key with no height is nowhere.
+      if (!Number.isFinite(z)) {
+        warnings.push(`Feature ${index + 1} key ${at + 1} had no height and was dropped.`);
+        return;
+      }
+      const fill = asString(key.fill, 'holes');
+      keys.push({
+        z,
+        size: Math.max(asNumber(key.size, 100), 0.1),
+        fill: fill === 'outline' ? 'outline' : 'holes',
+        path: asString(key.path, ''),
+      });
+    });
+
+    /*
+     * Sorted on the way in, so nothing downstream has to wonder. Rings are
+     * deliberately not read even when a hand-edited file carries them: like
+     * the profile's own rings, they are located again from the path, and a
+     * file is not the place megabytes of outline belong.
+     *
+     * Two keys on one height survive — the field holds the lower one between
+     * them rather than dividing by zero — but it is a thing to say, because
+     * the person almost certainly meant to type two different numbers.
+     */
+    keys.sort((a, b) => a.z - b.z);
+    for (let i = 1; i < keys.length; i++) {
+      if (keys[i].z === keys[i - 1].z) {
+        warnings.push(`Feature ${index + 1} has two keys at the same height (${keys[i].z} mm).`);
+      }
+    }
+    if (keys.length > 0) feature.keys = keys;
   }
 
   return feature;

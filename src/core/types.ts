@@ -47,6 +47,31 @@ export interface SculptStroke {
   points: number[];
 }
 
+/**
+ * One key profile of a morphing profile feature.
+ *
+ * Two or more keys with outlines turn a profile into a morph: the solid runs
+ * from the lowest key to the highest, and between keys the outline is their
+ * distances mixed by height. The rings, like a profile's own, are never saved
+ * — the path is, and the outline is read again from it after opening.
+ */
+export interface ProfileKey {
+  /** Height of this key in the feature's local Z, mm. */
+  z: number;
+  /** Longest axis the outline is fitted to when its SVG is read, mm. */
+  size: number;
+  /** Fill rule for this key's rings: 'outline' or 'holes'. */
+  fill: string;
+  /** Where the SVG lives. Empty until one is chosen. */
+  path: string;
+  /**
+   * Closed rings, fitted and centred. Absent until the SVG is read — and a
+   * key without rings cannot take part in the morph, which the pipeline and
+   * the inspector both judge by the same predicate, `usableProfileKeys`.
+   */
+  rings?: number[][];
+}
+
 export interface Feature {
   id: string;
   /** Module key, e.g. 'sphere', 'smoothUnion', 'rod'. */
@@ -71,6 +96,14 @@ export interface Feature {
    * travel with the tree to the worker, which is what a mesh grid is not.
    */
   rings?: number[][];
+  /**
+   * Morph keys, on profile features only.
+   *
+   * Fewer than two usable keys means the feature slices exactly as it always
+   * has, from `rings` — which is also what lets a file written before keys
+   * existed mean what it always meant, with no migration to get wrong.
+   */
+  keys?: ProfileKey[];
 }
 
 export interface MachineProfile {

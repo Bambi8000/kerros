@@ -211,6 +211,30 @@ export function fitProfile(rings: number[][], size: number): number[][] {
   });
 }
 
+/**
+ * Centre a profile's rings on the origin, size untouched.
+ *
+ * This is the Centre button for a morph key. Mixing distances only lines up
+ * what the drawings line up: two outlines drawn in opposite corners of their
+ * pages morph through a sideways sweep nobody asked for. Centring each key's
+ * bounding box is the cheap, predictable alignment; anything finer than that
+ * is done in the drawing, where the tools for it live.
+ */
+export function centreProfile(rings: number[][]): number[][] {
+  if (rings.length === 0) return [];
+  const box = profileBounds({ rings, fill: 'outline' });
+  const cx = (box.minX + box.maxX) / 2;
+  const cy = (box.minY + box.maxY) / 2;
+  return rings.map((ring) => {
+    const out = new Array<number>(ring.length);
+    for (let i = 0; i < ring.length; i += 2) {
+      out[i] = ring[i] - cx;
+      out[i + 1] = ring[i + 1] - cy;
+    }
+    return out;
+  });
+}
+
 /* ------------------------------------------------------------------ *
  * SVG
  * ------------------------------------------------------------------ */
@@ -900,6 +924,143 @@ export function extrudeProfile(
 
   const plane = indexedDistance(index, x, y) + r;
   const slab = Math.abs(z) - half;
+
+  const outside = Math.hypot(Math.max(plane, 0), Math.max(slab, 0));
+  return Math.min(Math.max(plane, slab), 0) + outside - r;
+}
+
+/* ------------------------------------------------------------------ *
+ * Morphing between key profiles
+ *
+ * A morph is a stack of key profiles at heights, and the solid between two
+ * keys is their distances **mixed**, not their polygons matched. That is the
+ * whole reason profiles are kept as fields: two outlines interpolate with no
+ * correspondence between their points to work out, and a topology change —
+ * one ring at the bottom, two at the top — costs nothing, because a mix of
+ * two continuous fields is continuous and its zero level splits on its own.
+ *
+ * WHAT THE MIX DOES TO THE DISTANCE PROPERTY, measured rather than reasoned
+ * away: a convex combination of two 1-Lipschitz plane fields is 1-Lipschitz
+ * in the plane, so the in-plane gradient never exceeds 1 and the kerf
+ * iso-shift can only *over*-compensate — by 1/|∇|, and only where the two
+ * keys' nearest edges point in different directions, which is near a topology
+ * transition. The validator measures the gradient near the surface on a real
+ * transition; the normalisation trick the superellipsoid uses stays on the
+ * shelf unless that measurement demands it.
+ *
+ * The vertical gradient is a different matter: a wall that slants because the
+ * outline grows reads its horizontal distance, which overstates the true 3D
+ * distance by the slant. Slicing and kerf never read that — both work in the
+ * slice plane — so the cost lands only on 3D blends against other features
+ * and on the preview normal, and it is worth knowing rather than worth
+ * fixing.
+ * ------------------------------------------------------------------ */
+
+export type MorphEasing = 'linear' | 'smooth';
+
+export interface MorphEntry {
+  /** Height of this key in the feature's local Z, millimetres. */
+  z: number;
+  /** The key's outline, indexed. Rings are fitted and centred before this. */
+  index: ProfileIndex;
+}
+
+/**
+ * Smoothstep between keys, or straight interpolation.
+ *
+ * `smooth` is 3t² − 2t³: its derivative is zero at both ends, so the field is
+ * C¹ across a key plane and the crease a linear mix leaves in the stack at
+ * every key disappears. It stays inside [0, 1], so the mix is still a convex
+ * combination and the Lipschitz argument above survives unchanged. And it
+ * crosses 0.5 exactly at the midpoint, so halfway between two keys the two
+ * easings agree — which is what lets one geometric check in the validator
+ * cover both.
+ */
+export function easeMorph(t: number, easing: MorphEasing): number {
+  const c = t < 0 ? 0 : t > 1 ? 1 : t;
+  return easing === 'smooth' ? c * c * (3 - 2 * c) : c;
+}
+
+/**
+ * Signed in-plane distance at height z, mixed between the bracketing keys.
+ *
+ * Entries are expected sorted by ascending z, few enough that a linear scan
+ * beats anything cleverer. Below the first key the first profile holds and
+ * above the last the last one does — **clamped, not faded**, for the same
+ * reason the layer lookup extrapolates: the extrusion's slab is a `max`
+ * against this value at its own edge, and a value that changed outside the
+ * slab would eat material at the slab's edge.
+ *
+ * Exactly on a key plane only that key's index is evaluated, so a slice taken
+ * on a key is that profile bit for bit — the identity that keeps a morph
+ * honest about the drawings it was given.
+ *
+ * Two keys on the same height would divide by zero; the span guard hands the
+ * whole segment to the lower key instead. The parser reports the duplicate
+ * (phase 2); this only has to survive it.
+ */
+export function morphPlaneDistance(
+  entries: MorphEntry[],
+  easing: MorphEasing,
+  x: number,
+  y: number,
+  z: number,
+  reach = Infinity,
+): number {
+  const n = entries.length;
+  if (n === 0) return 1e5;
+  if (z <= entries[0].z) return indexedDistance(entries[0].index, x, y, reach);
+  if (z >= entries[n - 1].z) return indexedDistance(entries[n - 1].index, x, y, reach);
+
+  let k = 0;
+  while (entries[k + 1].z < z) k++;
+
+  const floor = entries[k];
+  const ceil = entries[k + 1];
+  const span = ceil.z - floor.z;
+  const t = span > 1e-9 ? (z - floor.z) / span : 0;
+  const e = easeMorph(t, easing);
+
+  if (e <= 0) return indexedDistance(floor.index, x, y, reach);
+  if (e >= 1) return indexedDistance(ceil.index, x, y, reach);
+  return (
+    (1 - e) * indexedDistance(floor.index, x, y, reach) +
+    e * indexedDistance(ceil.index, x, y, reach)
+  );
+}
+
+/**
+ * The morph extruded, as a 3D distance: the mixed plane against the slab
+ * between the first and last key, combined exactly the way `extrudeProfile`
+ * combines them, `round` included. Two identical keys are therefore the plain
+ * extrusion — bit for bit on the key planes, within a rounding step between
+ * them, since a mix of two equal numbers is not the IEEE identity — and a
+ * validator holds it there.
+ *
+ * Fewer than two keys is refused with the empty sentinel rather than guessed
+ * at: a morph with one key has no span to fill. The pipeline falls back to
+ * `extrudeProfile` for that case and says so, which is phase 2's job; this
+ * only has to refuse rather than invent a height.
+ */
+export function extrudeMorph(
+  entries: MorphEntry[],
+  easing: MorphEasing,
+  round: number,
+  x: number,
+  y: number,
+  z: number,
+): number {
+  const n = entries.length;
+  if (n < 2) return 1e5;
+
+  const z0 = entries[0].z;
+  const z1 = entries[n - 1].z;
+  const r = Math.max(round, 0);
+
+  const plane = morphPlaneDistance(entries, easing, x, y, z) + r;
+  // The slab shrinks by at most its own half-span, exactly as `extrudeProfile`
+  // clamps `half` at zero, so a round larger than the height cannot invert it.
+  const slab = Math.max(z0 - z, z - z1) + Math.min(r, (z1 - z0) / 2);
 
   const outside = Math.hypot(Math.max(plane, 0), Math.max(slab, 0));
   return Math.min(Math.max(plane, slab), 0) + outside - r;

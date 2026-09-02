@@ -16,7 +16,7 @@
  * sides, keyed by feature id — never re-sent with each job.
  */
 
-import type { Feature } from './types.ts';
+import type { Feature, ProfileKey } from './types.ts';
 import {
   ROD_CLEARANCE,
   applyRods,
@@ -47,7 +47,8 @@ import { generatePattern } from './pattern.ts';
 import { resolveLayerSet, resolveLayers, selectorFromParams } from './layers.ts';
 import { legSections, sectionsDistance } from './legs.ts';
 import { bossField } from './boss.ts';
-import { extrudeProfile, indexProfile, profileBounds } from './profile2d.ts';
+import { extrudeMorph, extrudeProfile, indexProfile, profileBounds } from './profile2d.ts';
+import type { MorphEasing, MorphEntry } from './profile2d.ts';
 import { parseTwistOverrides, twistAt, untwistPoint } from './twist.ts';
 import { paintDistance, strokesBounds, strokesByPlane } from './paint.ts';
 import type { PaintStroke } from './paint.ts';
@@ -967,18 +968,39 @@ export function bossesFromFeatures(
 }
 
 /**
+ * The keys of a profile feature that can actually morph: a finite height and a
+ * located outline. A key whose SVG has not been found again after opening has
+ * no rings yet, and it cannot take part.
+ *
+ * Exported for the inspector as much as for the pipeline: both must answer
+ * "is this a morph?" through the same predicate, or the panel describes a
+ * field the sampler is not building — the FixtureInspector class of gap,
+ * closed here by construction rather than by care.
+ */
+export function usableProfileKeys(feature: Feature): ProfileKey[] {
+  return (feature.keys ?? []).filter(
+    (key) => Number.isFinite(key.z) && Array.isArray(key.rings) && key.rings.length > 0,
+  );
+}
+
+/**
  * A profile's rings as an extruded volume, or nothing when the file is gone.
  *
  * The index is built here, once per composition, rather than per sample: it is
  * what turns a 17-microsecond walk into a 1.35-microsecond lookup, and building
  * it inside the sampler would pay for it on every point.
+ *
+ * With two or more usable keys the profile is a **morph**: the solid runs from
+ * the lowest key to the highest and each key gets its own index, under the
+ * same reach contract. With fewer — a file from before keys existed, or a
+ * morph whose SVGs have not been located yet — it takes the single-outline
+ * path below, exactly as it always has, so no saved lamp changes the day keys
+ * appear. `height` steers only that path; a morph's span is its keys.
  */
 export function profileVolume(feature: Feature, needed = 0) {
-  const rings = feature.rings;
-  if (!rings || rings.length === 0) return undefined;
-
-  const fill = (typeof feature.params.fill === 'string' ? feature.params.fill : 'holes') as FillRule;
-  const height = Math.max(Number(feature.params.height) || 0, 0.1);
+  const featureFill = (
+    typeof feature.params.fill === 'string' ? feature.params.fill : 'holes'
+  ) as FillRule;
   const round = Math.max(Number(feature.params.round) || 0, 0);
 
   /*
@@ -991,11 +1013,48 @@ export function profileVolume(feature: Feature, needed = 0) {
    * a useful one does and buys nothing: past the widest wall anybody cuts, no
    * part of this program reads the number.
    */
-  const box = profileBounds({ rings, fill });
-  const span = Math.max(box.maxX - box.minX, box.maxY - box.minY, 1);
-  const reach = Math.min(Math.max(needed, Number(feature.params.k) || 0), span * 0.6);
+  const reachFor = (span: number) =>
+    Math.min(Math.max(needed, Number(feature.params.k) || 0), span * 0.6);
 
-  const index = indexProfile({ rings, fill }, 1, 0.06, reach);
+  const keys = usableProfileKeys(feature);
+  if (keys.length >= 2) {
+    const easing: MorphEasing = feature.params.easing === 'linear' ? 'linear' : 'smooth';
+    const sorted = keys.slice().sort((a, b) => a.z - b.z);
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    const entries: MorphEntry[] = sorted.map((key) => {
+      // A key names its own rule; one that does not follows the feature's.
+      const fill: FillRule =
+        key.fill === 'outline' || key.fill === 'holes' ? key.fill : featureFill;
+      const rings = key.rings ?? [];
+      const box = profileBounds({ rings, fill });
+      minX = Math.min(minX, box.minX);
+      minY = Math.min(minY, box.minY);
+      maxX = Math.max(maxX, box.maxX);
+      maxY = Math.max(maxY, box.maxY);
+      return { z: key.z, index: indexProfile({ rings, fill }, 1, 0.06, reachFor(Math.max(box.w, box.h, 1))) };
+    });
+
+    return {
+      // The union of the keys' boxes bounds the mix (a convex combination
+      // cannot leave it), and `round` only shrinks — so this is the outer box.
+      sample: (x: number, y: number, z: number) => extrudeMorph(entries, easing, round, x, y, z),
+      min: [minX, minY, sorted[0].z] as [number, number, number],
+      max: [maxX, maxY, sorted[sorted.length - 1].z] as [number, number, number],
+    };
+  }
+
+  const rings = feature.rings;
+  if (!rings || rings.length === 0) return undefined;
+
+  const height = Math.max(Number(feature.params.height) || 0, 0.1);
+  const box = profileBounds({ rings, fill: featureFill });
+  const reach = reachFor(Math.max(box.maxX - box.minX, box.maxY - box.minY, 1));
+
+  const index = indexProfile({ rings, fill: featureFill }, 1, 0.06, reach);
   return {
     sample: (x: number, y: number, z: number) => extrudeProfile(index, height, round, x, y, z),
     min: [box.minX, box.minY, -height / 2] as [number, number, number],

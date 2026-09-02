@@ -363,6 +363,89 @@ console.log('project: sculpt strokes');
   check('the good stroke survives all of it', kept.some((k) => k.points.length === 6));
 }
 
+console.log('project: morph keys');
+{
+  const withKeys = {
+    ...sample,
+    features: [
+      {
+        id: 'f1',
+        kind: 'profile',
+        stage: 'SHAPE',
+        name: 'Morph',
+        enabled: true,
+        params: { op: 'union', height: 40, round: 0, fill: 'holes', easing: 'smooth', path: 'base.svg' },
+        keys: [
+          { z: 0, size: 80, fill: 'holes', path: 'bottom.svg' },
+          { z: 90, size: 120, fill: 'outline', path: 'top.svg' },
+        ],
+      },
+    ],
+  };
+  const text = serializeProject(withKeys, '0.27.0', 'now');
+  check('keys are written as their own list', /"keys": \[/.test(text) && text.includes('bottom.svg'));
+  check('and no rings go with them', !text.includes('"rings"'));
+
+  const parsed = parseProject(text);
+  check('they come back identical', JSON.stringify(parsed.data.features[0]) === JSON.stringify(withKeys.features[0]));
+  check('with no warnings', parsed.warnings.length === 0, parsed.warnings.join(' | '));
+  check(
+    'features without keys do not gain an empty list',
+    parseProject(serializeProject(sample, '0.27.0', 'now')).data.features.every((f) => f.keys === undefined),
+  );
+
+  /*
+   * A hand-edited file, with everything wrong that a keys list can carry. The
+   * whole list surviving matters more than any one key: a person fixing one
+   * typo must not lose the other three keys.
+   */
+  const broken = parseProject(
+    JSON.stringify({
+      format: PROJECT_FORMAT,
+      formatVersion: 1,
+      features: [
+        {
+          id: 'f1',
+          kind: 'profile',
+          stage: 'SHAPE',
+          name: 'P',
+          enabled: true,
+          params: {},
+          keys: [
+            { z: 'high', size: 100, fill: 'holes', path: 'a.svg' },
+            { z: 30, size: -5, fill: 'diagonal', path: 7, rings: [[0, 0, 1, 0, 1, 1]] },
+            { z: 30, size: 60, fill: 'outline', path: 'c.svg' },
+            { z: 10, size: 60, fill: 'outline', path: 'd.svg' },
+          ],
+        },
+      ],
+    }),
+  );
+  check('it opens', broken.ok);
+  const kept = broken.data.features[0].keys;
+  check('a key with no height is dropped', kept.length === 3, `${kept.length} keys`);
+  check('and the drop is reported', broken.warnings.some((w) => w.includes('no height')));
+  check('keys come back sorted by height', kept.every((k, i) => i === 0 || kept[i - 1].z <= k.z));
+  check('two keys at one height are reported', broken.warnings.some((w) => w.includes('same height')));
+  check('a nonsense size is clamped usable', kept.every((k) => k.size >= 0.1));
+  check('an unknown fill falls back', kept.every((k) => k.fill === 'outline' || k.fill === 'holes'));
+  check('a non-string path becomes empty', kept.some((k) => k.path === ''));
+  // Rings in a file are ignored the way the profile's own rings are: the path
+  // is the record, and the outline is read again from it.
+  check('rings in a hand-edited file are not carried in', kept.every((k) => k.rings === undefined));
+
+  const notAList = parseProject(
+    JSON.stringify({
+      format: PROJECT_FORMAT,
+      formatVersion: 1,
+      features: [
+        { id: 'f1', kind: 'profile', stage: 'SHAPE', name: 'P', enabled: true, params: {}, keys: 'nope' },
+      ],
+    }),
+  );
+  check('a keys field that is not a list is ignored', notAList.ok && notAList.data.features[0].keys === undefined);
+}
+
 console.log('project: feature numbering');
 {
   check('an empty tree starts at one', highestFeatureNumber([]) + 1 === 1);

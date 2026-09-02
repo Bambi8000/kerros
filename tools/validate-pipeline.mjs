@@ -10,6 +10,7 @@
  */
 
 import {
+  usableProfileKeys,
   runSliceJob,
   runPreviewJob,
   runNestJob,
@@ -251,6 +252,143 @@ console.log('pipeline: imports arrive as payloads');
 
   const missing = runSliceJob(baseJob([imported, shell]), new Map());
   check('an import with no grid contributes nothing rather than throwing', missing.set === null);
+}
+
+console.log('pipeline: a profile morphs between its keys');
+{
+  const circle = (r) => {
+    const ring = [];
+    for (let i = 0; i < 64; i++) {
+      const a = (i / 64) * Math.PI * 2;
+      ring.push(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    return ring;
+  };
+  const key = (z, r) => ({ z, size: 2 * r, fill: 'outline', path: '', rings: [circle(r)] });
+  const profileParams = {
+    op: 'union',
+    k: 10,
+    px: 0,
+    py: 0,
+    pz: 0,
+    rx: 0,
+    ry: 0,
+    rz: 0,
+    height: 40,
+    round: 0,
+    fill: 'outline',
+    easing: 'smooth',
+  };
+  const areaList = (result) =>
+    result.set.slices.map((slice) => slice.contours.reduce((sum, c) => sum + c.area, 0));
+
+  /*
+   * Two identical keys are the profile they came from. This is the identity
+   * that made the change safe to make: the sheets, their heights and their
+   * material areas all match the single-outline path — so no saved lamp
+   * changes the day keys appear, and the module-level bit-identity in
+   * validate-profile is confirmed through the whole pipeline.
+   */
+  const twin = feature('pf', 'profile', 'SHAPE', profileParams, {
+    keys: [key(-20, 30), key(20, 30)],
+  });
+  const legacy = feature('pf', 'profile', 'SHAPE', profileParams, { rings: [circle(30)] });
+  const twinOut = runSliceJob(baseJob([twin]), new Map());
+  const legacyOut = runSliceJob(baseJob([legacy]), new Map());
+  check(
+    'two equal keys slice as the profile they came from',
+    twinOut.set !== null &&
+      legacyOut.set !== null &&
+      twinOut.set.slices.length === legacyOut.set.slices.length &&
+      areaList(twinOut).every((area, i) => Math.abs(area - areaList(legacyOut)[i]) < 0.01),
+    `${twinOut.set?.slices.length} vs ${legacyOut.set?.slices.length} sheets`,
+  );
+
+  const cone = (easing) =>
+    feature('pf', 'profile', 'SHAPE', { ...profileParams, easing }, {
+      keys: [key(0, 20), key(60, 50)],
+    });
+  const smooth = runSliceJob(baseJob([cone('smooth')]), new Map());
+  check(
+    'a morph slices over the span of its keys',
+    smooth.set !== null && smooth.set.slices.length >= 6,
+    `${smooth.set?.slices.length} sheets`,
+  );
+
+  /*
+   * Bounds come from anything that adds material — the boss lesson. The top
+   * key is 60 mm up while the legacy height says 40, so a plan built from the
+   * wrong number has no sheet near the top and the cone arrives beheaded.
+   */
+  const tops = smooth.set.slices.map((slice) => slice.z);
+  check('up to the top key, not the legacy height', Math.max(...tops) > 50, `top mid-plane ${Math.max(...tops).toFixed(1)} mm`);
+
+  const width = (slice) => {
+    const ring = slice.contours.find((c) => !c.isHole);
+    const xs = ring.points.filter((_, i) => i % 2 === 0);
+    return Math.max(...xs) - Math.min(...xs);
+  };
+  const bottom = smooth.set.slices[0];
+  const top = smooth.set.slices[smooth.set.slices.length - 1];
+  check(
+    'and grows from the bottom key to the top one',
+    width(top) - width(bottom) > 25,
+    `${width(bottom).toFixed(1)} mm to ${width(top).toFixed(1)} mm`,
+  );
+
+  /*
+   * The easing setting has to be shown to change the sheets — the SliceOptions
+   * lesson, where a named option that reaches the field but not the result
+   * passes every other check. The plans agree (same keys, same bounds), and a
+   * quarter of the way up linear reads r = 27.5 where smooth reads ~24.7,
+   * which is hundreds of square millimetres of sheet.
+   */
+  const linear = runSliceJob(baseJob([cone('linear')]), new Map());
+  check('the two easings plan the same sheets', linear.set.slices.length === smooth.set.slices.length);
+  const gaps = areaList(linear).map((area, i) => Math.abs(area - areaList(smooth)[i]));
+  check(
+    'and the easing setting changes the sheets between the keys',
+    Math.max(...gaps) > 200,
+    `largest difference ${Math.max(...gaps).toFixed(0)} mm²`,
+  );
+
+  /*
+   * A key whose SVG has not been located again has no rings, and one usable
+   * key is not a morph. The feature falls back to its base outline — the same
+   * sheets it made before keys existed — rather than inventing a span. The
+   * inspector counts the waiting keys through the same exported predicate, so
+   * the panel and the sampler cannot disagree about which field is live.
+   */
+  const unlocated = feature('pf', 'profile', 'SHAPE', profileParams, {
+    rings: [circle(30)],
+    keys: [key(-20, 30), { z: 20, size: 60, fill: 'outline', path: '/gone.svg' }],
+  });
+  check('a key without rings is not usable', usableProfileKeys(unlocated).length === 1);
+  const fell = runSliceJob(baseJob([unlocated]), new Map());
+  check(
+    'one located key falls back to the base outline',
+    fell.set !== null &&
+      fell.set.slices.length === legacyOut.set.slices.length &&
+      areaList(fell).every((area, i) => Math.abs(area - areaList(legacyOut)[i]) < 0.01),
+  );
+  const nothing = feature('pf', 'profile', 'SHAPE', profileParams, {
+    keys: [
+      { z: 0, size: 40, fill: 'outline', path: '/gone.svg' },
+      { z: 60, size: 100, fill: 'outline', path: '/also-gone.svg' },
+    ],
+  });
+  check(
+    'and with nothing located there is nothing to slice',
+    runSliceJob(baseJob([nothing]), new Map()).set === null,
+  );
+
+  // Keys are plain numbers on the feature, so the tree crosses the worker
+  // boundary whole — checked the same way import payloads are.
+  const cloned = runSliceJob(structuredClone(baseJob([cone('smooth')])), new Map());
+  check(
+    'keys survive the worker boundary',
+    deepEqual(areaList(cloned), areaList(smooth)),
+  );
 }
 
 console.log('pipeline: determinism');
