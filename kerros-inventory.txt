@@ -1,16 +1,16 @@
-KERROS INVENTORY  2026-09-01  version 0.26.0
+KERROS INVENTORY  2026-09-02  version 0.26.0
 
 --- source, lines each
-   32508 total
-    2603 src/ui/Inspector.tsx
+   32590 total
+    2617 src/ui/Inspector.tsx
     1994 src/core/store.ts
     1704 src/core/sdf.ts
     1484 tools/validate-nest.mjs
     1475 src/core/pipeline.ts
     1463 src/ui/Viewport.tsx
     1271 src/core/nest.ts
-    1145 src/ui/SliceInspector.tsx
-    1037 src/ui/ProfilePanel.tsx
+    1158 src/ui/SliceInspector.tsx
+    1052 src/ui/ProfilePanel.tsx
     1010 tools/validate-pipeline.mjs
      989 src/core/slice.ts
      906 src/core/profile2d.ts
@@ -19,10 +19,10 @@ KERROS INVENTORY  2026-09-01  version 0.26.0
      768 tools/validate-window.mjs
      687 tools/validate-slice.mjs
      644 src/ui/SheetView.tsx
-     533 src/core/job.ts
+     529 src/core/job.ts
      526 src/core/window.ts
      453 tools/validate-rig-export.mjs
-     446 src/core/rig.ts
+     448 src/core/rig.ts
      441 tools/validate-profile.mjs
      438 src/core/project.ts
      410 src/core/voxelise.ts
@@ -64,9 +64,10 @@ KERROS INVENTORY  2026-09-01  version 0.26.0
       68 tools/make-icon.py
       52 src/assets/hero.png
       51 tools/check-version.mjs
-      46 src/core/profiles.ts
+      50 tools/check-docs.mjs
       45 src/ui/ErrorBoundary.tsx
       43 src/ui/NumberField.tsx
+      38 src/core/profiles.ts
       18 src/core/mesh.ts
       10 src/main.tsx
       10 src/App.tsx
@@ -80,11 +81,21 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-pipeline.mjs
+check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-pipeline.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+1fc2c84 A docs check: handoff version must match package.json and section counts have floors, after a stale rewrite slipped through
+15684a2 Restore the 0.26.0 handoff over this morning's stale rewrite; drop the validator count from prose; workerAvailable joins the never-wired list
+2b8dbd2 Name an unknown RIG kind instead of handing it the rod panel; grabbable is an explicit kind list
+a89cd64 Say when jobs run without a worker; workerAvailable was written for this and never wired
+e325f7e Panel resolves ring thickness through ringThickness(), the same function the plan uses
+2c5c920 Remove labelWidthOf, unused since findLabelSpot grew its own width
+f6818bf Remove CLEARANCE_HOLES, a dead duplicate of ROD_CLEARANCE nothing read
+9089d48 Audit at 0.26.0: five findings, none geometric, layer 3 checklist recorded
+a390be1 The validator count in the handoff was six batches out of date
+83f19e8 Docs and inventory at 0.26.0
 63bedb7 A brush that edits one sheet, onion skin behind it, and a gradient with a middle
 962c262 Docs and inventory at 0.25.0
 e34b9da A capsule that bends into a sausage, and layers turned at assembly so the stack spirals
@@ -105,13 +116,3 @@ d160f68 Keep the last slice while modelling, so a fixture's ghost can find its l
 09c8b05 Drag per-slice holes in the slice view; docs and inventory at 0.19.0
 6d50d64 One layer selector for fixtures and perforation; per-slice holes remember which feature cut them
 f7d90c9 Docs and inventory at 0.18.0: the layer plan, gaps that grade, and rings as their own material
-ac2ef94 Gradient controls in the panel; spacer rings nest as their own material; fix a composeField call the 3b core missed
-dff1226 Gradient controls in the panel, and fix a composeField call the 3b core missed
-106ed83 Spacer rings get their own material and a gap that can grade up the stack
-8f152d1 Layer plan becomes a list of planes, proved identical to the pitch it replaces
-a25883e Docs and inventory at 0.17.0; vite no longer wipes the terminal on start
-5e2d3cb Prism and cone as exact fields, and corner-preserving smoothing measured unnecessary
-86bc88e Nesting moved into the worker behind a placement table; dragging a part no longer re-packs the sheet
-f1ff563 Handoff at 0.16.0, including session conventions and untested-in-material status
-7ba2b35 True-shape nesting by rasterising parts, so small parts nest inside rings' holes
-21d725a Group shapes by attaching them to a leader, inheriting the full transform
