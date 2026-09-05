@@ -2414,10 +2414,189 @@ grid. They are kilobytes of plain numbers, so they cross to the worker with the
 tree for nothing, where a megabyte of Float32 has to be sent once per bake and
 cached on both sides.
 
-They are still not saved. `project.ts` copies `params` and `strokes` and nothing
-else, so a reopened profile has its path and no geometry and the SVG has to be
-located again — the trade mesh import already made, made deliberately a second
-time.
+They are still not saved. `project.ts` copies `params`, `strokes` and a morph's
+**key list** — paths, sizes and fill rules, never any rings — so a reopened
+profile has its path and no geometry and the SVG has to be located again. The
+trade mesh import already made, made deliberately a second time, and a third
+time per key.
+
+## Morphing between key profiles — **shipped**
+
+`morphPlaneDistance` and `extrudeMorph` in `src/core/profile2d.ts`. Two or
+more outlines at different heights, and the solid between them. A circle at the
+bottom becoming a star at the top, or a base, two waists and a rim.
+
+### It is the profile feature, not a new kind
+
+A morph is a `profile` carrying a **key list** — `{ z, size, fill, path,
+rings }` per key — and the list being absent is how a plain profile is spelled.
+Nothing migrates, because a file written before keys existed already means what
+it always meant, and there is no conversion step to get wrong.
+
+**Fewer than two *usable* keys is the plain profile**, and usable means a finite
+height and rings that have actually been read. A morph whose SVGs have not been
+located again after opening therefore falls back to the original outline rather
+than cutting nothing — a working lamp, but not the one that was asked for, so
+the inspector says which it is.
+
+`usableProfileKeys` is exported from the pipeline and the inspector imports
+**that same function** rather than writing the condition again. The panel and
+the sampler cannot disagree about whether the morph is live, which is the
+`FixtureInspector` gap closed by construction instead of by care.
+
+### The mix is the whole feature
+
+Between two keys the outline is their **distances mixed**, not their polygons
+matched:
+
+```
+d(x, y, z) = (1 − e) · d_below(x, y) + e · d_above(x, y),  e = ease(t)
+```
+
+There is no correspondence between the two drawings' points to work out, which
+is the entire difficulty of morphing polygons and is solvable only badly. And a
+**topology change costs nothing**: one ring at the bottom and two at the top
+needs no rule about when to split, because a mix of two continuous fields is
+continuous and its zero level parts on its own. Measured on exactly that — a
+40 mm circle becoming two 15 mm circles 60 mm apart — the walk along the axis
+finds two sign changes near the bottom and four near the top, and no height
+steps the field by as much as a millimetre per half-millimetre of rise.
+
+### Any number of keys, and the cost does not grow
+
+Keys bracket **piecewise**: the height picks the pair either side of it and only
+that pair is mixed. So a base, two middles and a top is four rows in a list, and
+every sample still evaluates at most two indexes — one on a key plane, where
+only that key's index is read and the slice is that drawing **bit for bit**.
+Three keys are checked for symmetry: the same point the same distance above and
+below the middle key reads the same number to 1e-12.
+
+### Easing, and why it is on by default
+
+`easing` is `'linear'` or `'smooth'`, and smooth — the smoothstep
+3t² − 2t³ — is the default. Three reasons, and the third is why the validator
+can be short:
+
+- **Its derivative is zero at both ends**, so the field is C¹ across a key
+  plane. A linear mix creases at every interior key: measured on a symmetric
+  three-key stack, linear arrives at −0.2 mm/mm and leaves at +0.2 while smooth
+  is flat to 0.02. The crease is a visible kink in the stack at exactly the
+  height somebody put a drawing.
+- **It stays inside [0, 1]**, so the mix is still a convex combination and the
+  Lipschitz argument below survives unchanged.
+- **smoothstep(0.5) = 0.5**, so halfway between two keys the two easings agree
+  exactly. One geometric check — concentric circles mixing to the circle of the
+  mixed radius — therefore covers both, and a *second* check asserts they
+  differ at the quarter, because an easing option that reaches the field but
+  changes nothing would pass every other check in the file. That is the
+  `SliceOptions` lesson: a setting has to be shown to change the result.
+
+Measured through the whole pipeline on a cone from r = 20 to r = 50: the
+surface radius a quarter of the way up is 27.5 mm linear and 24.6 mm smooth,
+and at the midpoint both are 34.99 mm.
+
+### What the mix does to the distance property
+
+The question that decides whether the kerf iso-level can be trusted, and it was
+**measured rather than reasoned away**.
+
+A convex combination of two 1-Lipschitz plane fields is 1-Lipschitz, so the
+in-plane gradient can never exceed 1 and the kerf shift can only
+*over*-compensate — by 1/|∇d|. Where the two keys' nearest edges point the same
+way the gradient is 1; where they disagree, which is near a pinch, it drops.
+Sampled near the surface across the one-to-two transition: **max 1.0000,
+min 0.569**, so the worst kerf over-compensation is 1.76×, within a couple of
+millimetres of where the lobes part. The validator records both numbers in its
+detail line rather than only asserting a bound.
+
+That is small enough to leave alone until a cut says otherwise, so the
+normalisation trick the superellipsoid uses — dividing by the gradient
+magnitude — **stays shelved**, with the measurement written down so the next
+person does not have to take it again.
+
+The **vertical** gradient is a different matter and is not unit on a slanted
+wall: as the outline grows with height, the horizontal distance overstates the
+true 3D distance by the slant. Slicing and kerf never read it — both work in
+the slice plane — so the cost falls on 3D blends against other features and on
+the preview normal, which is worth knowing rather than worth fixing.
+
+### The ends clamp rather than fade
+
+Below the lowest key the lowest profile holds; above the highest, the highest.
+**Clamped, not faded to nothing**, and for the same reason the layer lookup
+extrapolates rather than clamping: the extrusion's slab is a `max` against this
+value at its own edge, so a value that changed outside the slab would eat
+material at the slab's edge.
+
+### Two equal keys are the extrusion they came from
+
+The identity that made the change safe to make, and it is checked at both
+levels: in the module, `extrudeMorph` with two identical keys matches
+`extrudeProfile` to under 1e-9 over 3000 points, for both easings and with the
+round applied; through `profileVolume`, the worst disagreement is 1.8e-15, and
+the pipeline check compares sheet counts and material areas layer by layer.
+
+`round` uses the same shrink-and-offset-back-out arithmetic as
+`extrudeProfile`, with the slab's shrink clamped at half the span, so a round
+larger than the whole morph cannot invert it.
+
+### The span is the keys, so bounds are too
+
+Bounds are the union of the keys' bounding boxes crossed with
+`[z_lowest, z_highest]`. A convex combination cannot leave that union, and the
+round only shrinks, so it is the outer box.
+
+This is where `height` stopped applying, and it had to: keys 60 mm apart under
+a 40 mm height put no sheet near the top and the form arrives beheaded. Anything
+that adds material sets bounds, whatever the parameters say — the boss lesson,
+met again in a place nothing about a boss suggested.
+
+### Every key is centred, which is why there is no Centre button
+
+The plan had one, scoped and agreed: two drawings rarely share an origin, so
+outlines drawn in opposite corners of their pages would morph through a sideways
+sweep nobody asked for. Reading `profile2d.ts` before writing to it showed the
+button had already been pressed — `fitProfile` centres the bounding box on the
+origin *as* it sizes, so every key arrives centred by the same call that fits
+it. `centreProfile` exists for the case where sizing is not wanted, and is
+validated; the panel needs no button.
+
+Changing a key's size **re-fits its rings** rather than re-reading the file, the
+same exactness `setProfileSize` already relied on: scaling rings that are
+already in millimetres is exact, and the drawing may be long gone.
+
+### The file records paths, and the parser is defensive per key
+
+A key list is written as paths, sizes and fill rules — **never rings**, the same
+trade the profile's own outline makes. On the way back in:
+
+- a key with no usable height is **dropped and reported**, because a profile at
+  no height is nowhere;
+- the list is **sorted by height**, so nothing downstream has to wonder;
+- two keys at the same height are **reported**: the field survives them, handing
+  the whole segment to the lower key rather than dividing by zero, but somebody
+  almost certainly meant to type two different numbers;
+- an unusable size or fill rule falls back rather than failing;
+- rings in a hand-edited file are **ignored**, because the path is the record.
+
+In the store the keys stay in the order they were made rather than sorted live.
+The parser sorts on load and the pipeline sorts at composition, so the order in
+the panel is cosmetic — and a row that jumps while its height is being typed is
+worse than a list that reads slightly out of order.
+
+### A test that read the clamp
+
+Worth recording because it looked exactly like a broken feature. The first run
+of the morph checks failed three assertions, reporting −20 mm where the geometry
+says −40. Nothing was wrong with the mix: a 64-gon's default reach is two cells,
+about 15 mm, and the checks read the field 30 mm deep, so they were reading the
+clamp the index promises rather than a distance.
+
+The fix was in the test — index the keys with a `minReach` floor, which is what
+the pipeline does from the deepest shell in the tree — and the lesson is for the
+pipeline as much as the validator: **a morph's keys each need the reach the
+composition asks for**, or a shell deeper than two cells lands its cavity on the
+clamp on every key.
 
 ## Native shell — **shipped** (M10)
 

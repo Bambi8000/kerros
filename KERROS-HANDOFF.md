@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.26.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.27.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -90,6 +90,8 @@ quietly revert them.**
 | a bend is a domain warp on the query point | a bend is an **arc**, and the distance to one is closed form | a warp is not an isometry, so the gradient stops being unit and every blend and kerf iso-level that reads the field is off by however much it stretches |
 | the corrugation in board is a texture inside it | the sheet itself is the wave | so a layer's cut outline is the model met by the wave surface, not by a plane — and turning a layer changes the part rather than only its edge |
 | bounds come from the SHAPE stage | anything that **adds** material sets bounds, whatever its stage | true for the whole program's life because every RIG feature removed. A boss adds, and a spoke past the form was clipped at the grid — a flat plate in the preview and a whole layer's outer ring dropped in the slicer |
+| a morph key needs a **Centre** button, since two drawings rarely share an origin | `fitProfile` already centres as it sizes | it was scoped, agreed and about to be built. Every key is fitted to its own longest axis on the way in, and fitting *is* centring — the button was a call that had already happened. Read the file before writing to it, a fourth time |
+| a morph's solid is `height` tall, like any other profile | it is the **span between its lowest and highest key** | a 40 mm height under keys 60 mm apart beheads the form. Bounds come from what adds material, which is the boss lesson wearing a profile's clothes, and the inspector replaces the field with a sentence rather than leaving a number that does nothing |
 
 ## The recurring failure mode
 
@@ -335,6 +337,21 @@ way `FixtureInspector` was.
   deliberately — the failure mode was reasoned about, not met, and physical
   feedback outranks reasoning here. Fix it when a stack refuses to take a
   connector.
+- **A morph's kerf can over-compensate where the outline pinches.** A convex
+  mix of two 1-Lipschitz fields is 1-Lipschitz, so the iso-shift can never
+  under-cut — but where two keys' nearest edges point in different directions
+  the in-plane gradient drops below 1 and the shift lands further out than
+  asked. Measured on one circle becoming two: worst gradient 0.569, so at most
+  1.76× the kerf, and only within a couple of millimetres of the pinch.
+  Unproven in material, and on the list below.
+- **A morph key's SVG is not saved either**, and every key has to be located
+  again separately after opening. The inspector counts the ones still waiting
+  and says whether the morph is live meanwhile — a profile with one located
+  key falls back to its original outline, which is a working lamp and not what
+  anybody asked for, so it is said out loud rather than left to be noticed.
+- **A morph ignores `height`.** Its span is its keys, so the field would write
+  a number nothing reads — the pattern gizmo's failure exactly. The inspector
+  replaces the field with a sentence instead.
 - **No cross-slicing.** Everything is horizontal layers. See the plan below.
 - **The bundle is unsigned.** It runs on the machine that built it; another Mac
   quarantines it. Proper notarising needs a paid Apple Developer account.
@@ -370,6 +387,11 @@ about to happen when this handoff was written; ask before assuming.
 - **Plexi window fit.** `fit` defaults to 0.4 mm. Loose is fixable with glue,
   tight is not fixable at all, so start loose. Plexi needs its own kerf test.
 - **Wago chamber and cable channel** dimensions are defaults, not measurements.
+- **A morph across a topology change.** The field splits on its own and the
+  gradient was measured rather than reasoned about, but 1.76× kerf at the pinch
+  is a number off a grid of samples and not off a sheet. Cut a
+  one-circle-to-two morph and measure the bridge where the lobes part; if it
+  holds, the superellipsoid's normalisation trick stays shelved for good.
 
 ## Candidates, in the order I would take them
 
@@ -397,7 +419,9 @@ about to happen when this handoff was written; ask before assuming.
    - **Phase C: assembly.** A fin stack holds nothing up before it is assembled,
      so it needs an order and new refusals: a fin crossing no disc, a disc too
      narrow for a notch, a notch that eats a fin thin enough to snap.
-3. Roadmap, unranked: per-gap spacer heights, polygon-shaped perforation, a lamp
+3. Roadmap, unranked: a brush that edits one morph key — the per-layer brush
+   and the key list already exist, so it is the stroke landing in a key's
+   coordinates rather than a sheet's — per-gap spacer heights, polygon-shaped perforation, a lamp
    preview with an emissive source in the cavity, SVG export, a folder of user
    generator modules, material usage and cost, registration notches for glue-stack
    mode.
@@ -413,7 +437,7 @@ once is the whole saving.
 | --- | --- |
 | ~~**An explicit layer plan**~~ — **shipped**, as `{ index, z0, z, thickness, gapAbove }` | varying gaps *(shipped)*; interleaved short pins; per-layer cable holes; per-layer sculpting |
 | ~~**One `LayerSelector`**~~ — **shipped**, for per-slice features; windows keep their band, and legs count planes because the field precedes the sheets | interleaved pins and per-layer cable holes are now mostly wiring |
-| ~~**`profile2d.ts`**~~ — **shipped**, an indexed 2D distance field with two fill rules | SVG import *(shipped)*; morph between key layers and per-layer editing, both now mostly composition |
+| ~~**`profile2d.ts`**~~ — **shipped**, an indexed 2D distance field with two fill rules | SVG import *(shipped)*; morph between key layers *(shipped)*; per-layer editing *(shipped)*. All three turned out to be composition on top of it, which is what the foundation was for |
 | ~~**Per-layer editing**~~ — **shipped**, as brush strokes anchored to a height and confined to one sheet's band | the last of the eleven that needed a foundation rather than wiring |
 | **A material library** — calliper, flute pitch and profile, direction, phase | corrugated sheet as stock; stack pitch that depends on it. Two things are already in place: layer twist, which is what turns a wave strong enough to be geometry, and a slice sampler that takes its height per layer, so the wave arrives as `z = const + wave(u, v)` in one place. The gap between two sheets will depend on the angle between their waves, and `planLayers` already carries `gapAbove` per plane rather than one pitch |
 
