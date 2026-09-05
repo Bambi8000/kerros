@@ -70,6 +70,8 @@ export interface ProfileKey {
    * the inspector both judge by the same predicate, `usableProfileKeys`.
    */
   rings?: number[][];
+  /** Parts of the drawing that could not be read, counted at load. Not saved. */
+  warnings?: number;
 }
 
 export interface Feature {

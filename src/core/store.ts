@@ -22,6 +22,7 @@ import {
   modelBounds,
   num,
   shellModifier,
+  text,
 } from './sdf';
 import type { Frame } from './sdf';
 import { WINDOW_WORLD, windowToLocal, windowToWorld } from './window';
@@ -189,6 +190,14 @@ interface KerrosState {
   /** Read an SVG outline and make, or replace, a profile feature. */
   loadProfile: (id: string | null, name: string, svg: string) => string;
   setProfileSize: (id: string, size: number) => void;
+  /** Turn a profile into a morph, or add another key above the top one. */
+  addProfileKey: (id: string) => void;
+  removeProfileKey: (id: string, at: number) => void;
+  setProfileKeyZ: (id: string, at: number, z: number) => void;
+  setProfileKeySize: (id: string, at: number, size: number) => void;
+  setProfileKeyFill: (id: string, at: number, fill: string) => void;
+  /** Read an SVG for one key, fitted — and thereby centred — to the key's size. */
+  loadProfileKey: (id: string, at: number, name: string, svg: string) => void;
   /** Take one pin out by hand, or put it back. */
   togglePin: (id: string, key: string) => void;
   /** Put every hand-removed pin back. */
@@ -973,6 +982,150 @@ export const useKerros = create<KerrosState>((set, get) => ({
       }),
     })),
 
+  /**
+   * Turn a profile into a morph, or grow one.
+   *
+   * The first press converts the outline the feature already has into a key at
+   * the bottom of the current extrusion and opens an empty key at the top, so
+   * the solid on screen does not change at the moment the feature starts
+   * morphing — the morph only takes over once two keys have outlines, which is
+   * the same predicate the pipeline judges by. Further presses add a key above
+   * the top one, one key-spacing up.
+   *
+   * The keys are kept in the order they were made, not by height: the parser
+   * sorts on load and the pipeline sorts at composition, so order here is
+   * cosmetic — and a row that jumps while its height is being typed is worse
+   * than a list that reads slightly out of order.
+   */
+  addProfileKey: (id) =>
+    set((s) => ({
+      features: s.features.map((f) => {
+        if (f.id !== id || f.kind !== 'profile') return f;
+        const keys = f.keys ?? [];
+        if (keys.length === 0) {
+          const height = num(f.params, 'height', 100);
+          const size = num(f.params, 'size', 120);
+          const fill = text(f.params, 'fill', 'holes');
+          const path = text(f.params, 'path', '');
+          return {
+            ...f,
+            keys: [
+              {
+                z: -height / 2,
+                size,
+                fill,
+                path,
+                rings: (f.rings ?? []).map((ring) => [...ring]),
+              },
+              { z: height / 2, size, fill, path: '' },
+            ],
+          };
+        }
+        const zs = keys.map((k) => k.z);
+        const top = keys.reduce((best, k) => (k.z > best.z ? k : best), keys[0]);
+        const span = Math.max(...zs) - Math.min(...zs);
+        const step = keys.length > 1 ? Math.max(span / (keys.length - 1), 10) : 50;
+        return {
+          ...f,
+          keys: [...keys, { z: top.z + step, size: top.size, fill: top.fill, path: '' }],
+        };
+      }),
+    })),
+
+  removeProfileKey: (id, at) =>
+    set((s) => ({
+      features: s.features.map((f) => {
+        if (f.id !== id || !f.keys || !f.keys[at]) return f;
+        const keys = f.keys.filter((_, i) => i !== at);
+        if (keys.length > 0) return { ...f, keys };
+        // The last key gone means the feature is a plain profile again, and a
+        // plain profile carries no keys field at all — absent is its spelling.
+        const { keys: _gone, ...rest } = f;
+        return rest;
+      }),
+    })),
+
+  setProfileKeyZ: (id, at, z) =>
+    set((s) => ({
+      features: s.features.map((f) =>
+        f.id !== id || !f.keys || !f.keys[at]
+          ? f
+          : { ...f, keys: f.keys.map((k, i) => (i === at ? { ...k, z } : k)) },
+      ),
+    })),
+
+  /**
+   * Re-fit one key's rings when its size changes — the same exact rescale
+   * `setProfileSize` does, because the file may be long gone.
+   */
+  setProfileKeySize: (id, at, size) =>
+    set((s) => ({
+      features: s.features.map((f) => {
+        if (f.id !== id || !f.keys || !f.keys[at]) return f;
+        return {
+          ...f,
+          keys: f.keys.map((k, i) => {
+            if (i !== at) return k;
+            const clamped = Math.max(size, 1);
+            const factor = k.size > 0 ? clamped / k.size : 1;
+            return {
+              ...k,
+              size: clamped,
+              rings: k.rings?.map((ring) => ring.map((v) => v * factor)),
+            };
+          }),
+        };
+      }),
+    })),
+
+  setProfileKeyFill: (id, at, fill) =>
+    set((s) => ({
+      features: s.features.map((f) =>
+        f.id !== id || !f.keys || !f.keys[at]
+          ? f
+          : {
+              ...f,
+              keys: f.keys.map((k, i) =>
+                i === at ? { ...k, fill: fill === 'outline' ? 'outline' : 'holes' } : k,
+              ),
+            },
+      ),
+    })),
+
+  /**
+   * Read an SVG for one key. `fitProfile` centres the bounding box on the
+   * origin as it sizes, which is why there is no separate Centre button: every
+   * key arrives centred, so two outlines drawn in opposite corners of their
+   * pages still morph in place rather than through a sideways sweep.
+   *
+   * A file with nothing readable in it leaves the key with an empty ring list
+   * — present but unusable, which the inspector tells apart from a key whose
+   * SVG has simply not been chosen yet.
+   */
+  loadProfileKey: (id, at, name, svg) =>
+    set((s) => ({
+      features: s.features.map((f) => {
+        if (f.id !== id || !f.keys || !f.keys[at]) return f;
+        const parsed = parseSvg(svg);
+        return {
+          ...f,
+          keys: f.keys.map((k, i) =>
+            i === at
+              ? {
+                  ...k,
+                  path: name,
+                  warnings: parsed.warnings.length,
+                  rings:
+                    parsed.rings.length > 0
+                      ? fitProfile(parsed.rings, Math.max(k.size, 1))
+                      : [],
+                }
+              : k,
+          ),
+        };
+      }),
+    })),
+
   addBoss: () =>
     set((s) => {
       const rod = [...s.features].reverse().find((f) => f.kind === 'rod' && f.enabled);
@@ -1735,6 +1888,12 @@ export const useKerros = create<KerrosState>((set, get) => ({
         ...(f.strokes && f.strokes.length > 0
           ? { strokes: f.strokes.map((k) => ({ ...k, points: [...k.points] })) }
           : {}),
+        // A key's rings and warnings are deliberately not written: the path is
+        // the record, and the outline is read again from it — the same trade
+        // the profile's own rings make.
+        ...(f.keys && f.keys.length > 0
+          ? { keys: f.keys.map((k) => ({ z: k.z, size: k.size, fill: k.fill, path: k.path })) }
+          : {}),
       })),
       slicing: {
         sliceRes: s.sliceRes,
@@ -1776,6 +1935,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
         enabled: f.enabled,
         params: { ...f.params },
         ...(f.strokes ? { strokes: f.strokes.map((k) => ({ ...k, points: [...k.points] })) } : {}),
+        ...(f.keys ? { keys: f.keys.map((k) => ({ ...k })) } : {}),
       })),
       nextFeatureNumber,
       sliceRes: data.slicing.sliceRes,
@@ -1925,6 +2085,7 @@ export {
   pinsFromFeatures,
   bossesFromFeatures,
   patternOptionsOf,
+  usableProfileKeys,
 } from './pipeline';
 
 // Names the store uses itself are re-exported explicitly, since an

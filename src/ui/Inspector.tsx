@@ -7,6 +7,7 @@ import {
   importSizeOf,
   rodSpanOf,
   shellWallOf,
+  usableProfileKeys,
   useKerros,
 } from '../core/store';
 import { openBinary, openText } from './download';
@@ -1118,6 +1119,12 @@ function ProfileInspector({ feature }: ProfileProps) {
   const renameFeature = useKerros((s) => s.renameFeature);
   const setProfileSize = useKerros((s) => s.setProfileSize);
   const loadProfile = useKerros((s) => s.loadProfile);
+  const addProfileKey = useKerros((s) => s.addProfileKey);
+  const removeProfileKey = useKerros((s) => s.removeProfileKey);
+  const setProfileKeyZ = useKerros((s) => s.setProfileKeyZ);
+  const setProfileKeySize = useKerros((s) => s.setProfileKeySize);
+  const setProfileKeyFill = useKerros((s) => s.setProfileKeyFill);
+  const loadProfileKey = useKerros((s) => s.loadProfileKey);
 
   const rings = feature.rings ?? [];
   const path = text(feature.params, 'path', '');
@@ -1127,8 +1134,33 @@ function ProfileInspector({ feature }: ProfileProps) {
   const warnings = num(feature.params, 'warnings', 0);
   const blend = num(feature.params, 'k', 10);
 
-  // The reach the index will use, so the panel can say when a blend outruns it.
-  const reach = rings.length > 0 ? indexProfile({ rings, fill: fill as 'outline' | 'holes' }).reach : 0;
+  const keys = feature.keys ?? [];
+  /*
+   * The same predicate the pipeline builds the field from, so the panel and
+   * the sampler cannot disagree about whether the morph is live — the
+   * FixtureInspector class of gap, closed by sharing the function rather than
+   * by writing the condition twice.
+   */
+  const usable = usableProfileKeys(feature);
+  const morphing = usable.length >= 2;
+  const waiting = keys.length - usable.length;
+  const easing = text(feature.params, 'easing', 'smooth');
+
+  /*
+   * The reach the index will use, so the panel can say when a blend outruns
+   * it. For a morph the tightest key binds, since every key has its own index.
+   */
+  const reach = morphing
+    ? Math.min(
+        ...usable.map(
+          (k) =>
+            indexProfile({ rings: k.rings ?? [], fill: k.fill === 'outline' ? 'outline' : 'holes' })
+              .reach,
+        ),
+      )
+    : rings.length > 0
+      ? indexProfile({ rings, fill: fill as 'outline' | 'holes' }).reach
+      : 0;
 
   return (
     <>
@@ -1144,84 +1176,226 @@ function ProfileInspector({ feature }: ProfileProps) {
             />
           </span>
         </label>
-        {/*
-          Same trade as a mesh import, and it has to be said the same way: the
-          project file keeps the path, not the outline, so a reopened lamp needs
-          the drawing again. Presenting an empty feature without saying why is
-          the silence this program keeps having to fix.
-        */}
-        {rings.length === 0 ? (
-          <div className="warn">
-            No outline loaded. The project file records the path and not the
-            drawing, so an SVG has to be located again after opening.
+        {keys.length === 0 ? (
+          <>
+            {/*
+              Same trade as a mesh import, and it has to be said the same way: the
+              project file keeps the path, not the outline, so a reopened lamp needs
+              the drawing again. Presenting an empty feature without saying why is
+              the silence this program keeps having to fix.
+            */}
+            {rings.length === 0 ? (
+              <div className="warn">
+                No outline loaded. The project file records the path and not the
+                drawing, so an SVG has to be located again after opening.
+              </div>
+            ) : (
+              <div className="derived">
+                {rings.length} {rings.length === 1 ? 'outline' : 'outlines'} from{' '}
+                {path.split(/[\\/]/).pop()}
+              </div>
+            )}
+            {warnings > 0 ? (
+              <div className="warn">
+                {warnings} part{warnings === 1 ? '' : 's'} of the drawing could not be
+                read — text and images are not outlines, and an open path has no
+                inside. Convert them to closed paths in your editor.
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="btn btn-wide"
+              onClick={() => {
+                void openText(['svg'], '.svg,image/svg+xml').then((file) => {
+                  if (file) loadProfile(feature.id, file.name, file.contents);
+                });
+              }}
+            >
+              {rings.length === 0 ? 'Locate the SVG…' : 'Replace the SVG…'}
+            </button>
+          </>
+        ) : morphing ? (
+          <div className="derived">
+            Morphing between {usable.length} keys over{' '}
+            {(
+              Math.max(...usable.map((k) => k.z)) - Math.min(...usable.map((k) => k.z))
+            ).toFixed(0)}{' '}
+            mm of height.
           </div>
         ) : (
-          <div className="derived">
-            {rings.length} {rings.length === 1 ? 'outline' : 'outlines'} from{' '}
-            {path.split(/[\\/]/).pop()}
+          /*
+            A check that refuses to do something says what it refused and why:
+            the morph is not live, and this is what the slicer cuts meanwhile.
+          */
+          <div className="warn">
+            {waiting} key{waiting === 1 ? ' has' : 's have'} no outline, so the morph is
+            not live.{' '}
+            {rings.length > 0
+              ? 'Slicing uses the original outline meanwhile.'
+              : 'There is no original outline to fall back on, so this profile cuts nothing.'}
           </div>
         )}
-        {warnings > 0 ? (
-          <div className="warn">
-            {warnings} part{warnings === 1 ? '' : 's'} of the drawing could not be
-            read — text and images are not outlines, and an open path has no
-            inside. Convert them to closed paths in your editor.
-          </div>
-        ) : null}
-        <button
-          type="button"
-          className="btn btn-wide"
-          onClick={() => {
-            void openText(['svg'], '.svg,image/svg+xml').then((file) => {
-              if (file) loadProfile(feature.id, file.name, file.contents);
-            });
-          }}
-        >
-          {rings.length === 0 ? 'Locate the SVG…' : 'Replace the SVG…'}
-        </button>
       </div>
 
+      {keys.length === 0 ? (
+        <div className="group">
+          <div className="group-head">The outline</div>
+          <label className="field">
+            <span className="field-label">Inner paths</span>
+            <span className="field-input">
+              <select value={fill} onChange={(e) => setParam(feature.id, 'fill', e.target.value)}>
+                <option value="holes">Are holes</option>
+                <option value="outline">Are ignored</option>
+              </select>
+            </span>
+          </label>
+          <div className="derived">
+            {fill === 'holes'
+              ? 'A path inside another is a hole, and one inside that is solid again.'
+              : 'Only the outermost paths count, so a letter O comes out a disc.'}
+          </div>
+          <NumberField
+            label="Longest axis"
+            value={size}
+            unit="mm"
+            step={5}
+            min={1}
+            onChange={(v) => setProfileSize(feature.id, v)}
+          />
+          <div className="derived">
+            A drawing arrives at whatever size the editor left it, so it is sized
+            here rather than multiplied. Uniform, which is what keeps the field a
+            true distance.
+          </div>
+        </div>
+      ) : null}
+
+      {keys.map((key, at) => {
+        const ringCount = key.rings?.length ?? 0;
+        const file = key.path.split(/[\\/]/).pop();
+        return (
+          <div className="group" key={at}>
+            <div className="group-head">Key at {key.z.toFixed(1)} mm</div>
+            <NumberField
+              label="Height (z)"
+              value={key.z}
+              unit="mm"
+              step={5}
+              onChange={(v) => setProfileKeyZ(feature.id, at, v)}
+            />
+            <NumberField
+              label="Longest axis"
+              value={key.size}
+              unit="mm"
+              step={5}
+              min={1}
+              onChange={(v) => setProfileKeySize(feature.id, at, v)}
+            />
+            <label className="field">
+              <span className="field-label">Inner paths</span>
+              <span className="field-input">
+                <select
+                  value={key.fill}
+                  onChange={(e) => setProfileKeyFill(feature.id, at, e.target.value)}
+                >
+                  <option value="holes">Are holes</option>
+                  <option value="outline">Are ignored</option>
+                </select>
+              </span>
+            </label>
+            {ringCount > 0 ? (
+              <div className="derived">
+                {ringCount} {ringCount === 1 ? 'outline' : 'outlines'} from {file}, fitted and
+                centred.
+              </div>
+            ) : key.path !== '' ? (
+              <div className="warn">
+                No outline loaded. The project file records the path and not the drawing, so{' '}
+                {file} has to be located again after opening.
+              </div>
+            ) : (
+              <div className="warn">No outline yet — choose an SVG below.</div>
+            )}
+            {(key.warnings ?? 0) > 0 ? (
+              <div className="warn">
+                {key.warnings} part{key.warnings === 1 ? '' : 's'} of the drawing could not be
+                read — text and images are not outlines, and an open path has no inside.
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="btn btn-wide"
+              onClick={() => {
+                void openText(['svg'], '.svg,image/svg+xml').then((chosen) => {
+                  if (chosen) loadProfileKey(feature.id, at, chosen.name, chosen.contents);
+                });
+              }}
+            >
+              {ringCount > 0 ? 'Replace the SVG…' : key.path !== '' ? 'Locate the SVG…' : 'Choose the SVG…'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-wide"
+              onClick={() => removeProfileKey(feature.id, at)}
+            >
+              Remove this key
+            </button>
+          </div>
+        );
+      })}
+
       <div className="group">
-        <div className="group-head">The outline</div>
-        <label className="field">
-          <span className="field-label">Inner paths</span>
-          <span className="field-input">
-            <select value={fill} onChange={(e) => setParam(feature.id, 'fill', e.target.value)}>
-              <option value="holes">Are holes</option>
-              <option value="outline">Are ignored</option>
-            </select>
-          </span>
-        </label>
-        <div className="derived">
-          {fill === 'holes'
-            ? 'A path inside another is a hole, and one inside that is solid again.'
-            : 'Only the outermost paths count, so a letter O comes out a disc.'}
-        </div>
-        <NumberField
-          label="Longest axis"
-          value={size}
-          unit="mm"
-          step={5}
-          min={1}
-          onChange={(v) => setProfileSize(feature.id, v)}
-        />
-        <div className="derived">
-          A drawing arrives at whatever size the editor left it, so it is sized
-          here rather than multiplied. Uniform, which is what keeps the field a
-          true distance.
-        </div>
+        <div className="group-head">Morph</div>
+        {keys.length === 0 ? (
+          <div className="derived">
+            Keys morph this profile between outlines at different heights — a circle at the
+            bottom becoming a star at the top. Adding the first one keeps the solid as it is:
+            the outline above becomes the bottom key.
+          </div>
+        ) : null}
+        <button type="button" className="btn btn-wide" onClick={() => addProfileKey(feature.id)}>
+          {keys.length === 0 ? 'Add morph keys' : 'Add a key above the top one'}
+        </button>
+        {keys.length >= 2 ? (
+          <>
+            <label className="field">
+              <span className="field-label">Easing</span>
+              <span className="field-input">
+                <select
+                  value={easing}
+                  onChange={(e) => setParam(feature.id, 'easing', e.target.value)}
+                >
+                  <option value="smooth">Smooth</option>
+                  <option value="linear">Linear</option>
+                </select>
+              </span>
+            </label>
+            <div className="derived">
+              {easing === 'smooth'
+                ? 'Smooth eases in and out of every key, so the wall carries no crease where a key sits.'
+                : 'Linear runs straight between keys and leaves a crease in the wall at each one.'}
+            </div>
+          </>
+        ) : null}
       </div>
 
       <div className="group">
         <div className="group-head">Extrusion</div>
-        <NumberField
-          label="Height"
-          value={height}
-          unit="mm"
-          step={5}
-          min={0.5}
-          onChange={(v) => setParam(feature.id, 'height', v)}
-        />
+        {morphing ? (
+          <div className="derived">
+            The solid runs from the bottom key to the top one, so height has nothing to steer
+            here — it belongs to the single-outline profile.
+          </div>
+        ) : (
+          <NumberField
+            label="Height"
+            value={height}
+            unit="mm"
+            step={5}
+            min={0.5}
+            onChange={(v) => setParam(feature.id, 'height', v)}
+          />
+        )}
         <NumberField
           label="Round"
           value={num(feature.params, 'round', 0)}
@@ -1231,20 +1405,20 @@ function ProfileInspector({ feature }: ProfileProps) {
           onChange={(v) => setParam(feature.id, 'round', v)}
         />
         <div className="derived">
-          Height stretches Z only and leaves the outline alone, so unlike an
-          import's scale it can be anything. The round takes a radius off every
-          edge of the solid.
+          {morphing
+            ? 'The round takes a radius off every edge of the solid, the keys included.'
+            : "Height stretches Z only and leaves the outline alone, so unlike an import's scale it can be anything. The round takes a radius off every edge of the solid."}
         </div>
         {/*
           The one limit worth stating, and the same one a mesh import carries: a
           profile's distance is exact out to a reach and clamped beyond it, so a
           blend wider than that reads a clamped number and comes out wrong.
         */}
-        {rings.length > 0 && blend > reach ? (
+        {(morphing || rings.length > 0) && blend > reach ? (
           <div className="warn">
-            The blend is {blend} mm and this outline is exact to {reach.toFixed(1)}{' '}
-            mm. Past that the distance is clamped, so a blend that wide will not
-            land where it says. Use a smaller blend, or a larger profile.
+            The blend is {blend} mm and {morphing ? 'the tightest key' : 'this outline'} is exact
+            to {reach.toFixed(1)} mm. Past that the distance is clamped, so a blend that wide
+            will not land where it says. Use a smaller blend, or a larger profile.
           </div>
         ) : null}
       </div>
