@@ -39,6 +39,22 @@ try {
   assert.ok(state().features.filter(f=>f.kind==='assembly:rib').every(f=>!deleted.includes(f.id)),'deleted IDs are never reused');
   state().addAssemblyMember(layout.id,'channel');
   const channel=state().features.at(-1);
+  const beforePose=state().features;
+  let poseNotifications=0;
+  const unsubscribe=useKerros.subscribe(()=>poseNotifications++);
+  const pose={px:7,py:24,pz:-3,yaw:21,elevation:17,roll:63};
+  state().setAssemblyAllFollow(true);
+  poseNotifications=0;
+  state().setAssemblyChannelPose(channel.id,pose);
+  assert.equal(poseNotifications,1,'a channel drag commits one complete pose');
+  unsubscribe();
+  for (const feature of state().features) {
+    if (feature.id===channel.id) for (const [key,value] of Object.entries(pose)) assert.equal(feature.params[key],value);
+    else assert.deepEqual(feature,beforePose.find(f=>f.id===feature.id),'channel edits never move ribs, even with All follow');
+  }
+  const validPose=state().features;
+  state().setAssemblyChannelPose(channel.id,{yaw:NaN});assert.deepEqual(state().features,validPose);
+  state().setAssemblyChannelPose(ribs[0].id,{yaw:45});assert.deepEqual(state().features,validPose);
   state().setParam(channel.id,'shape','strip');state().setParam(channel.id,'targetIds',ribs[0].id);
   state().addAssemblyMember(layout.id,'rib');
   const lastId=state().features.at(-1).id;
@@ -57,7 +73,7 @@ try {
   const opened=parseProject(saved);assert.ok(opened.data);assert.deepEqual(opened.data.features,before.features);
   state().applyProject(opened.data,opened.nextFeatureNumber);
   assert.deepEqual(state().projectData().features,before.features);
-  console.log('  ok    store creation, linked angles, retained identities, count reduction and project roundtrip');
+  console.log('  ok    store creation, linked angles, retained identities, atomic channel pose and project roundtrip');
 
   // A clean build exercises every output through the actual composition layer.
   state().removeFeature(layout.id);

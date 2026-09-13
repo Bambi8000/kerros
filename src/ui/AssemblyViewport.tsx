@@ -4,6 +4,8 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { SliceSet } from '../core/slice';
 import { groupContours } from '../core/slice';
+import { channelAngles } from '../core/assembly';
+import type { GizmoMode } from '../core/store';
 import { useKerros, SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM } from '../core/store';
 
 interface SceneState {
@@ -38,7 +40,7 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
     camera.position.set(240, -360, 250);
     const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     element.appendChild(renderer.domElement);
-    renderer.domElement.setAttribute('aria-label', 'Assembly preview. Select a part to move or rotate it.');
+    renderer.domElement.setAttribute('aria-label', 'Assembly preview. Select a part or LED channel to move or rotate it.');
     scene.add(new THREE.HemisphereLight(0xfff4e3, 0x555566, 2.3));
     const key = new THREE.DirectionalLight(0xffffff, 3); key.position.set(200, -300, 400); scene.add(key);
     const fill = new THREE.DirectionalLight(0xe0d5c2, 1.5); fill.position.set(-200, 200, 150); scene.add(fill);
@@ -60,6 +62,8 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
     const state: SceneState = { scene, camera, renderer, orbit, transform, parts, channels, proxy, fit, dragging: false };
     engine.current = state;
     let dragStart = new THREE.Vector3(), dragId = '', angleStart = 0;
+    let dragMode: GizmoMode = 'translate', dragAllFollow = false;
+    let dragChannel: NonNullable<SliceSet['assembly']>['channels'][number] | undefined;
     let originals: { object: THREE.Object3D; matrix: THREE.Matrix4; pivot: THREE.Vector3 }[] = [];
     transform.addEventListener('dragging-changed', (event) => {
       const dragging = event.value === true;
@@ -67,10 +71,17 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
       const store = useKerros.getState();
       if (dragging) {
         dragStart = proxy.position.clone(); dragId = store.selectedId || '';
+        dragMode = store.gizmoMode;
+        dragChannel = current.current?.assembly?.channels.find((c) => c.id === dragId);
+        dragAllFollow = store.assemblyAllFollow && store.features.some((f) => f.id === dragId && f.kind === 'assembly:rib');
         angleStart = Number(store.features.find((f) => f.id === dragId)?.params.angle || 0);
-        originals = parts.children.flatMap((object) => {
+        originals = [...parts.children, ...channels.children].flatMap((object) => {
+          if (dragChannel && object.userData.featureId === dragId) {
+            object.updateMatrix();
+            return [{ object, matrix: object.matrix.clone(), pivot: dragStart.clone() }];
+          }
           const part = current.current?.slices.find((s) => s.part?.id === object.userData.featureId)?.part;
-          if (!part || (part.id !== dragId && !(store.gizmoMode === 'rotate' && store.assemblyAllFollow && part.kind === 'rib'))) return [];
+          if (!part || (part.id !== dragId && !(dragMode === 'rotate' && dragAllFollow && part.kind === 'rib'))) return [];
           object.updateMatrix();
           return [{ object, matrix: object.matrix.clone(), pivot: new THREE.Vector3(...part.origin) }];
         });
@@ -78,21 +89,26 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
         const feature = store.features.find((f) => f.id === dragId);
         const layout = store.features.find((f) => f.id === feature?.params.groupId);
         if (feature && layout) {
-          if (store.gizmoMode === 'rotate' && feature.kind === 'assembly:rib') store.setAssemblyAngle(dragId, angleStart + THREE.MathUtils.radToDeg(proxy.rotation.z), store.assemblyAllFollow);
+          if (dragMode === 'rotate' && dragChannel) {
+            const u = new THREE.Vector3(...dragChannel.u).applyQuaternion(proxy.quaternion);
+            const v = new THREE.Vector3(...dragChannel.v).applyQuaternion(proxy.quaternion);
+            store.setAssemblyChannelPose(dragId, channelAngles(u.toArray(), v.toArray(), Number(layout.params.angle || 0)));
+          } else if (dragMode === 'rotate' && feature.kind === 'assembly:rib') store.setAssemblyAngle(dragId, angleStart + THREE.MathUtils.radToDeg(proxy.rotation.z), dragAllFollow);
           else {
             const delta = proxy.position.clone().sub(dragStart).applyAxisAngle(new THREE.Vector3(0, 0, 1), -Number(layout.params.angle || 0) * Math.PI / 180);
-            store.setTransform(dragId, { px: Number(feature.params.px || 0) + delta.x, py: Number(feature.params.py || 0) + delta.y, pz: Number(feature.params.pz || 0) + delta.z });
+            if (dragChannel) store.setAssemblyChannelPose(dragId, { px: dragChannel.localOrigin[0] + delta.x, py: dragChannel.localOrigin[1] + delta.y, pz: dragChannel.localOrigin[2] + delta.z });
+            else store.setTransform(dragId, { px: Number(feature.params.px || 0) + delta.x, py: Number(feature.params.py || 0) + delta.y, pz: Number(feature.params.pz || 0) + delta.z });
           }
         }
-        proxy.rotation.set(0, 0, 0); dragId = '';
+        proxy.rotation.set(0, 0, 0); dragId = ''; dragChannel = undefined;
       }
     });
     transform.addEventListener('objectChange', () => {
       if (!state.dragging) return;
       for (const { object, matrix, pivot } of originals) {
         const change = new THREE.Matrix4();
-        if (useKerros.getState().gizmoMode === 'rotate') {
-          change.makeTranslation(pivot.x, pivot.y, pivot.z).multiply(new THREE.Matrix4().makeRotationZ(proxy.rotation.z)).multiply(new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z));
+        if (dragMode === 'rotate') {
+          change.makeTranslation(pivot.x, pivot.y, pivot.z).multiply(new THREE.Matrix4().makeRotationFromQuaternion(proxy.quaternion)).multiply(new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z));
         } else {
           const delta = proxy.position.clone().sub(dragStart); change.makeTranslation(delta.x, delta.y, delta.z);
         }
@@ -107,7 +123,7 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
       const rect = renderer.domElement.getBoundingClientRect();
       const ray = new THREE.Raycaster();
       ray.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2), camera);
-      const hit = ray.intersectObjects(parts.children, true).find((hit) => hit.object.userData.featureId);
+      const hit = ray.intersectObjects([...parts.children, ...channels.children], true).find((hit) => hit.object.userData.featureId);
       if (hit) {
         const store = useKerros.getState(); store.selectFeature(String(hit.object.userData.featureId));
         const index = current.current?.slices.find((s) => s.part?.id === hit.object.userData.featureId)?.index;
@@ -117,7 +133,7 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
     renderer.domElement.addEventListener('pointerdown', onDown);
     renderer.domElement.addEventListener('pointerup', onUp);
     const onKey = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (state.dragging || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();
       if (key === 'm' || key === 'r') useKerros.getState().setGizmoMode(key === 'm' ? 'translate' : 'rotate');
       else if (key === 'escape') useKerros.getState().selectFeature(null);
@@ -181,8 +197,10 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
       const mesh = new THREE.Mesh(makeEnvelope(channel.width, channel.height, radius + clearance), new THREE.MeshBasicMaterial({ color: '#70d8ee', transparent: true, opacity: selected ? 0.3 : 0.14, depthWrite: false }));
       mesh.position.copy(a).add(b).multiplyScalar(0.5);
       mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...channel.u), new THREE.Vector3(...channel.v), d.clone().normalize()));
+      mesh.userData.featureId = channel.id;
       e.channels.add(mesh);
-      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), new THREE.LineBasicMaterial({ color: '#b6f4ff', depthTest: false })); e.channels.add(line);
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), new THREE.LineBasicMaterial({ color: '#b6f4ff', depthTest: false }));
+      line.userData.featureId = channel.id; e.channels.add(line);
       const component = mesh.clone();
       component.geometry = makeEnvelope(Math.max(0.01, channel.width - clearance * 2), Math.max(0.01, channel.height - clearance * 2), radius);
       component.material = new THREE.MeshBasicMaterial({ color: '#ebfbff', transparent: true, opacity: 0.3, depthWrite: false });
@@ -193,10 +211,12 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
   useEffect(() => {
     const e = engine.current; if (!e || e.dragging) return;
     const part = set?.slices.find((s) => s.part?.id === selectedId)?.part;
-    if (!part || pending || (gizmoMode === 'rotate' && part.kind !== 'rib')) { e.transform.detach(); return; }
-    e.proxy.position.set(...part.origin); e.proxy.rotation.set(0, 0, 0);
+    const channel = set?.assembly?.channels.find((c) => c.id === selectedId);
+    const enabledChannel = channel && useKerros.getState().features.some((f) => f.id === channel.id && f.enabled) && channel.width > 0 && channel.height > 0;
+    if ((!part && !enabledChannel) || pending || (gizmoMode === 'rotate' && !enabledChannel && part?.kind !== 'rib')) { e.transform.detach(); return; }
+    e.proxy.position.set(...(enabledChannel ? channel.origin : part!.origin)); e.proxy.rotation.set(0, 0, 0);
     e.transform.setMode(gizmoMode); e.transform.setSpace('world');
-    e.transform.showX = gizmoMode === 'translate'; e.transform.showY = gizmoMode === 'translate'; e.transform.showZ = true;
+    e.transform.showX = gizmoMode === 'translate' || Boolean(enabledChannel); e.transform.showY = e.transform.showX; e.transform.showZ = true;
     e.transform.setTranslationSnap(snap ? SNAP_TRANSLATE_MM : null);
     e.transform.setRotationSnap(snap ? SNAP_ROTATE_DEG * Math.PI / 180 : null);
     e.transform.attach(e.proxy);
@@ -205,6 +225,6 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
   return <section className="assembly-canvas">
     <div ref={host} className="assembly-three" />
     <div className="assembly-overlay"><strong>Assembly</strong><span>{pending ? 'Rebuilding…' : `${set?.slices.length ?? 0} parts`}</span><button className="btn" onClick={() => engine.current?.fit()}>Fit view</button></div>
-    <div className="assembly-caption">{!set?.slices.length ? 'Add a source shape, then create Radial ribs or Linear ribs.' : 'Click a part to select · drag to orbit · scroll to zoom'}<br />{report && !pending && !report.cuttable && 'Some parts need attention. Read the assembly checks in the inspector.'}</div>
+    <div className="assembly-caption">{!set?.slices.length ? 'Add a source shape, then create Radial ribs or Linear ribs.' : report?.channels.some((c) => c.id === selectedId) ? 'LED channel · M to move · R to rotate · drag a handle · cuts update on release' : 'Click a part or LED channel to select · drag to orbit · scroll to zoom'}<br />{report && !pending && !report.cuttable && 'Some parts need attention. Read the assembly checks in the inspector.'}</div>
   </section>;
 }

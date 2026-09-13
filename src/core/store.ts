@@ -191,6 +191,7 @@ interface KerrosState {
   addAssemblyMember: (id: string, kind: AssemblyMember) => void;
   setAssemblyCount: (id: string, kind: 'rib' | 'support', count: number) => void;
   setAssemblyAngle: (id: string, angle: number, all: boolean) => void;
+  setAssemblyChannelPose: (id: string, patch: Partial<Record<'px' | 'py' | 'pz' | 'yaw' | 'elevation' | 'roll', number>>) => void;
   addRod: () => void;
   addLegs: () => void;
   addPins: () => void;
@@ -463,6 +464,11 @@ export const useKerros = create<KerrosState>((set, get) => ({
     const delta = angle - Number(rib.params.angle || 0);
     return { features: s.features.map((f) => f.id === id || (all && f.kind === 'assembly:rib' && f.params.groupId === rib.params.groupId)
       ? { ...f, params: { ...f.params, angle: Number(f.params.angle || 0) + delta } } : f) };
+  }),
+  setAssemblyChannelPose: (id, patch) => set((s) => {
+    if (!Object.values(patch).every(Number.isFinite)) return s;
+    return { features: s.features.map((f) => f.id === id && f.kind === 'assembly:channel'
+      ? { ...f, params: { ...f.params, ...patch } } : f) };
   }),
 
   addShape: (moduleKey) =>

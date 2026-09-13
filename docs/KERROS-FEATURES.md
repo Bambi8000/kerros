@@ -1447,10 +1447,12 @@ is never cut that way.
 ## Hole punch — **shipped** (0.28.0)
 
 One exact circular hole in the sheet currently being edited. In **Slice**, pick
-**Hole punch**, set **Diameter** in millimetres and click the centre. The cursor
+**Hole punch** in the bottom toolbar, set **Diameter** in millimetres and click the centre. The cursor
 shows the finished circle, amber when it fits and red when it cannot be cut.
 Release creates one `holePunch` feature in the SLICE stage, selects it and
 returns to the selection tool. Arming and cancelling the tool creates nothing.
+This is the horizontal-layer workflow. Upright assemblies use **Part**, which
+does not yet offer Hole punch; disabling the assembly layout restores Slice.
 Holding the button while aiming moves the preview and commits its final centre.
 Esc and a cancelled pointer gesture create nothing either. A pending slice or
 a layer change during the gesture is refused rather than punching stale data.
@@ -3323,6 +3325,23 @@ sheet extents. Tube diameter or strip/profile width, height and corner radius
 are measured component inputs. Clearance per side adds twice the entered value
 to the envelope dimensions; kerf is applied later to cut paths.
 
+Since 0.29.1, selecting the channel in the tree or clicking its visible envelope
+or centreline attaches its own gizmo in Assembly. `Move channel` and `Rotate
+channel` in Straight route also open Assembly and choose the tool. The toolbar
+and M/R shortcuts work too. Move exposes XYZ arrows; Rotate exposes all three
+axes plus the screen/free rotation handles. Snap uses the shared 5 mm / 15 degree
+increments. Rotation pivots about Route X/Y/Z, not the midpoint of automatically
+fitted endpoints. Only the selected channel moves; rib All follow never applies.
+The envelope previews the drag and a single atomic pose update on release
+rebuilds the cut paths. Fitted endpoints can then adjust to the new direction.
+
+The pipeline emits the route anchor in assembly and world coordinates alongside
+the section basis. `channelFrame` supplies that basis to the cutting kernel;
+`channelAngles` converts a rotated world basis back through the layout rotation
+to yaw, elevation and roll. This preserves the complete section orientation,
+including vertical directions and the reference-axis switch near the poles.
+The gizmo detaches while results are stale or the selected channel is disabled.
+
 Ribs are the default targets. Supports and the backplate are opt-in; an optional
 ID list restricts the checked types. The inspector distinguishes disabled tools,
 missing targets, invalid dimensions, missed parts, refused cuts and actual hit
@@ -3400,6 +3419,10 @@ conflicts, missing targets, legacy identity and exact in-plane kerf.
 `tools/validate-assembly-state.mjs` exercises the real store, linked angle deltas,
 count reductions and retained IDs, save/open, material-separated nesting, DXF,
 manifest/PDF and actual worker message handler. Both are in `npm run verify`.
+Channel gizmo checks cover quaternion roundtrips, vertical poles, section roll,
+rotated layouts, a route anchor distinct from fitted midpoint, actual bore
+centres after a pose edit, atomic state writes and save/open. They do not replace
+a browser check that selecting and dragging the rendered handles is reachable.
 
 Before a complete lamp, cut a small two-rib/two-ring coupon and a two-rib wall
 coupon in the chosen stock. Use the actual LED tube/profile. Measure slot and

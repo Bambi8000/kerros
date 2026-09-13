@@ -122,6 +122,11 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
         <p className="hint">Total opening size adds twice the clearance. Kerf is applied separately. Angled crossings widen the cut across the whole sheet thickness.</p>
       </div>
       <div className="group"><div className="group-head">Straight route</div>
+        <div className="assembly-scope" aria-label="LED channel handles">
+          <button className={`btn${state.mode === 'stack' && state.gizmoMode === 'translate' ? ' is-active' : ''}`} disabled={!feature.enabled || !layout?.enabled} onClick={() => { state.setMode('stack'); state.setGizmoMode('translate'); }}>Move channel</button>
+          <button className={`btn${state.mode === 'stack' && state.gizmoMode === 'rotate' ? ' is-active' : ''}`} disabled={!feature.enabled || !layout?.enabled} onClick={() => { state.setMode('stack'); state.setGizmoMode('rotate'); }}>Rotate channel</button>
+        </div>
+        <p className="hint">In Assembly, drag the channel’s arrows to move or rings to rotate in 3D. M / R switches tools. Rotation pivots around Route X/Y/Z; fitted ends adjust after release. Snap uses 5 mm / 15° steps. All follow applies to ribs only.</p>
         {number('px', 'Route X')}{number('py', 'Route Y')}{number('pz', 'Route Z')}{number('yaw', 'Direction in plan', 0, '°')}{number('elevation', 'Elevation', 0, '°')}
         {toggle('through', 'Fit through targeted parts', true)}
         {!p.through && number('length', 'Flat-ended length', 200)}

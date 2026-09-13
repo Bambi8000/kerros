@@ -90,7 +90,13 @@ export interface SliceSet {
     cuttable: boolean;
     issues: { severity: 'error' | 'warning' | 'info'; ids: string[]; message: string }[];
     joints: { id: string; parts: string[]; instruction: string }[];
-    channels: { id: string; hits: string[]; status: string; start: [number, number, number]; end: [number, number, number]; u: [number, number, number]; v: [number, number, number]; width: number; height: number }[];
+    channels: {
+      id: string; hits: string[]; status: string;
+      /** Route anchor in world and assembly coordinates, independent of fitted ends. */
+      origin: [number, number, number]; localOrigin: [number, number, number];
+      start: [number, number, number]; end: [number, number, number];
+      u: [number, number, number]; v: [number, number, number]; width: number; height: number;
+    }[];
   };
   /** Layer pitch used, mm (material thickness + spacer height). */
   pitch: number;

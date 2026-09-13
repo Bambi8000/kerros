@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.29.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.29.1.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -21,6 +21,11 @@ kerf; restricting the source SDF to an oblique plane is not enough.
 Assembly, Part, Sheet, project files, DXF and the assembly PDF share part IDs.
 Projects persist the allocation watermark so a deleted target ID cannot be
 reassigned to a different part after reopening.
+LED channels have their own XYZ move and full 3D rotation gizmo, selected in
+the tree or by clicking the channel. The pivot is the route anchor, independent
+of fitted endpoints. A drag commits one pose on release and regenerates cuts;
+world-space edits are converted back through the assembly frame, including
+section roll at vertical directions. All follow remains rib-only.
 The original horizontal pipeline is unchanged when the assembly is disabled;
 horizontal-only fixtures, paint and punches are explicitly reported as excluded
 while it is enabled. Joint geometry and sampled insertion/collision checks are
@@ -34,6 +39,8 @@ structural holes are turned, before perforation. A complete circle must fit;
 rejected cuts name the reason. The shared circle-fit guard now measures complete
 segments, because simplified long edges could previously be crossed between
 their vertices. Hole punches appear in Slice, Stack, Sheet and DXF, not Model.
+The button is in the bottom toolbar of horizontal Slice; upright Part does not
+yet have a single-part punch tool.
 
 The 2026-09-13 audit completed the layer-3 claim cross-check and found seventeen
 issues, recorded and repaired in `docs/KERROS-AUDIT.md`. Project

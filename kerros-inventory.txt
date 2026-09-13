@@ -1,9 +1,9 @@
-KERROS INVENTORY  2026-09-13  version 0.29.0
+KERROS INVENTORY  2026-09-13  version 0.29.1
 
 --- source, lines each
-   35703 total
+   35807 total
     2882 src/ui/Inspector.tsx
-    2224 src/core/store.ts
+    2230 src/core/store.ts
     1704 src/core/sdf.ts
     1608 src/core/pipeline.ts
     1484 tools/validate-nest.mjs
@@ -12,8 +12,8 @@ KERROS INVENTORY  2026-09-13  version 0.29.0
     1238 src/ui/SliceInspector.tsx
     1221 tools/validate-pipeline.mjs
     1083 src/ui/ProfilePanel.tsx
+    1072 src/core/slice.ts
     1067 src/core/profile2d.ts
-    1066 src/core/slice.ts
      824 src/index.css
      805 tools/validate-sdf.mjs
      772 tools/validate-window.mjs
@@ -23,7 +23,7 @@ KERROS INVENTORY  2026-09-13  version 0.29.0
      601 src/core/job.ts
      527 src/core/window.ts
      493 src/core/project.ts
-     473 src/core/assembly.ts
+     486 src/core/assembly.ts
      471 tools/validate-rig-export.mjs
      470 tools/validate-project.mjs
      448 src/core/rig.ts
@@ -45,8 +45,8 @@ KERROS INVENTORY  2026-09-13  version 0.29.0
      241 src/ui/useSheets.ts
      239 src/core/layers.ts
      231 src/core/dxf.ts
+     230 src/ui/AssemblyViewport.tsx
      220 tools/validate-layers.mjs
-     210 src/ui/AssemblyViewport.tsx
      203 src/core/types.ts
      203 tools/validate-surfacenets.mjs
      202 src/core/surfaceNets.ts
@@ -54,15 +54,15 @@ KERROS INVENTORY  2026-09-13  version 0.29.0
      182 src/ui/workerBridge.ts
      162 src/core/paint.ts
      153 src/core/pdf.ts
-     146 src/ui/AssemblyInspector.tsx
+     151 src/ui/AssemblyInspector.tsx
+     150 tools/validate-assembly.mjs
      138 src/core/twist.ts
      138 tools/validate-paint.mjs
      137 tools/validate-pdf.mjs
      131 src/ui/PartInspector.tsx
+     118 tools/validate-assembly-state.mjs
      113 tools/validate-twist.mjs
-     112 tools/validate-assembly.mjs
      108 tools/validate-state.mjs
-     102 tools/validate-assembly-state.mjs
       97 src/ui/usePreview.ts
       92 src/ui/kerros.worker.ts
       82 src/ui/useSlices.ts
@@ -95,6 +95,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+b999047 Add upright rib assemblies, wall tabs and LED channels
 f23ed44 Record rib assembly, wall mount and LED channel design
 bfdeaca Document public source repository visibility
 27a30b0 Serve public browser releases from a separate repository
@@ -134,4 +135,3 @@ e6fd419 Interleaved pins that check their own work, bosses kept inside the form,
 41b5cba Interleaved pins that check their own work, in two colours, and removable by hand
 30f31fd Docs and inventory at 0.21.0
 832b78e Measuring in the slice and model views, window ceilings from the bench, and what a shape actually measures
-c12d1fb Docs and inventory at 0.20.0: legs from the field, and the layer selector

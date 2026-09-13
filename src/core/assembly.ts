@@ -40,6 +40,25 @@ export function sheetLocal(part: Pick<Part, 'origin' | 'u' | 'v' | 'n'>, point: 
   return [dot3(d, part.u), dot3(d, part.v), dot3(d, part.n)];
 }
 const rotateZ = (v: Vec3, angle: number): Vec3 => [v[0] * Math.cos(angle) - v[1] * Math.sin(angle), v[0] * Math.sin(angle) + v[1] * Math.cos(angle), v[2]];
+/** The channel section and route share this basis in both cuts and gizmo edits. */
+export function channelFrame(yaw: number, elevation: number, roll: number) {
+  yaw *= Math.PI / 180; elevation *= Math.PI / 180; roll *= Math.PI / 180;
+  const direction: Vec3 = [Math.cos(yaw) * Math.cos(elevation), Math.sin(yaw) * Math.cos(elevation), Math.sin(elevation)];
+  const baseA = unit3(cross3(Math.abs(direction[2]) > 0.95 ? [0, 1, 0] : [0, 0, 1], direction));
+  const baseB = cross3(direction, baseA);
+  return { direction, u: add3(mul3(baseA, Math.cos(roll)), mul3(baseB, Math.sin(roll))), v: add3(mul3(baseA, -Math.sin(roll)), mul3(baseB, Math.cos(roll))) };
+}
+/** Recover assembly-local angles from the complete world-space section basis. */
+export function channelAngles(worldU: Vec3, worldV: Vec3, layoutAngle: number) {
+  const u = rotateZ(worldU, -layoutAngle * Math.PI / 180), v = rotateZ(worldV, -layoutAngle * Math.PI / 180);
+  const d = unit3(cross3(u, v));
+  const horizontal = Math.hypot(d[0], d[1]);
+  const yaw = horizontal < 1e-12 ? 0 : Math.atan2(d[1], d[0]) * 180 / Math.PI;
+  const elevation = Math.atan2(d[2], horizontal) * 180 / Math.PI;
+  const base = channelFrame(yaw, elevation, 0);
+  const roll = Math.atan2(dot3(u, base.v), dot3(u, base.u)) * 180 / Math.PI;
+  return { yaw, elevation, roll };
+}
 export function rectDistance(x: number, y: number, cx: number, cy: number, w: number, h: number, r = 0): number {
   r = Math.min(r, w / 2, h / 2);
   const dx = Math.abs(x - cx) - w / 2 + r, dy = Math.abs(y - cy) - h / 2 + r;
@@ -292,13 +311,7 @@ export function buildAssembly(
 
   for (const f of children.filter((f) => f.kind === 'assembly:channel')) {
     const position: Vec3 = [num(f, 'px'), num(f, 'py', radius * 0.35), num(f, 'pz')];
-    const yaw = num(f, 'yaw') * Math.PI / 180, elevation = num(f, 'elevation') * Math.PI / 180;
-    const direction: Vec3 = [Math.cos(yaw) * Math.cos(elevation), Math.sin(yaw) * Math.cos(elevation), Math.sin(elevation)];
-    const baseA = unit3(cross3(Math.abs(direction[2]) > 0.95 ? [0, 1, 0] : [0, 0, 1], direction));
-    const baseB = cross3(direction, baseA);
-    const roll = num(f, 'roll') * Math.PI / 180;
-    const a = add3(mul3(baseA, Math.cos(roll)), mul3(baseB, Math.sin(roll)));
-    const b = add3(mul3(baseA, -Math.sin(roll)), mul3(baseB, Math.cos(roll)));
+    const { direction, u: a, v: b } = channelFrame(num(f, 'yaw'), num(f, 'elevation'), num(f, 'roll'));
     const clearance = num(f, 'clearance', 0.25);
     const tube = f.params.shape !== 'strip';
     const width = (tube ? num(f, 'diameter', 16) : num(f, 'width', 12)) + 2 * clearance;
@@ -315,7 +328,7 @@ export function buildAssembly(
       low = Math.min(...extents) - Math.max(width, h); high = Math.max(...extents) + Math.max(width, h); length = high - low;
     }
     const start = add3(position, mul3(direction, low)), end = add3(position, mul3(direction, high));
-    const result = { id: f.id, hits: [] as string[], status: '', start, end, u: a, v: b, width, height: h };
+    const result = { id: f.id, hits: [] as string[], status: '', origin: position, localOrigin: position, start, end, u: a, v: b, width, height: h };
     channels.push(result);
     if (!f.enabled) { result.status = 'Disabled; no cuts applied.'; continue; }
     const componentValid = tube ? num(f, 'diameter', 16) > 0 : num(f, 'width', 12) > 0 && num(f, 'height', 5) > 0 && num(f, 'cornerRadius') >= 0 && num(f, 'cornerRadius') <= Math.min(num(f, 'width', 12), num(f, 'height', 5)) / 2;
@@ -461,7 +474,7 @@ export function buildAssembly(
     if (kernel.thin({ ...slice, contours: nominal }, minBridge)) say('warning', [meta.id], `A remaining bridge is below ${minBridge} mm. Inspect this part before cutting.`);
     slices.push(slice);
   }
-  for (const channel of channels) { channel.start = world(channel.start); channel.end = world(channel.end); channel.u = rotateZ(channel.u, globalAngle); channel.v = rotateZ(channel.v, globalAngle); }
+  for (const channel of channels) { channel.origin = world(channel.origin); channel.start = world(channel.start); channel.end = world(channel.end); channel.u = rotateZ(channel.u, globalAngle); channel.v = rotateZ(channel.v, globalAngle); }
   const compact: Issue[] = [];
   for (const issue of issues) {
     const same = issue.severity === 'warning' && compact.find((i) => i.severity === issue.severity && i.message === issue.message);

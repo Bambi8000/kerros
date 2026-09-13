@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import { runSliceJob } from '../src/core/pipeline.ts';
 import { assemblyFeatures, assemblyMember } from '../src/core/assemblyFeatures.ts';
-import { dot3, cross3, sheetLocal, sheetWorld, prismOpening } from '../src/core/assembly.ts';
+import { dot3, cross3, sheetLocal, sheetWorld, prismOpening, channelFrame, channelAngles } from '../src/core/assembly.ts';
+import { Euler, Quaternion, Vector3 } from 'three';
 import { groupContours, traceSheet } from '../src/core/slice.ts';
 import { indexProfile, indexedDistance } from '../src/core/profile2d.ts';
 const near = (a,b,t=1e-7) => assert.ok(Math.abs(a-b)<=t, `${a} != ${b} (tol ${t})`);
@@ -18,6 +19,23 @@ const xs=polygon.filter((_,i)=>i%2===0), ys=polygon.filter((_,i)=>i%2===1);
 near(Math.max(...xs)-Math.min(...xs),8/Math.cos(theta)+frame.thickness*Math.tan(theta));
 near(Math.max(...ys)-Math.min(...ys),4);
 console.log('  ok    orthonormal frames and full-thickness oblique prism projection');
+
+// Exercise the same quaternion delta as the viewport, including both poles,
+// the section-reference switch at |direction.z|=.95, and a rotated layout.
+const vectorNear = (a,b) => a.forEach((value,i)=>near(value,b[i]));
+for (const yaw of [-370,0,47,180]) for (const elevation of [-90,-89.999,-72,-71,0,71,72,89.999,90,130]) {
+  const original=channelFrame(yaw,elevation,33);
+  for (const layoutAngle of [0,37]) for (const delta of [new Quaternion(),new Quaternion().setFromEuler(new Euler(.3,-.7,1.1,'ZYX'))]) {
+    const world = vector => new Vector3(...vector).applyAxisAngle(new Vector3(0,0,1),layoutAngle*Math.PI/180).applyQuaternion(delta).toArray();
+    const u=world(original.u),v=world(original.v);
+    const angles=channelAngles(u,v,layoutAngle);
+    const recovered=channelFrame(angles.yaw,angles.elevation,angles.roll);
+    const toWorld = vector => new Vector3(...vector).applyAxisAngle(new Vector3(0,0,1),layoutAngle*Math.PI/180).toArray();
+    vectorNear(toWorld(recovered.u),u);vectorNear(toWorld(recovered.v),v);
+    vectorNear(toWorld(recovered.direction),world(original.direction));
+  }
+}
+console.log('  ok    channel gizmo quaternion roundtrips, vertical poles, section roll and rotated layout');
 
 const base={id:'f1',kind:'roundBox',stage:'SHAPE',name:'Body',enabled:true,params:{op:'union',sx:140,sy:120,sz:200,pz:100,r:4}};
 const options={thickness:3,kerf:.2,spacerHeight:6,resolution:120,tolerance:.025,smoothing:1,minFeature:1,seed:7};
@@ -56,6 +74,26 @@ const excludedId=beforeGlobal.slices[1].part.id;
 assert.deepEqual(set.slices.find(s=>s.part.id===excludedId).contours,run(linear.features.filter(f=>f!==led)).slices.find(s=>s.part.id===excludedId).contours,'excluded parts are not cut');
 led.params.targetIds='';
 console.log('  ok    whole-layout route transforms and untouched, obstructing excluded parts');
+
+const moved=structuredClone(linear.features), movedLayout=moved[0], movedLed=moved.find(f=>f.id===led.id);
+Object.assign(movedLayout.params,{angle:37,px:11,py:-9,pz:6});
+Object.assign(movedLed.params,{px:17,py:24,pz:7});
+const requested=channelFrame(5,4,19);
+const toWorld = vector => new Vector3(...vector).applyAxisAngle(new Vector3(0,0,1),37*Math.PI/180).toArray();
+Object.assign(movedLed.params,channelAngles(toWorld(requested.u),toWorld(requested.v),37));
+const movedSet=run(moved), movedChannel=movedSet.assembly.channels[0];
+assert.deepEqual(errors(movedSet),[]);assert.equal(movedChannel.hits.length,9);
+vectorNear(movedChannel.localOrigin,[17,24,7]);
+vectorNear(movedChannel.origin,toWorld(movedChannel.localOrigin).map((v,i)=>v+[11,-9,106][i]));
+assert.ok(Math.hypot(...movedChannel.origin.map((v,i)=>v-(movedChannel.start[i]+movedChannel.end[i])/2))>1,'fitted midpoint must not replace the route anchor');
+for (const slice of movedSet.slices.filter(s=>s.part.kind==='rib')) {
+  const part=slice.part,d=cross3(movedChannel.u,movedChannel.v);
+  const t=dot3(part.origin.map((v,i)=>v-movedChannel.origin[i]),part.n)/dot3(d,part.n);
+  const centre=sheetLocal(part,movedChannel.origin.map((v,i)=>v+t*d[i]));
+  const points=groupContours(slice.contours)[0].holes[0].points;
+  for (let axis=0;axis<2;axis++) { const values=points.filter((_,i)=>i%2===axis);near((Math.max(...values)+Math.min(...values))/2,centre[axis],.05); }
+}
+console.log('  ok    moved and rotated channel anchor and actual bore centres agree in all ribs');
 
 const plain=structuredClone(linear.features).filter(f=>f.kind!=='assembly:channel');
 plain.find(f=>f.kind==='assembly:backplate').enabled=false;
