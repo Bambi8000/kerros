@@ -12,6 +12,8 @@ import { workerAvailable } from './workerBridge';
 import { KERROS_VERSION } from '../version';
 import { parseProject, projectFilename, serializeProject } from '../core/project';
 import { NumberField } from './NumberField';
+import { AssemblyStatus } from './AssemblyInspector';
+import { activeAssembly } from '../core/assembly';
 import {
   currentExportFolder,
   forgetExportFolder,
@@ -34,7 +36,8 @@ interface Props {
 }
 
 export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: Props) {
-  const exportReady = sliceFresh && sheets.ready;
+  const assemblyMode = useKerros((s) => Boolean(activeAssembly(s.features)));
+  const exportReady = sliceFresh && sheets.ready && (!assemblyMode || slices?.assembly?.cuttable === true);
   const projectName = useKerros((s) => s.projectName);
   const setProjectName = useKerros((s) => s.setProjectName);
   const trueShape = useKerros((s) => s.trueShapeNesting);
@@ -428,6 +431,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
         ) : null}
       </div>
 
+      {!assemblyMode && <>
       <div className="group">
         <div className="group-head">Stack</div>
         <NumberField
@@ -521,6 +525,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
           </span>
         </div>
       </div>
+      </>}
 
       <div className="group">
         <div className="group-head">Preview</div>
@@ -568,6 +573,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
           max={2}
           onChange={setSliceTolerance}
         />
+        {!assemblyMode && <>
         <NumberField
           label="Smoothing"
           value={sliceSmoothing}
@@ -602,15 +608,16 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
             </span>
           </label>
         ) : null}
+        </>}
         {mode !== 'model' ? (
           <div className="derived">
-            Arrow keys or [ and ] step layers. Home and End jump to the bottom
-            and top.
+            Arrow keys or [ and ] step {assemblyMode ? 'parts' : 'layers'}. Home and End jump to the first
+            and last.
           </div>
         ) : null}
         {slices ? (
           <div className="derived derived-strong">
-            {slices.slices.length} layers
+            {slices.slices.length} {assemblyMode ? 'parts' : 'layers'}
             <span className="derived-sub">
               {slices.planesExamined} planes examined · {slices.step.toFixed(3)} mm
               sample
@@ -620,7 +627,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
           <div className="derived">
             {sliceFresh
               ? 'The current model produces no cut layers.'
-              : 'Open Slice, Stack or Sheet to calculate kerf-compensated contours.'}
+              : 'Open Slice, Assembly or Sheet to calculate kerf-compensated contours.'}
           </div>
         )}
       </div>
@@ -667,6 +674,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
         ) : null}
       </div>
 
+      {!assemblyMode && <>
       <div className="group">
         <div className="group-head">Layer twist</div>
         <NumberField
@@ -726,11 +734,12 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
                 : period > 0
                   ? `The spiral repeats after ${period} layer increments: layers 1 and ${period + 1} lie the same way, unless overridden.`
                   : `No repeat found within ${MAX_REPEAT_STEPS} layer increments (to 0.0000001°).`}
-              {' '}Model shows the design; Stack shows the lamp.
+              {' '}Model shows the design; Assembly shows the lamp.
             </div>
           );
         })()}
       </div>
+      </>}
 
       <div className="group">
         <div className="group-head">Stock grain</div>
@@ -798,6 +807,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
           max={20}
           onChange={setLabelHeight}
         />
+        {!assemblyMode && <>
         <label className="field">
           <span className="field-label">Spacers</span>
           <span className="field-input field-check">
@@ -820,6 +830,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
             onChange={setRingWidth}
           />
         ) : null}
+        </>}
         {/*
           The inline fallback works, so this is a note rather than a warning —
           but running 1.5–2x slower with no worker and saying nothing about it
@@ -836,7 +847,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
           <div className="derived derived-strong">
             {sheetCount} {sheetCount === 1 ? 'sheet' : 'sheets'}, {sheets.partCount} parts
             <span className="derived-sub">
-              {total} layers
+              {total} {assemblyMode ? 'parts' : 'layers'}
               {spacerTotal > 0 ? ` + ${spacerTotal} spacer rings` : ''}
               {sheets.busy
                 ? ' · nesting…'
@@ -856,17 +867,17 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
           </div>
         ) : (
           <div className="derived">
-            {sliceFresh ? 'No cut layers to nest.' : 'Open Slice, Stack or Sheet to calculate the job.'}
+            {sliceFresh ? 'No cut layers to nest.' : 'Open Slice, Assembly or Sheet to calculate the job.'}
           </div>
         )}
-        {makeSpacers && rodCount === 0 ? (
+        {!assemblyMode && makeSpacers && rodCount === 0 ? (
           <div className="derived">
             No spacer rings, because there are no rods. A ring fills the gap
             between two layers on a rod, so rods come first — add one with
             &ldquo;Add rod&rdquo; in the feature tree.
           </div>
         ) : null}
-        {makeSpacers && sheets.ready && sliceFresh && rodCount > 0 && spacerTotal === 0 && total > 1 ? (
+        {!assemblyMode && makeSpacers && sheets.ready && sliceFresh && rodCount > 0 && spacerTotal === 0 && total > 1 ? (
           <div className="derived">
             {spanningRod
               ? 'No spacer rings: the gaps reached by the rods need zero rings at this ring thickness.'
@@ -880,7 +891,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
           left is worth saying anyway — the lamp is not quite the one that was
           asked for, and a number typed in came back different.
         */}
-        {spacerMismatch ? (
+        {!assemblyMode && spacerMismatch ? (
           <div className="derived">
             {stack.spacerHeight} mm was asked for and {spacerAchieved} mm
             is what whole {ringT} mm rings make, so that is what the layers are
@@ -927,6 +938,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
 
       <div className="group">
         <div className="group-head">Export</div>
+        {assemblyMode && <AssemblyStatus set={slices} pending={!sliceFresh} />}
         <button
           type="button"
           className="btn btn-wide"
@@ -969,7 +981,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
         {!sliceFresh ? (
           <div className="derived">
             {mode === 'model'
-              ? 'Open Slice, Stack or Sheet to update the cut job before exporting.'
+              ? 'Open Slice, Assembly or Sheet to update the cut job before exporting.'
               : 'Calculating the current cut job. Exports will be available when it is ready.'}
             {slices ? ' Layer readings still refer to the previous calculation.' : ''}
           </div>

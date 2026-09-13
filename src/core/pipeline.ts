@@ -47,7 +47,8 @@ import { generatePattern } from './pattern.ts';
 import { resolveLayerSet, resolveLayers, selectorFromParams } from './layers.ts';
 import { legSections, sectionsDistance } from './legs.ts';
 import { bossField } from './boss.ts';
-import { extrudeMorph, extrudeProfile, indexProfile, profileBounds } from './profile2d.ts';
+import { extrudeMorph, extrudeProfile, indexProfile, indexedDistance, profileBounds } from './profile2d.ts';
+import { activeAssembly, buildAssembly } from './assembly.ts';
 import type { MorphEasing, MorphEntry } from './profile2d.ts';
 import { parseTwistOverrides, twistAt, untwistPoint } from './twist.ts';
 import { paintDistance, strokesBounds, strokesByPlane } from './paint.ts';
@@ -73,6 +74,7 @@ import {
   polygonFitsInPart,
   signedArea,
   sliceModel,
+  traceSheet,
 } from './slice.ts';
 import type { GapReport, Slice, SliceSet } from './slice.ts';
 
@@ -100,6 +102,7 @@ export interface SliceJob {
   features: Feature[];
   thickness: number;
   kerf: number;
+  materialName?: string;
   spacerHeight: number;
   /** Gap at the top of the stack, mm. Omitted means uniform. */
   spacerHeightTop?: number;
@@ -263,6 +266,20 @@ export function runPreviewJob(job: PreviewJob, volumes: Map<string, MeshVolume>)
  *   7. the thin-feature check, on the finished result
  */
 export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): SliceOutput {
+  if (activeAssembly(job.features)) {
+    const started = Date.now();
+    const field = composeField(job.features.filter(isFieldFeature), job.kerf, job.seed, job.thickness, { spacerHeight: 0 }, volumes);
+    if (!field.bounds) return EMPTY_OUTPUT;
+    const set = buildAssembly(job.features, field.solid, field.bounds, job, {
+      trace: traceSheet,
+      distance: (contours, reach) => {
+        const index = indexProfile({ rings: contours.map((c) => c.points), fill: 'holes' }, 1, 0.02, Math.min(reach, Math.max(8, job.minFeature * 3, job.kerf * 2)));
+        return (x, y) => indexedDistance(index, x, y);
+      },
+      thin: (slice, threshold) => minFeatureGap(slice, threshold).tooThin,
+    });
+    return { ...EMPTY_OUTPUT, set, ms: Date.now() - started };
+  }
   const {
     features,
     thickness,

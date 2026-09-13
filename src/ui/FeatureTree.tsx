@@ -8,6 +8,7 @@ import type { Feature } from '../core/types';
 
 /** One line under a feature's name, saying what it does at a glance. */
 function subtitleFor(f: Feature, index: number, op: Op): string {
+  if (f.kind.startsWith('assembly:')) return `${f.id} · ${f.kind.slice(9)}${f.kind === 'assembly:layout' ? ` · ${f.params.layout}` : ''}`;
   if (f.kind === 'holePunch') return `hole · Ø${f.params.diameter} mm · z ${Number(f.params.pz).toFixed(2)} mm`;
   if (f.kind === 'profile') {
     const keys = usableProfileKeys(f);
@@ -86,6 +87,7 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
  * lines.
  */
 function groupDepth(features: Feature[], feature: Feature): number {
+  if (feature.params.groupId) return 1;
   let depth = 0;
   const seen = new Set<string>([feature.id]);
   let target = typeof feature.params.attachTo === 'string' ? feature.params.attachTo : '';
@@ -106,6 +108,7 @@ export function FeatureTree() {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
   const addShape = useKerros((s) => s.addShape);
+  const addAssembly = useKerros((s) => s.addAssembly);
   const addRod = useKerros((s) => s.addRod);
   const addLegs = useKerros((s) => s.addLegs);
   const addPins = useKerros((s) => s.addPins);
@@ -122,6 +125,7 @@ export function FeatureTree() {
   const toggleFeature = useKerros((s) => s.toggleFeature);
   const selectFeature = useKerros((s) => s.selectFeature);
 
+  const assembly = features.some((f) => f.enabled && f.kind === 'assembly:layout');
   const [pending, setPending] = useState(SHAPE_MODULES[0].key);
 
   return (
@@ -218,6 +222,12 @@ export function FeatureTree() {
 
       <footer className="panel-foot">
         <div className="add-row">
+          <button className="btn" disabled={!features.some((f) => f.enabled && f.stage === 'SHAPE')} title="Create upright radial ribs with horizontal ring supports" onClick={() => addAssembly('radial')}>Radial ribs</button>
+          <button className="btn" disabled={!features.some((f) => f.enabled && f.stage === 'SHAPE')} title="Create parallel upright ribs with a wall backplate" onClick={() => addAssembly('linear')}>Linear ribs</button>
+        </div>
+        <details className="source-tools" open={!assembly}>
+          <summary>Source shapes and layer tools</summary>
+        <div className="add-row">
           <select value={pending} onChange={(e) => setPending(e.target.value)}>
             {SHAPE_MODULES.map((m) => (
               <option key={m.key} value={m.key}>
@@ -302,6 +312,7 @@ export function FeatureTree() {
           Order is evaluation order — drag a subtract below what it cuts into.
           Rods are drilled after slicing and ignore tree order.
         </span>
+        </details>
       </footer>
     </section>
   );

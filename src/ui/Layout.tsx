@@ -12,6 +12,10 @@ import { SliceInspector } from './SliceInspector';
 import { useSheets } from './useSheets';
 import { Viewport } from './Viewport';
 import { useSlices } from './useSlices';
+import { activeAssembly } from '../core/assembly';
+import { AssemblyViewport } from './AssemblyViewport';
+import { AssemblyPartView } from './AssemblyPartView';
+import { AssemblyInspector } from './AssemblyInspector';
 
 const VIEWS: { key: ViewName; label: string }[] = [
   { key: 'persp', label: 'Orbit' },
@@ -28,7 +32,7 @@ const MODES: { key: GizmoMode; label: string; hint: string }[] = [
 const MODE_TABS: { key: WorkspaceMode; label: string }[] = [
   { key: 'model', label: 'Model' },
   { key: 'slice', label: 'Slice' },
-  { key: 'stack', label: 'Stack' },
+  { key: 'stack', label: 'Assembly' },
   { key: 'sheet', label: 'Sheet' },
 ];
 
@@ -49,7 +53,10 @@ export function Layout() {
   const material = useKerros((s) => s.material);
   const movable = useKerros((s) => {
     const feature = s.features.find((f) => f.id === s.selectedId);
-    return feature !== undefined && hasTransform(feature);
+    if (!feature) return false;
+    return s.mode === 'stack' && activeAssembly(s.features)
+      ? ['assembly:rib', 'assembly:support', 'assembly:backplate'].includes(feature.kind)
+      : hasTransform(feature);
   });
   const sculptMode = useKerros((s) => s.sculptMode);
   const setSculptMode = useKerros((s) => s.setSculptMode);
@@ -61,6 +68,8 @@ export function Layout() {
   const snapEnabled = useKerros((s) => s.snapEnabled);
   const setSnapEnabled = useKerros((s) => s.setSnapEnabled);
   const mode = useKerros((s) => s.mode);
+  const assembly = useKerros((s) => activeAssembly(s.features));
+  const selectedFeature = useKerros((s) => s.features.find((f) => f.id === s.selectedId));
   const setMode = useKerros((s) => s.setMode);
   const displayMode = useKerros((s) => s.displayMode);
   const setDisplayMode = useKerros((s) => s.setDisplayMode);
@@ -105,24 +114,28 @@ export function Layout() {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       const clamped = Math.min(Math.max(currentLayer, 1), layerCount);
+      const stepTo = (index: number) => {
+        setCurrentLayer(index);
+        if (assembly) useKerros.getState().selectFeature(slices?.slices[index - 1]?.part?.id ?? null);
+      };
       if (event.key === 'ArrowUp' || event.key === ']') {
-        setCurrentLayer(Math.min(clamped + 1, layerCount));
+        stepTo(Math.min(clamped + 1, layerCount));
         event.preventDefault();
       } else if (event.key === 'ArrowDown' || event.key === '[') {
-        setCurrentLayer(Math.max(clamped - 1, 1));
+        stepTo(Math.max(clamped - 1, 1));
         event.preventDefault();
       } else if (event.key === 'Home') {
-        setCurrentLayer(1);
+        stepTo(1);
         event.preventDefault();
       } else if (event.key === 'End') {
-        setCurrentLayer(layerCount);
+        stepTo(layerCount);
         event.preventDefault();
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [mode, layerCount, currentLayer, setCurrentLayer]);
+  }, [mode, layerCount, currentLayer, setCurrentLayer, assembly, slices]);
 
   return (
     <div className="app">
@@ -140,7 +153,7 @@ export function Layout() {
               className={`view-btn${mode === m.key ? ' is-active' : ''}`}
               onClick={() => setMode(m.key)}
             >
-              {m.label}
+              {m.key === 'slice' && assembly ? 'Part' : m.label}
             </button>
           ))}
         </nav>
@@ -208,7 +221,7 @@ export function Layout() {
               key={m.key}
               type="button"
               title={m.hint}
-              disabled={!movable || mode !== 'model'}
+              disabled={!movable || (mode !== 'model' && !(mode === 'stack' && assembly)) || Boolean(assembly && mode === 'stack' && m.key === 'rotate' && selectedFeature?.kind !== 'assembly:rib')}
               className={`view-btn${gizmoMode === m.key ? ' is-active' : ''}`}
               onClick={() => setGizmoMode(m.key)}
             >
@@ -218,7 +231,7 @@ export function Layout() {
           <button
             type="button"
             title={`Snap to ${SNAP_TRANSLATE_MM} mm and ${SNAP_ROTATE_DEG}°`}
-            disabled={!movable || mode !== 'model'}
+            disabled={!movable || (mode !== 'model' && !(mode === 'stack' && assembly))}
             className={`view-btn${snapEnabled ? ' is-active' : ''}`}
             onClick={() => setSnapEnabled(!snapEnabled)}
           >
@@ -247,7 +260,11 @@ export function Layout() {
                 : 'Viewport'
           }
         >
-          {mode === 'slice' ? (
+          {assembly && mode === 'stack' ? (
+            <AssemblyViewport set={slices} pending={slicePending} />
+          ) : assembly && mode === 'slice' ? (
+            <AssemblyPartView set={slices} pending={slicePending} />
+          ) : mode === 'slice' ? (
             <SliceInspector
               slices={slices}
               reports={sliceReports}
@@ -283,6 +300,8 @@ export function Layout() {
             {panel === 'inspector' ? (
               mode === 'sheet' ? (
                 <PartInspector sheets={sheets} />
+              ) : selectedFeature?.kind.startsWith('assembly:') ? (
+                <AssemblyInspector feature={selectedFeature} set={slices} pending={slicePending || !sliceFresh} />
               ) : (
                 <Inspector
                   slices={slices}

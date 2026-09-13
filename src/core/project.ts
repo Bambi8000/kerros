@@ -61,6 +61,8 @@ export interface ProjectPlacement {
 
 export interface ProjectData {
   name: string;
+  /** Monotonic allocation watermark, including feature IDs already deleted. */
+  nextFeatureNumber?: number;
   machine: { name: string; bedWidth: number; bedHeight: number; margin: number };
   material: { name: string; thickness: number; kerf: number; notes: string };
   stack: {
@@ -107,7 +109,7 @@ export interface ParseResult {
   warnings: string[];
   /** Set when nothing could be read at all. */
   error: string | null;
-  /** Highest `fN` id seen, so new features do not collide with loaded ones. */
+  /** Next unallocated ID, preserving the saved deletion watermark when present. */
   nextFeatureNumber: number;
 }
 
@@ -408,6 +410,7 @@ export function parseProject(text: string): ParseResult {
     seen.add(feature.id);
   }
 
+  const nextFeatureNumber = Math.max(highestFeatureNumber(features) + 1, Math.min(Number.MAX_SAFE_INTEGER - 10000, Math.round(asNumber(file.nextFeatureNumber, 1))));
   const data: ProjectData = {
     name: asString(file.name, DEFAULTS.name),
     machine: {
@@ -477,6 +480,7 @@ export function parseProject(text: string): ParseResult {
       ),
       partPlacements: parsePlacements(layout.partPlacements, warnings),
     },
+    ...(file.nextFeatureNumber !== undefined ? { nextFeatureNumber } : {}),
   };
 
   return {
@@ -484,6 +488,6 @@ export function parseProject(text: string): ParseResult {
     data,
     warnings,
     error: null,
-    nextFeatureNumber: highestFeatureNumber(features) + 1,
+    nextFeatureNumber,
   };
 }

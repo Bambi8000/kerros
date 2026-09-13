@@ -45,6 +45,8 @@ import {
   windowFrameFor,
 } from './pipeline';
 import { localiseFixture } from './fixture';
+import { assemblyFeatures, assemblyMember } from './assemblyFeatures';
+import type { AssemblyMember } from './assemblyFeatures';
 
 export type ViewName = 'persp' | 'top' | 'front' | 'side';
 
@@ -91,6 +93,8 @@ interface KerrosState {
   /** Ordered feature tree. Order is evaluation order. */
   features: Feature[];
   selectedId: string | null;
+  assemblyAllFollow: boolean;
+  setAssemblyAllFollow: (all: boolean) => void;
   /** Monotonic counter so ids are reproducible across a session. */
   nextFeatureNumber: number;
 
@@ -183,6 +187,10 @@ interface KerrosState {
   seed: number;
 
   addShape: (moduleKey: string) => void;
+  addAssembly: (kind: 'radial' | 'linear') => void;
+  addAssemblyMember: (id: string, kind: AssemblyMember) => void;
+  setAssemblyCount: (id: string, kind: 'rib' | 'support', count: number) => void;
+  setAssemblyAngle: (id: string, angle: number, all: boolean) => void;
   addRod: () => void;
   addLegs: () => void;
   addPins: () => void;
@@ -377,6 +385,8 @@ function frameFor(features: Feature[], sculpt: Feature): Frame {
 export const useKerros = create<KerrosState>((set, get) => ({
   features: [],
   selectedId: null,
+  assemblyAllFollow: false,
+  setAssemblyAllFollow: (all) => set({ assemblyAllFollow: all }),
   nextFeatureNumber: 1,
 
   machine: DEFAULT_MACHINE,
@@ -421,6 +431,39 @@ export const useKerros = create<KerrosState>((set, get) => ({
   flutePitch: 6.5,
   scatterAngle: 180,
   seed: 1,
+
+  addAssembly: (kind) => set((s) => {
+    const existing = s.features.find((f) => f.kind === 'assembly:layout');
+    if (existing) return { selectedId: existing.id, panel: 'inspector', mode: 'stack' };
+    const bounds = composeFieldWith(s.features.filter(isFieldFeature), s.material.kerf, s.seed, s.material.thickness, s.stack, mainVolumes()).bounds;
+    if (!bounds) return s;
+    const created = assemblyFeatures(kind, s.nextFeatureNumber, bounds);
+    return { features: [...s.features, ...created.features], nextFeatureNumber: created.next, selectedId: created.id, panel: 'inspector', mode: 'stack' };
+  }),
+  addAssemblyMember: (id, kind) => set((s) => {
+    const layout = s.features.find((f) => f.id === id && f.kind === 'assembly:layout');
+    if (!layout) return s;
+    const feature = assemblyMember(kind, layout, s.features, s.nextFeatureNumber);
+    return { features: [...s.features, feature], nextFeatureNumber: s.nextFeatureNumber + 1, selectedId: feature.id, panel: 'inspector' };
+  }),
+  setAssemblyCount: (id, kind, requested) => set((s) => {
+    const layout = s.features.find((f) => f.id === id && f.kind === 'assembly:layout');
+    if (!layout || !Number.isFinite(requested)) return s;
+    const count = Math.max(kind === 'rib' ? 1 : 0, Math.min(kind === 'rib' ? 64 : 12, Math.round(requested)));
+    const members = s.features.filter((f) => f.params.groupId === id && f.kind === `assembly:${kind}`).sort((a, b) => Number(a.params.ordinal) - Number(b.params.ordinal));
+    const removed = new Set(members.slice(count).map((f) => f.id));
+    const features = s.features.filter((f) => !removed.has(f.id));
+    let next = s.nextFeatureNumber;
+    for (let i = members.length; i < count; i++) features.push(assemblyMember(kind, layout, features, next++));
+    return { features, nextFeatureNumber: next, selectedId: s.selectedId && removed.has(s.selectedId) ? id : s.selectedId };
+  }),
+  setAssemblyAngle: (id, angle, all) => set((s) => {
+    const rib = s.features.find((f) => f.id === id);
+    if (!rib || rib.kind !== 'assembly:rib' || !Number.isFinite(angle)) return s;
+    const delta = angle - Number(rib.params.angle || 0);
+    return { features: s.features.map((f) => f.id === id || (all && f.kind === 'assembly:rib' && f.params.groupId === rib.params.groupId)
+      ? { ...f, params: { ...f.params, angle: Number(f.params.angle || 0) + delta } } : f) };
+  }),
 
   addShape: (moduleKey) =>
     set((s) => {
@@ -1311,10 +1354,10 @@ export const useKerros = create<KerrosState>((set, get) => ({
     }),
 
   removeFeature: (id) =>
-    set((s) => ({
-      features: s.features.filter((f) => f.id !== id),
-      selectedId: s.selectedId === id ? null : s.selectedId,
-    })),
+    set((s) => {
+      const features = s.features.filter((f) => f.id !== id && f.params.groupId !== id);
+      return { features, selectedId: features.some((f) => f.id === s.selectedId) ? s.selectedId : null };
+    }),
 
   moveFeature: (id, delta) =>
     set((s) => {
@@ -1894,6 +1937,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
     const s = get();
     return {
       name: s.projectName,
+      nextFeatureNumber: s.nextFeatureNumber,
       machine: { ...s.machine },
       material: { ...s.material },
       stack: { ...s.stack },
@@ -1960,7 +2004,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
         ...(f.strokes ? { strokes: f.strokes.map((k) => ({ ...k, points: [...k.points] })) } : {}),
         ...(f.keys ? { keys: f.keys.map((k) => ({ ...k })) } : {}),
       })),
-      nextFeatureNumber,
+      nextFeatureNumber: Math.max(nextFeatureNumber, data.nextFeatureNumber ?? 1),
       sliceRes: data.slicing.sliceRes,
       sliceTolerance: data.slicing.sliceTolerance,
       sliceSmoothing: data.slicing.sliceSmoothing,
@@ -1976,6 +2020,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
       partPlacements: { ...data.layout.partPlacements },
       // Selections point at things that may no longer exist.
       selectedId: null,
+      assemblyAllFollow: false,
       selectedPartId: null,
       currentLayer: 1,
       currentSheet: 1,

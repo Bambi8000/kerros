@@ -14,7 +14,7 @@
   --k-line-soft: #272220;
   --k-text: #e8e2db;
   --k-text-dim: #9a918a;
-  --k-text-faint: #6d645e;
+  --k-text-faint: #9b9085;
   --k-cut: #e04a2f;
   --k-engrave: #4a9fd8;
   --k-warn: #d9a441;
@@ -785,3 +785,40 @@ select {
     transition: none !important;
   }
 }
+
+/* Upright assembly workspace. Labels stay readable against the graphite UI. */
+.assembly-canvas { position: relative; min-width: 0; min-height: 360px; overflow: hidden; background: #191715; }
+.assembly-three { position: absolute; inset: 0; }
+.assembly-three canvas { display: block; touch-action: none; }
+.assembly-overlay { position: absolute; z-index: 1; top: 14px; left: 16px; right: 16px; display: flex; align-items: center; gap: 14px; pointer-events: none; }
+.assembly-overlay button, .assembly-overlay select { pointer-events: auto; }
+.assembly-overlay strong { font-size: 15px; }
+.assembly-overlay span { color: #b9b0a6; }
+.assembly-overlay .btn { margin-left: auto; }
+.assembly-caption { position: absolute; bottom: 14px; left: 16px; right: 16px; font-size: 12px; color: #c3b9ae; line-height: 1.6; pointer-events: none; text-shadow: 0 1px 3px #000; }
+.assembly-part-view svg { width: 100%; height: 100%; padding: 62px 30px 96px; }
+.assembly-inspector { min-width: 0; }
+.assembly-inspector .field { align-items: center; gap: 10px; }
+.assembly-inspector .field-label { color: #c3b9ae; font-size: 12px; }
+.assembly-inspector .field input:not([type=checkbox]), .assembly-inspector .field select { min-width: 0; width: 100%; }
+.assembly-inspector .field-input { min-width: 95px; max-width: 120px; }
+.assembly-inspector .hint, .assembly-status .hint { color: #b6aca1; font-size: 12px; line-height: 1.55; }
+.assembly-inspector .group > .btn { width: 100%; margin: 5px 0; }
+.assembly-inspector summary { cursor: pointer; font-weight: 600; color: #d4cabe; padding: 4px 0 12px; }
+.assembly-check { display: flex; align-items: center; gap: 9px; padding: 7px 0; color: #d8cec2; }
+.assembly-check input { accent-color: #df714b; }
+.assembly-scope { display: flex; gap: 6px; margin-bottom: 12px; }
+.assembly-scope .btn { flex: 1; }
+.assembly-scope .is-active { border-color: #df714b; color: #ffc2a5; background: #513226; }
+.assembly-status { padding: 15px; border-top: 1px solid var(--k-line); }
+.assembly-status > strong { font-size: 13px; line-height: 1.5; }
+.assembly-issue { padding: 10px 0; border-top: 1px solid #38312b; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.assembly-issue.error { color: #ffa684; }
+.assembly-issue.warning { color: #e0c589; }
+.assembly-issue.info { color: #b9cbc4; }
+.part-link { border: 1px solid #5e5148; background: #302820; color: #ede2d2; border-radius: 3px; font-size: 11px; padding: 2px 5px; margin: 5px 4px 0 0; cursor: pointer; }
+.assembly-overlay select { max-width: 220px; background: #302820; color: #ede2d2; border: 1px solid #65564b; padding: 5px; border-radius: 3px; }
+@media (max-width: 900px) { .assembly-canvas { min-height: 55vh; } .assembly-inspector .field-input { max-width: 45%; } }
+
+.source-tools summary { cursor: pointer; color: var(--k-text-dim); padding: 7px 0; font-size: 12px; }
+.source-tools .add-row { margin-bottom: 6px; }

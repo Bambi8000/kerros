@@ -109,7 +109,7 @@ export function useSheets(
     // Rings are their own material, so the ring count comes from their
     // thickness rather than the stock's — 372 rings on a rod versus 62.
     const spacerOptions = { thickness, spacerHeight, kerf, ringWidth, spacerThickness };
-    const spacers = makeSpacers
+    const spacers = makeSpacers && !slices.assembly
       ? spacerPlans(rodsFromFeatures(features), slices.slices, spacerOptions)
       : [];
 

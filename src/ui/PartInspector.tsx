@@ -54,7 +54,7 @@ export function PartInspector({ sheets }: Props) {
           <span className="derived-sub">
             {part.kind === 'spacer'
               ? 'spacer ring'
-              : `layer ${part.layer ?? '-'}`}{' '}
+              : /^f\d+-/.test(part.id) ? `${part.id.split('-')[0]} / ${part.material}` : `layer ${part.layer ?? '-'}`}{' '}
             · sheet {index} · {(box.maxX - box.minX).toFixed(1)} ×{' '}
             {(box.maxY - box.minY).toFixed(1)} mm
           </span>

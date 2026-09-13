@@ -1,8 +1,10 @@
 # Kerros assembly features — implementation plan
 
-Status: design, not shipped. The current application is 0.28.0.
-This plan extends the cross-slicing phases in KERROS-HANDOFF.md; it does not
-describe capabilities already present in the application.
+Status: implemented for upright sheets in 0.29.0.
+This document preserves the approved design and acceptance goals. Read the
+Assembly expansion section of KERROS-FEATURES.md for the shipped implementation
+and its limits. Insertion and collision checks are sampled; physical fit, glue
+strength and complete assembly feasibility still require material tests.
 
 ## User requests and confirmed choices
 
@@ -144,10 +146,10 @@ inspector, part view, sheet view and assembly document. Show only controls for
 the selected operation. Use an explicit `Selected` / `All follow` scope. A
 channel displays its route, cross-section and affected parts while being placed.
 
-`Assembly` is the proposed successor to the `Stack` view name. Keep the existing
+`Assembly` replaces the `Stack` view name. Keep the existing
 graphite, light material and cut-red language; improve small-text readability
 and control contrast. Material previews must remain distinguishable from cut
-geometry. These UI changes are proposals, not shipped behaviour.
+geometry. These UI changes are part of 0.29.0.
 
 Produce labelled rib and support parts, preserve material separation during
 nesting, and include all final openings in DXF and assembly instructions. Old

@@ -67,10 +67,31 @@ export interface Slice {
   contours: Contour[];
   /** Circular holes added by rig features. Empty until rods are applied. */
   circles: CircleHole[];
+  /** Upright assemblies use local sheet coordinates and a rigid placement. */
+  part?: {
+    id: string;
+    label: string;
+    kind: 'rib' | 'support' | 'backplate';
+    origin: [number, number, number];
+    u: [number, number, number];
+    v: [number, number, number];
+    n: [number, number, number];
+    thickness: number;
+    kerf: number;
+    material: string;
+    wallOffset?: number;
+  };
 }
 
 export interface SliceSet {
   slices: Slice[];
+  assembly?: {
+    id: string;
+    cuttable: boolean;
+    issues: { severity: 'error' | 'warning' | 'info'; ids: string[]; message: string }[];
+    joints: { id: string; parts: string[]; instruction: string }[];
+    channels: { id: string; hits: string[]; status: string; start: [number, number, number]; end: [number, number, number]; u: [number, number, number]; v: [number, number, number]; width: number; height: number }[];
+  };
   /** Layer pitch used, mm (material thickness + spacer height). */
   pitch: number;
   /** Every plane examined, in order from the bottom. */
@@ -151,6 +172,29 @@ export interface SliceOptions {
 export type Sampler = (x: number, y: number, z: number) => number;
 
 const DEFAULT_MAX_LAYERS = 400;
+
+/** Trace in a sheet's own coordinates. The caller supplies an in-plane field. */
+export function traceSheet(
+  sample: (x: number, y: number) => number,
+  box: { minX: number; minY: number; maxX: number; maxY: number },
+  step: number,
+  iso = 0,
+  tolerance = 0.02,
+): Contour[] {
+  const pad = Math.max(2 * step, Math.abs(iso) + step);
+  const x0 = box.minX - pad, y0 = box.minY - pad;
+  const nx = Math.ceil((box.maxX - box.minX + 2 * pad) / step) + 1;
+  const ny = Math.ceil((box.maxY - box.minY + 2 * pad) / step) + 1;
+  const field = new Float64Array(nx * ny);
+  for (let y = 0; y < ny; y++) {
+    for (let x = 0; x < nx; x++) field[y * nx + x] = sample(x0 + x * step, y0 + y * step) - iso;
+  }
+  return contoursFromField(field, nx, ny, x0, y0, step).flatMap((ring) => {
+    const points = simplifyRing(ring, tolerance);
+    const area = signedArea(points);
+    return Math.abs(area) < step * step * 0.25 ? [] : [{ points, area, isHole: area < 0 }];
+  });
+}
 
 /* ------------------------------------------------------------------ *
  * Polygon helpers

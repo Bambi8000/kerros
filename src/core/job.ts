@@ -21,7 +21,7 @@ import { parseTwistOverrides, twistAt } from './twist';
 
 /** Layer labels, e.g. L07. A layer cut into several pieces gets L07A, L07B. */
 function layerLabel(slice: Slice, partIndex: number, partCount: number): string {
-  const base = `L${String(slice.index).padStart(2, '0')}`;
+  const base = slice.part?.label ?? `L${String(slice.index).padStart(2, '0')}`;
   if (partCount <= 1) return base;
   return `${base}${String.fromCharCode(65 + partIndex)}`;
 }
@@ -54,10 +54,10 @@ export function buildParts(
     const groups = groupContours(slice.contours);
     groups.forEach((group, i) => {
       parts.push({
-        id: `slice-${slice.index}-${i}`,
+        id: slice.part ? `${slice.part.id}-${i}` : `slice-${slice.index}-${i}`,
         label: layerLabel(slice, i, groups.length),
         kind: 'slice',
-        material: 'stock',
+        material: slice.part?.material ?? 'stock',
         outer: group.outer.points,
         holes: group.holes.map((h) => h.points),
         circles: slice.circles
@@ -189,6 +189,7 @@ export interface ManifestInput {
  * next to the pile of slices while the stack goes together.
  */
 export function manifestText(input: ManifestInput): string {
+  if (input.set.assembly) return uprightManifest(input).join('\n') + '\n';
   const { set, sheets, spacers } = input;
   const lines: string[] = [];
 
@@ -354,6 +355,7 @@ export interface AssemblyInput extends ManifestInput {
  * job.
  */
 export function assemblyDocument(input: AssemblyInput): PdfPage[] {
+  if (input.set.assembly) return uprightDocument(input);
   const { set, sheets, spacers } = input;
   const pages: PdfPage[] = [];
 
@@ -525,5 +527,75 @@ export function assemblyDocument(input: AssemblyInput): PdfPage[] {
     pages.push({ width: PAGE_W, height: PAGE_H, polylines });
   }
 
+  return pages;
+}
+
+/** Persistent part IDs are the link between the assembled drawing and the bed. */
+function uprightManifest(input: ManifestInput): string[] {
+  const report = input.set.assembly!;
+  const lines = [`KERROS UPRIGHT ASSEMBLY v${input.version}`, `Machine: ${input.machineName}`, `Parts: ${input.set.slices.length}. Cutting sheets: ${input.sheets.length}.`, '',
+    report.cuttable ? 'Geometry checks passed at the selected sample resolution.' : 'CHECKS FAILED - REVIEW ONLY. Do not cut this assembly.',
+    'Dry-fit a small two-rib coupon before a full build. Verify measured kerf, joint fit, insertion order and LED clearance in the actual stock.',
+    'Tabs require an adhesive suitable for the stock. Openings do not establish LED retention, hardware suitability or a load rating.', '', 'PARTS / ASSEMBLY COORDINATES (mm, Z up)'];
+  for (const slice of input.set.slices) {
+    const p = slice.part!;
+    const sheet = input.sheets.find((sheet) => sheet.parts.some((part) => part.id === `${p.id}-0`));
+    lines.push(`${p.label} ID ${p.id} / ${p.kind} / sheet ${sheet?.index ?? 'NOT PLACED'}`,
+      `  ${p.material}`, `  Centre ${p.origin.map((v) => v.toFixed(2)).join(' / ')}`,
+      `  U ${p.u.map((v) => v.toFixed(4)).join(' / ')} / V ${p.v.map((v) => v.toFixed(4)).join(' / ')}`);
+    if (p.kind === 'backplate') lines.push(`  Wall offset behind plate: ${p.wallOffset ?? 0} mm. Mounting spacers and hardware are not generated.`);
+  }
+  lines.push('', 'JOINTS AND INSERTION');
+  for (const joint of report.joints) lines.push(`${joint.id}: ${joint.instruction}`);
+  if (!report.joints.length) lines.push('No generated attachments.');
+  lines.push('', 'LED CHANNELS');
+  for (const channel of report.channels) lines.push(`${channel.id}: ${channel.status}`, `  Route ${channel.start.map((v) => v.toFixed(2)).join(' / ')} to ${channel.end.map((v) => v.toFixed(2)).join(' / ')}`, `  Clearance envelope ${channel.width.toFixed(2)} x ${channel.height.toFixed(2)} mm. Parts: ${channel.hits.join(' / ') || 'none'}.`);
+  if (!report.channels.length) lines.push('No LED channels.');
+  lines.push('', 'CHECKS');
+  for (const issue of report.issues) lines.push(`${issue.severity.toUpperCase()} ${issue.ids.join(' / ')}: ${issue.message}`);
+  return lines;
+}
+function uprightDocument(input: AssemblyInput): PdfPage[] {
+  const pages: PdfPage[] = [];
+  let polylines: PdfPolyline[] = [], pen = penFor(polylines), y = PAGE_H - MARGIN;
+  const nextPage = () => {
+    if (polylines.length) pages.push({ width: PAGE_W, height: PAGE_H, polylines });
+    polylines = []; pen = penFor(polylines); y = PAGE_H - MARGIN;
+  };
+  for (const line of [input.projectName, ...uprightManifest(input)]) {
+    const wrapped: string[] = [];
+    let text = '';
+    for (const word of line.split(' ')) {
+      if (text && textWidth(`${text} ${word}`, 3.1) > PAGE_W - MARGIN * 2) { wrapped.push(text); text = ''; }
+      for (const letter of `${text ? ' ' : ''}${word}`) {
+        if (textWidth(text + letter, 3.1) > PAGE_W - MARGIN * 2) { wrapped.push(text); text = ''; }
+        text += letter;
+      }
+    }
+    wrapped.push(text);
+    if (wrapped.length < 45 && y - wrapped.length * 5 < MARGIN + 5) nextPage();
+    for (const text of wrapped) {
+      if (y < MARGIN + 5) nextPage();
+      write(pen, text, MARGIN, y, 3.1); y -= 5;
+    }
+  }
+  nextPage();
+  const drawings = input.set.slices.map((slice) => ({ slice, box: boxOf(slice.contours.flatMap((c) => c.points)) }));
+  const cellW = (PAGE_W - MARGIN * 2) / 2, cellH = (PAGE_H - MARGIN * 2 - 16) / 2;
+  const scale = Math.min(1, ...drawings.map((d) => Math.min((cellW - 12) / Math.max(d.box.w, 1), (cellH - 30) / Math.max(d.box.h, 1))));
+  for (let start = 0; start < drawings.length; start += 4) {
+    const lines: PdfPolyline[] = [], p = penFor(lines);
+    write(p, `PART DRAWINGS / SCALE ${scale.toFixed(3)} / U RIGHT, V UP`, MARGIN, PAGE_H - MARGIN, 3.2);
+    drawings.slice(start, start + 4).forEach(({ slice, box }, i) => {
+      const cx = MARGIN + cellW * ((i % 2) + 0.5), cy = PAGE_H - MARGIN - 12 - cellH * (Math.floor(i / 2) + 0.5);
+      const mx = (box.minX + box.maxX) / 2, my = (box.minY + box.maxY) / 2;
+      for (const contour of slice.contours) p.push(contour.points.map((v, index) => index % 2 ? cy + (v - my) * scale : cx + (v - mx) * scale), 0.25, 0, true);
+      const part = slice.part!;
+      const label = `${part.label} ID ${part.id} / ${part.thickness} MM`;
+      write(p, label, cx - textWidth(label, 3.5) / 2, cy - cellH / 2 + 10, 3.5);
+    });
+    pages.push({ width: PAGE_W, height: PAGE_H, polylines: lines });
+  }
+  pages.forEach((page, i) => write(penFor(page.polylines), `KERROS / ${i + 1} OF ${pages.length}`, MARGIN, 8, 2.6, 0.4));
   return pages;
 }

@@ -2131,7 +2131,10 @@ wrote it:
   renumbered, a parameter that is not a value is dropped, out-of-range numbers
   are clamped, a placement without a position is discarded. A file with one bad
   feature still opens.
-- Feature numbering resumes past the highest loaded `fN`, so newly added
+- Feature numbering resumes past the highest loaded `fN` and the saved
+  allocation watermark (since 0.29.0), so deleted assembly targets cannot bind
+  to newly created parts after save/open. Older files without the optional
+  `nextFeatureNumber` still derive the next ID from loaded features. Newly added
   features cannot collide with loaded ones.
 - Opening a project clears baked mesh imports and advances both the import
   revision and the project revision. Feature ids may recur in another file;
@@ -3245,14 +3248,160 @@ would have rendered the model inside-out.
 imports**. Keep it that way — type-only imports are erased by Node and are
 fine, value imports would drag the whole app into the validator.
 
-## Assembly expansion — **planned, not shipped**
+## Assembly expansion — **shipped** (0.29.0)
 
-[KERROS-ASSEMBLY-PLAN.md](KERROS-ASSEMBLY-PLAN.md) records the proposed radial
-and linear rib assembly, adjustable support plates, wall-mounted backplate and
-LED channel tool. The user confirmed upright ribs for the first version and
-glued tab-and-slot wall joints. LED channels are planned as straight assembly
-routes with round or rectangular cross-sections, expressed as cuts in the
-selected parts after placement. The plan distinguishes full-thickness openings
-from mid-plane samples and laser through-cuts from blind pockets. These tools
-are not present in version 0.28.0; the existing cable fixture and horizontal
-layer workflow retain the behaviour described above.
+The approved scope remains in [KERROS-ASSEMBLY-PLAN.md](KERROS-ASSEMBLY-PLAN.md).
+This first version supports upright ribs: free XYZ translation and rotation in
+plan, without arbitrary tilt. Choose a source shape, then `Radial ribs` or
+`Linear ribs` in the tree. Only one assembly layout can be active. Disabling it
+restores the horizontal workflow. Existing horizontal fixtures, paint, punches
+and patterns are listed as excluded while an upright assembly is enabled.
+
+### Persistent parts and source profiles
+
+`assembly:layout`, `assembly:rib`, `assembly:support`, `assembly:backplate` and
+`assembly:channel` are SLICE-stage feature records. Their params and group IDs
+travel through the existing project format and worker transport. `assembly.ts`
+and `assemblyFeatures.ts` have no value imports. `pipeline.ts` supplies the real
+sheet tracer, indexed polygon distance and thin-feature checker.
+
+Each rib keeps a source station separate from its assembly frame. Moving or
+turning a rib changes its placement, not its unjointed outline. A source edit or
+explicit source-station redistribution regenerates its profile. Radial profiles
+sample the source shell band with adjustable depth and clear-centre radius;
+the latter prevents upper and lower rib ends meeting on the central axis.
+Linear profiles sample vertical YZ planes at recorded source X coordinates.
+
+Ribs initially number 12 radial or 9 linear. Count edits retain the IDs, source
+stations, placement offsets and angles of retained members. New radial ribs fill
+the largest angular gap; new linear ribs extend the row. Count reduction removes
+the last-created members and names them. Deleted IDs are not reused, including after save/open: the project stores the
+allocation watermark. Explicit
+channel targets referring to deleted parts require correction. `Distribute
+source stations evenly` is a separate, visible regeneration action. Ribs are
+limited to 64 and horizontal supports to 12 per assembly to bound interactive
+work. Switching `Selected` / `All follow` does not change any feature parameters;
+turning with All follow applies an equal delta about each rib's own pivot.
+Whole-layout rotation uses the common assembly pivot instead.
+
+### Ring supports and wall mount
+
+Radial assemblies start with two horizontal rings. Set each height, centre,
+outer and inner diameter; inner diameter zero makes a disc. A usable overlap
+produces complementary half slots: the support opens toward the rib's positive
+U direction and the rib opens toward negative U. Hold the supports in place and
+insert each rib along negative U. Missing or disconnected overlap regions,
+collisions and blocked insertion paths name their parts. Different support
+heights or diameters do not silently preserve obsolete joints.
+
+Linear assemblies start with a wall backplate, editable in width, height,
+position, margin, rounded corners and stock. `Fit plate to current ribs` fits its
+outline around the current assembled rib extents. Each rib is trimmed to the
+front face and gains two glued tabs. Tab height, centre spacing, protrusion,
+wall offset, stock thickness, joint clearance per side and laser kerf are
+separate values. Both full sheet thicknesses determine oblique slot envelopes;
+a copied mating thickness would be wrong. Ribs must face away from the wall and
+cross it at at least approximately 15 degrees (U dot front direction >= 0.25).
+The shoulder clears the wall across the complete rib thickness; at an oblique
+angle it contacts on an edge rather than requiring a bevel.
+
+Screw holes or keyholes use explicit shank/head dimensions, spacing and height.
+Mount openings must clear edges and existing tab slots. A faint wall plane and
+the manifest show the offset behind the plate; hardware and stand-off spacers
+are not generated. Tabs protruding beyond the wall offset are refused. Use one
+backplate. Ring supports and wall tabs cannot be combined because their straight
+insertion paths differ. These are glued joints, with no mechanical lock or load
+rating, and remain physically untested.
+
+### LED channel and manufacturing meaning
+
+Add `LED channel` from the assembly inspector. Its straight, flat-ended route is
+expressed in assembly coordinates and follows whole-layout translation and
+rotation. Position, yaw, elevation, cross-section roll and finite length are
+editable. `Fit through targeted parts` derives the route endpoints from full
+sheet extents. Tube diameter or strip/profile width, height and corner radius
+are measured component inputs. Clearance per side adds twice the entered value
+to the envelope dimensions; kerf is applied later to cut paths.
+
+Ribs are the default targets. Supports and the backplate are opt-in; an optional
+ID list restricts the checked types. The inspector distinguishes disabled tools,
+missing targets, invalid dimensions, missed parts, refused cuts and actual hit
+counts. An excluded part that obstructs the component is named and remains
+uncut. A closed channel needs access from at least one straight insertion end;
+material obstructing both directions is reported.
+
+The channel prism is intersected with each complete sheet slab and projected
+into local 2D coordinates. This includes the sweep across the sheet thickness:
+an oblique round bore is wider than the mid-plane ellipse. Round sections use
+96 circumscribed segments (radius excess below 0.054% before contour tracing);
+rounded rectangle corners use the same angular step. Finite caps ending inside
+a sheet and near-parallel closed crossings are refused. `Edge-open notch`
+explicitly extends the projected opening to a chosen local-sheet edge direction
+(0 degrees right, 90 degrees up in Part). It is a laser through-cut, never a
+blind face pocket. Openings that conflict with tabs, support joints or mounting
+holes are refused. Disconnected finished parts are errors; thin remaining
+bridges are warnings. An opening locates an LED component but does not design
+its retention or establish its thermal or electrical suitability.
+
+### Geometry checks and their limits
+
+`traceSheet` reuses the existing marching-squares and RDP implementation in local
+sheet coordinates. The source profile is traced at nominal iso zero. After all
+joints and channels, the finished nominal 2D profile is indexed as an exact
+in-plane distance near the boundary, then traced at +kerf/2. Thus a restricted
+3D source field's oblique gradient cannot multiply the kerf. The legacy
+`sliceModel` path is unchanged and an identity test covers disabled assemblies.
+
+Final tracing uses the smaller of the requested sample spacing and a quarter
+of the relevant sheet/bridge scale, with a longest-axis cap of 1400 samples.
+There is no post-joint smoothing that could round tab corners away. Polygon
+simplification is limited by both the requested tolerance and step/12.
+Distance magnitude is clamped away from contours, preserving signs, as with
+existing imported profiles. The bridge threshold includes the configured
+minimum feature and twice the largest enabled stock kerf.
+
+Collision checks sample a 3-by-3 family of slab-plane intersection lines, rather
+than only the mid-planes. Straight rib insertion is sampled from outside along
+negative U; rib-to-rib obstructions form a dependency graph, and cycles are
+refused. These are resolution-dependent checks, not an exhaustive continuous
+motion proof. The inspector and assembly document explicitly require a physical
+dry-fit coupon. Narrow contacts between samples and material flex remain limits.
+
+### UI, nesting and output
+
+`Assembly` replaces the old Stack tab label. Upright assemblies additionally use
+`Part` for the local 2D cut drawing. Click a 3D part to select it; Move/Rotate,
+snapping and M/R shortcuts operate on its placement. The inspector provides
+numeric controls and Selected/All follow angle scope. The component and larger
+LED clearance envelope appear in the assembly preview. Source modelling tools
+remain in a collapsible tree section, and small UI text has higher contrast.
+
+Labels are persistent IDs: R3 means rib feature f3, S15 support f15, and so on.
+The same labels and feature IDs appear in the inspector, Part, Sheet, DXF
+engraving, manifest and paginated assembly PDF. The PDF includes all part frames,
+material/kerf values, sheet references, joint instructions, channel routes and
+checks, plus every final part outline at one common drawing scale. Shared stock
+is inherited; optional per-part stock name/thickness/kerf creates a separate
+nesting material. Equal stock settings share sheets. Horizontal spacer rings
+are not generated for these assemblies.
+
+Existing worker generation and project ownership checks cover the new feature
+records. Stale calculations cannot be exported. Current assembly geometry errors
+also block export; warning-only results remain inspectable/exportable. Ordinary
+sheet collision and unplaced-part warnings keep their existing semantics.
+
+### Validation and physical acceptance
+
+`tools/validate-assembly.mjs` imports the actual kernel and pipeline: orthonormal
+frames, thick-sheet oblique projections, unchanged source profiles after manual
+placement, cross slots, mixed stock, glued tabs, mounting holes, tube and rounded
+strip routes, roll, clearance versus kerf, finite ends, edge openings, joint
+conflicts, missing targets, legacy identity and exact in-plane kerf.
+`tools/validate-assembly-state.mjs` exercises the real store, linked angle deltas,
+count reductions and retained IDs, save/open, material-separated nesting, DXF,
+manifest/PDF and actual worker message handler. Both are in `npm run verify`.
+
+Before a complete lamp, cut a small two-rib/two-ring coupon and a two-rib wall
+coupon in the chosen stock. Use the actual LED tube/profile. Measure slot and
+tab fit, test the documented insertion sequence, inspect bridges and confirm
+wall clearance. The current software results are not physical acceptance.

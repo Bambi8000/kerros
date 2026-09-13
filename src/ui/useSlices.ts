@@ -28,6 +28,7 @@ export function useSlices(enabled: boolean): SliceResult {
   const features = useKerros((s) => s.features);
   const thickness = useKerros((s) => s.material.thickness);
   const kerf = useKerros((s) => s.material.kerf);
+  const materialName = useKerros((s) => s.material.name);
   const spacerHeight = useKerros((s) => s.stack.spacerHeight);
   // The whole stack, not just the bottom gap: per-layer windows key on which
   // sheet a height falls in, so the field needs the plan and not a spacing.
@@ -45,10 +46,10 @@ export function useSlices(enabled: boolean): SliceResult {
   const projectRevision = useKerros((s) => s.projectRevision);
 
   const job = useMemo<SliceJob>(() => ({
-    features, thickness, kerf, spacerHeight, spacerHeightTop, spacerThickness,
+    features, thickness, kerf, materialName, spacerHeight, spacerHeightTop, spacerThickness,
     spacerHeightMid, twistPerLayer, twistOverrides, resolution, tolerance,
     smoothing, minFeature, seed,
-  }), [features, thickness, kerf, spacerHeight, spacerHeightTop, spacerThickness,
+  }), [features, thickness, kerf, materialName, spacerHeight, spacerHeightTop, spacerThickness,
     spacerHeightMid, twistPerLayer, twistOverrides, resolution, tolerance,
     smoothing, minFeature, seed]);
   const [done, setDone] = useState<{

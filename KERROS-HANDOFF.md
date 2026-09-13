@@ -7,9 +7,24 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.28.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.29.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+**Ribs & Supports** adds upright radial and linear assemblies. Each rib has a
+persistent feature ID, a source sampling plane and a separate editable placement.
+Horizontal ring supports use complementary half slots; a wall backplate uses two
+glued tabs per rib and full-thickness, angle-aware slots. A straight LED channel
+cuts round or rectangular openings through selected final parts. Its clearance
+is per side and separate from kerf. Finished 2D contours are redistanced before
+kerf; restricting the source SDF to an oblique plane is not enough.
+Assembly, Part, Sheet, project files, DXF and the assembly PDF share part IDs.
+Projects persist the allocation watermark so a deleted target ID cannot be
+reassigned to a different part after reopening.
+The original horizontal pipeline is unchanged when the assembly is disabled;
+horizontal-only fixtures, paint and punches are explicitly reported as excluded
+while it is enabled. Joint geometry and sampled insertion/collision checks are
+validated, but all new joints and LED fits still require physical coupons.
 
 **Hole punch** adds one exact circular cut to the sheet being edited in Slice.
 Click a centre after choosing the diameter; each punch is an editable feature,
@@ -391,7 +406,10 @@ way `FixtureInspector` was.
 - **A morph ignores `height`.** Its span is its keys, so the field would write
   a number nothing reads — the pattern gizmo's failure exactly. The inspector
   replaces the field with a sentence instead.
-- **No cross-slicing.** Everything is horizontal layers. See the plan below.
+- **Upright cross-slicing only.** Radial and linear ribs with ring supports or a
+  wall backplate are available. Arbitrary plate tilt and unrestricted eggcrate
+  networks remain deferred. Ring and wall support systems cannot be combined
+  because their insertion paths differ.
 - **The bundle is unsigned.** It runs on the machine that built it; another Mac
   quarantines it. Proper notarising needs a paid Apple Developer account.
 
@@ -418,6 +436,11 @@ file, check this first.
 Everything here is validated in code and unproven in material. Test cuts were
 about to happen when this handoff was written; ask before assuming.
 
+- **Upright assemblies.** Cut a two-rib/two-ring coupon and a two-rib wall
+  coupon using the actual LED tube or profile. Measure kerf, slot and tab fit,
+  insertion sequence, remaining bridges and wall clearance. Glued oblique
+  shoulders meet at an edge rather than a laser-cut bevel. No load rating or
+  LED retention follows from the geometric checks.
 - **Hole punch.** The exact circle, single-layer assignment, kerf, save/open
   and DXF path are validated; its finished diameter still needs a cut in the
   chosen stock with a measured kerf.
@@ -442,17 +465,15 @@ about to happen when this handoff was written; ask before assuming.
    remembering the order, so the drawings became the document and the table the
    appendix. All at one scale, because fitting each to its own box makes a 40 mm
    ring and a 200 mm ring identical on the page.
-2. **Cross-slicing (fin / eggcrate mode)**, discussed and scoped. Phase A is
-   part paid for: the swept-section arithmetic legs needed — a tilted solid met
-   by a plane, and the sweep between two faces of a sheet — is the same
-   mathematics, and it is written and validated.
+2. **Cross-slicing (fin / eggcrate mode)**: the upright subset of phases A-C
+   shipped in 0.29.0. General tilt and unrestricted crossing networks remain
+   future work. The original phase breakdown below records the rationale.
    The current design is recorded in
    [the assembly implementation plan](docs/KERROS-ASSEMBLY-PLAN.md): upright
    radial and linear ribs, adjustable supports, a wall backplate with approved
    glued tab joints, and an LED channel through selected assembly parts. These
-   are planned, not shipped. The plan records the user's confirmed scope and
-   extends the phases below with assembly placement, targeting and full-sheet
-   intersection checks.
+   are implemented for upright sheets. The plan records the user's confirmed
+   scope; FEATURES describes the shipped controls, sampled checks and limits.
    - **Phase A: generalised slice planes.** `sliceModel` assumes `z = const`, but
      marching squares, Chaikin, RDP, kerf and grouping all work in the plane's own
      coordinates and do not care which plane it is. Generalise to an origin plus
