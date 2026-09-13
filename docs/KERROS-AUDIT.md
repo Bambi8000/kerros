@@ -180,11 +180,11 @@ passed every named check; it did not detect these UI and integration failures.
 | B5 | Boss inspector treated a disabled rod as an active support | Fixed: inspector uses the actual state and shared pipeline selectors |
 | B6 | Fixture layer counts ignored the actual band and layer plan | Fixed: inspector uses the actual state and shared pipeline selectors |
 | B7 | Paint inspector disagreed with the pipeline's nearest-plane assignment | Fixed: inspector uses the actual state and shared pipeline selectors |
-| B8 | Gradient rounding text ignored the middle gap | Pending |
-| B9 | Spacer messages confused pending results, zero gaps and short rods | Pending |
+| B8 | Gradient rounding text ignored the middle gap | Fixed: three-gap rounding, current spacer states and bounded multi-turn repetition |
+| B9 | Spacer messages confused pending results, zero gaps and short rods | Fixed: three-gap rounding, current spacer states and bounded multi-turn repetition |
 | B10 | Import reach warning used the last shell and recommended resolution | Pending |
 | B11 | Profile reach warning measured a different index from the pipeline | Pending |
-| B12 | Twist and pin repetition messages missed multi-turn repeats | Pending |
+| B12 | Twist and pin repetition messages missed multi-turn repeats | Fixed: three-gap rounding, current spacer states and bounded multi-turn repetition |
 | B13 | Legs selected planned planes but the inspector counted nonempty sheets | Fixed: inspector uses the actual state and shared pipeline selectors |
 | B14 | Every zero-hole pattern was blamed on wall thickness | Pending |
 | B15 | Window clamp notice still used the superseded mathematical limit | Pending |

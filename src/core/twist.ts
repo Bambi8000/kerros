@@ -120,18 +120,19 @@ export function twistPoint(
   return untwistPoint(x, y, -degrees, cx, cy);
 }
 
+export const MAX_REPEAT_STEPS = 3600;
+
 /**
- * Whether a spiral ever brings a layer back to where another one was.
- *
- * Worth saying out loud, because it is invisible until a stack is built: a turn
- * that divides evenly into 360 repeats, so at 45 degrees every eighth sheet has
- * its flutes running the same way as the one eight below it. That is a choice
- * and not a fault — but it is a different choice from a spiral that never
- * repeats, and nobody can work out which they have from one number.
+ * First repeated orientation within 3600 increments, to 1e-7 degrees.
+ * Zero means no repeat found within that horizon, not "never". A pin ring
+ * uses its angular spacing as the cycle; a sheet uses a full 360-degree turn.
  */
-export function twistPeriod(perLayer: number): number {
-  if (perLayer === 0) return 1;
-  const steps = 360 / Math.abs(perLayer);
-  const rounded = Math.round(steps);
-  return Math.abs(steps - rounded) < 1e-9 && rounded > 0 ? rounded : 0;
+export function twistPeriod(perLayer: number, cycle = 360): number {
+  if (!Number.isFinite(perLayer) || !Number.isFinite(cycle) || cycle <= 0) return 0;
+  const turn = ((perLayer % cycle) + cycle) % cycle;
+  for (let steps = 1; steps <= MAX_REPEAT_STEPS; steps++) {
+    const angle = steps * turn;
+    if (Math.abs(angle - Math.round(angle / cycle) * cycle) < 1e-7) return steps;
+  }
+  return 0;
 }

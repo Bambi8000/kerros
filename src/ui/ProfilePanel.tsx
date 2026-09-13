@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { PREVIEW_RESOLUTIONS, SLICE_RESOLUTIONS, useKerros } from '../core/store';
+import { PREVIEW_RESOLUTIONS, SLICE_RESOLUTIONS, rodsFromFeatures, useKerros } from '../core/store';
 import { layerPitch } from '../core/types';
 import type { GapReport, SliceSet } from '../core/slice';
+import { ringsForGap } from '../core/slice';
 import { kerfTestDocument, writeDxfR12 } from '../core/dxf';
 import { assemblyDocument, manifestText, sheetToDxf } from '../core/job';
 import { writePdf } from '../core/pdf';
-import { parseTwistOverrides, twistPeriod } from '../core/twist';
-import { ringThickness } from '../core/rig';
+import { MAX_REPEAT_STEPS, parseTwistOverrides, twistPeriod } from '../core/twist';
+import { ringThickness, rodLayerCount } from '../core/rig';
 import { workerAvailable } from './workerBridge';
 import { KERROS_VERSION } from '../version';
 import { parseProject, projectFilename, serializeProject } from '../core/project';
@@ -86,9 +87,10 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
   const makeSpacers = useKerros((s) => s.makeSpacers);
   const setMakeSpacers = useKerros((s) => s.setMakeSpacers);
   const clearAllPlacements = useKerros((s) => s.clearAllPlacements);
-  const rodCount = useKerros(
-    (s) => s.features.filter((f) => f.kind === 'rod' && f.enabled).length,
-  );
+  const features = useKerros((s) => s.features);
+  const rods = rodsFromFeatures(features);
+  const rodCount = rods.length;
+  const spanningRod = slices && rods.some((rod) => rodLayerCount(rod, slices.slices) >= 2);
   const fluteDirection = useKerros((s) => s.fluteDirection);
   const setFluteDirection = useKerros((s) => s.setFluteDirection);
   const flutePitch = useKerros((s) => s.flutePitch);
@@ -118,10 +120,6 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
   const sheetCount = sheets.sheets.length;
   const sheetIndex = sheetCount > 0 ? Math.min(Math.max(currentSheet, 1), sheetCount) : 0;
   const spacerTotal = sheets.spacers.reduce((sum, plan) => sum + plan.total, 0);
-  const spacerMismatch =
-    makeSpacers &&
-    stack.spacerHeight > 0 &&
-    Math.abs(sheets.spacerAchieved - stack.spacerHeight) > 1e-6;
 
   const sheetFile = (target: SheetResult['sheets'][number]) => ({
     name: `kerros-${target.material}-sheet-${String(target.ordinal).padStart(2, '0')}.dxf`,
@@ -268,8 +266,10 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
     thickness: material.thickness,
     spacerThickness: stack.spacerThickness,
   });
-  const ringsAt = (mm: number) => (ringT > 0 ? Math.max(Math.round(Math.max(mm, 0) / ringT), 0) : 0);
+  const ringsAt = (mm: number) => ringsForGap(mm, ringT);
   const ringsLow = ringsAt(stack.spacerHeight);
+  const spacerAchieved = ringsLow * ringT;
+  const spacerMismatch = makeSpacers && Math.abs(spacerAchieved - stack.spacerHeight) > 1e-6;
   const ringsHigh = ringsAt(stack.spacerHeightTop ?? stack.spacerHeight);
   const ringsMid = ringsAt(stack.spacerHeightMid ?? stack.spacerHeight);
   /*
@@ -497,15 +497,15 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
           </div>
         ) : asked ? (
           <div className="warn">
-            {`${stack.spacerHeight} mm and ${gapTop} mm are both ${ringsLow} ${
+            {`${stack.spacerHeight} → ${gapMid} → ${gapTop} mm all round to ${ringsLow} ${
               ringsLow === 1 ? 'ring' : 'rings'
-            } of ${ringT} mm, so the stack comes out uniform at ${gradeLow} mm. Rings of ${Math.abs(
-              gapTop - stack.spacerHeight,
-            ).toFixed(2)} mm or thinner would grade it, and so would gaps further apart.`}
+            } of ${ringT} mm, so the stack comes out uniform at ${gradeLow} mm. Rings of ${Number((
+              Math.max(stack.spacerHeight, gapMid, gapTop) - Math.min(stack.spacerHeight, gapMid, gapTop)
+            ).toPrecision(6))} mm or thinner would grade it, and so would gaps further apart.`}
           </div>
         ) : (
           <div className="derived">
-            Both gaps the same, so the stack is uniform. Set them apart to open
+            All three gaps are the same, so the stack is uniform. Set them apart to open
             it out or close it up as it rises.
           </div>
         )}
@@ -722,8 +722,8 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
               {turn === 0
                 ? 'No spiral, so only the layers named above are turned.'
                 : period > 0
-                  ? `The spiral comes back round every ${period} sheets, so those lie the same way. A turn that does not divide 360 evenly never repeats.`
-                  : 'The spiral never comes back round, so no two sheets lie the same way.'}
+                  ? `The spiral repeats after ${period} layer increments: layers 1 and ${period + 1} lie the same way, unless overridden.`
+                  : `No repeat found within ${MAX_REPEAT_STEPS} layer increments (to 0.0000001°).`}
               {' '}Model shows the design; Stack shows the lamp.
             </div>
           );
@@ -862,10 +862,11 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
             &ldquo;Add rod&rdquo; in the feature tree.
           </div>
         ) : null}
-        {makeSpacers && rodCount > 0 && spacerTotal === 0 && total > 1 ? (
+        {makeSpacers && sheets.ready && sliceFresh && rodCount > 0 && spacerTotal === 0 && total > 1 ? (
           <div className="derived">
-            No spacer rings: no rod reaches two layers, so there are no gaps to
-            fill. Check each rod&rsquo;s Z position and length.
+            {spanningRod
+              ? 'No spacer rings: the gaps reached by the rods need zero rings at this ring thickness.'
+              : 'No spacer rings: no rod reaches two layers. Check each rod’s Z position and length.'}
           </div>
         ) : null}
         {/*
@@ -877,7 +878,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
         */}
         {spacerMismatch ? (
           <div className="derived">
-            {stack.spacerHeight} mm was asked for and {sheets.spacerAchieved} mm
+            {stack.spacerHeight} mm was asked for and {spacerAchieved} mm
             is what whole {ringT} mm rings make, so that is what the layers are
             planned on. Use a multiple of {ringT} mm, or thinner rings, to get
             the gap you meant.

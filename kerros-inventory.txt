@@ -1,8 +1,8 @@
 KERROS INVENTORY  2026-09-13  version 0.27.0
 
 --- source, lines each
-   33904 total
-    2807 src/ui/Inspector.tsx
+   33914 total
+    2806 src/ui/Inspector.tsx
     2162 src/core/store.ts
     1704 src/core/sdf.ts
     1542 src/core/pipeline.ts
@@ -12,7 +12,7 @@ KERROS INVENTORY  2026-09-13  version 0.27.0
     1197 tools/validate-pipeline.mjs
     1158 src/ui/SliceInspector.tsx
     1067 src/core/profile2d.ts
-    1066 src/ui/ProfilePanel.tsx
+    1067 src/ui/ProfilePanel.tsx
     1014 src/core/slice.ts
      805 tools/validate-sdf.mjs
      787 src/index.css
@@ -52,11 +52,11 @@ KERROS INVENTORY  2026-09-13  version 0.27.0
      182 src/ui/workerBridge.ts
      162 src/core/paint.ts
      153 src/core/pdf.ts
+     138 src/core/twist.ts
      138 tools/validate-paint.mjs
-     137 src/core/twist.ts
      137 tools/validate-pdf.mjs
      131 src/ui/PartInspector.tsx
-     104 tools/validate-twist.mjs
+     113 tools/validate-twist.mjs
       94 src/ui/usePreview.ts
       88 src/ui/kerros.worker.ts
       81 src/ui/useSlices.ts
@@ -87,6 +87,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+fba9260 Report actual support state and share layer assignments with inspectors
 ce14d7e Measure thin bridges between complete cut edges and circles
 51408af Keep imported meshes and cut jobs within their project and reject stale exports
 44a6472 AGENTS.md: working agreement for repo-native agents
@@ -126,4 +127,3 @@ d160f68 Keep the last slice while modelling, so a fixture's ghost can find its l
 6d50d64 One layer selector for fixtures and perforation; per-slice holes remember which feature cut them
 f7d90c9 Docs and inventory at 0.18.0: the layer plan, gaps that grade, and rings as their own material
 ac2ef94 Gradient controls in the panel; spacer rings nest as their own material; fix a composeField call the 3b core missed
-dff1226 Gradient controls in the panel, and fix a composeField call the 3b core missed

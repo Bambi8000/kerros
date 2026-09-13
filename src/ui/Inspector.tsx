@@ -13,6 +13,7 @@ import {
 import { openBinary, openText } from './download';
 import { fixturesFromFeatures, paintPlaneIndex, selectorForFixture, selectorForLegs } from '../core/pipeline';
 import { strokesByPlane } from '../core/paint';
+import { MAX_REPEAT_STEPS, twistPeriod } from '../core/twist';
 import type { BrushOp } from '../core/store';
 import {
   BLEND_PARAM,
@@ -1754,16 +1755,14 @@ function PinsInspector({ feature, slices, loose }: PinsProps) {
         */}
         <div className="derived">
           {(() => {
-            const spacing = 360 / count;
-            const steps = Math.round(spacing / turn);
-            const exact = Math.abs(steps * turn - spacing) < 1e-6;
-            if (exact && steps <= 1) {
+            const steps = twistPeriod(turn, 360 / count);
+            if (steps === 1) {
               return 'Every gap lands on the same angles — nothing is interleaved.';
             }
-            if (exact) {
-              return `The rings repeat every ${steps} gaps, so a sheet looks like the one ${steps} above it. For a pattern that keeps climbing, use a turn that does not divide ${spacing.toFixed(1)}° evenly — ${(spacing / (steps + 1)).toFixed(1)}° gives ${steps + 1}.`;
+            if (steps > 1) {
+              return `The pin positions repeat every ${steps} gaps. Change the turn per gap to choose a different repeat.`;
             }
-            return `The rings do not line up again for a long way, so the pattern climbs the stack.`;
+            return `No repeated pin positions found within ${MAX_REPEAT_STEPS} gaps (to 0.0000001°).`;
           })()}
         </div>
       </div>

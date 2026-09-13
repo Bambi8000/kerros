@@ -21,6 +21,9 @@ The thin-feature check now measures whole cut segments and circles: the audit's
 Inspector layer readings now use the pipeline's actual fixture bands, planned
 leg layers and nearest-plane paint assignment. Pin warnings include fully
 unfastened sheets without guessing why pins are absent; bosses name disabled rods.
+Gap-rounding messages include the middle request, and zero spacer counts wait
+for current results and distinguish touching layers from short rods. Twist and
+pin repetition readings now include multi-turn repeats with a stated search limit.
 
 ## What Kerros is
 

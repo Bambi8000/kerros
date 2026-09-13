@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { rodsFromFeatures, useKerros } from '../core/store';
-import { spacerHeightAchieved, spacerPlans } from '../core/rig';
+import { spacerPlans } from '../core/rig';
 import type { SpacerPlan } from '../core/rig';
 import { buildParts } from '../core/job';
 import { analyseSheet, applyPlacements } from '../core/nest';
@@ -125,7 +125,7 @@ export function useSheets(
     return {
       parts: buildParts(slices, spacers, windows, spacerMaterial),
       spacers,
-      spacerAchieved: spacerHeightAchieved(spacerOptions),
+      spacerAchieved: slices.planes[0]?.gapAbove ?? 0,
       options: {
         trueShape,
         cell: nestCell,

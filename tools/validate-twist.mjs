@@ -92,7 +92,16 @@ console.log('twist: a spiral that comes back round');
   check('45 degrees repeats every eighth sheet', twistPeriod(45) === 8);
   check('90 every fourth', twistPeriod(90) === 4);
   check('no twist is every sheet', twistPeriod(0) === 1);
-  check('7 degrees never comes back round', twistPeriod(7) === 0);
+  check('7 degrees returns after seven full turns', twistPeriod(7) === 360);
+  check('100 degrees returns after five full turns', twistPeriod(100) === 18);
+  check('negative turns have the same period', twistPeriod(-100) === 18);
+  check('three pins staggered 80 degrees repeat after three gaps', twistPeriod(80, 120) === 3);
+  check('an irrational turn is not claimed never to repeat', twistPeriod(Math.SQRT2) === 0);
+  check('whole turns repeat immediately', twistPeriod(720) === 1);
+  check('invalid turns have no reported period', twistPeriod(Infinity) === 0);
+  for (let count = 1; count <= 12; count++) {
+    check(`half-spacing stays a two-gap repeat with ${count} pins`, twistPeriod(180 / count, 360 / count) === 2);
+  }
   // 2.5 divides 360 exactly, so it does repeat — just a long way up. The first
   // version of this line claimed it did not and then asserted that it did.
   check('2.5 does, after 144 layers', twistPeriod(2.5) === 144);

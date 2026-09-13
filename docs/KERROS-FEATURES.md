@@ -680,6 +680,12 @@ no gaps to fill. That is correct, but silence about it reads as a bug, so the
 profiles panel says so plainly, and says it again when rods exist but none of
 them reaches two layers.
 
+The zero-ring explanation waits for a current completed job. A rod spanning
+touching sheets needs no rings, so that state is distinguished from no rod
+reaching two layers. Requested-gap rounding is read directly from
+`ringsForGap`, independent of nesting progress; the manifest's achieved bottom
+gap comes from the actual layer plan, including a gap rounded down to zero.
+
 **The handoff says one ring per gap, and that is wrong.** A ring can only be a
 whole sheet thick, so a 6 mm gap cut from 3 mm plexi needs **two** rings
 stacked, not one. `ringsPerGap()` computes the count and
@@ -735,6 +741,12 @@ Asking for different gaps and getting different gaps are separate facts:
 | 6 and 6 | same | uniform, and how to change that |
 | 3 and 4, 3 mm rings | same | **both are one ring, so the stack is uniform**; rings of 1.00 mm or thinner would grade it |
 | 3 and 9, 3 mm rings | differ | the gap goes 3 → 9 mm in 3 steps |
+
+With a middle gap, all three requests participate in every state. For example,
+3 → 4 → 3 mm with 3 mm rings is uniform by rounding, and the panel names all
+three requests and suggests 1 mm rings. The suggested thickness uses the
+nonzero span from the smallest to largest request; equal ends cannot produce
+the old, impossible suggestion to use 0 mm rings.
 
 The advice in the middle row is derived rather than guessed: when the ring
 thickness equals the difference between the two gaps, the counts differ by
@@ -1477,10 +1489,12 @@ have two views claiming different things about one part.
 
 ### A spiral that comes back round
 
-`twistPeriod` says whether a turn divides evenly into 360. At 45° every eighth
-sheet lies the same way as the one eight below it — a choice, not a fault, but
-not one anybody can work out from a single number, so the panel says which one
-you have.
+`twistPeriod` finds the first repeated orientation within 3600 increments, to
+1e-7 degrees. It includes multi-turn repeats: 100° returns after 18 increments,
+and 7° after 360. The panel names layers 1 and period+1 to make the counting
+explicit. When no repeat is found it states the search horizon, never that a
+decimal angle cannot repeat. Pin rings use the same function with their angular
+spacing as the cycle: three pins staggered by 80° repeat every three gaps.
 
 ### What the assembly document has to add
 
@@ -1526,8 +1540,10 @@ twice is a whole position, so with three pins the pattern repeats every second
 gap and every sheet looks alike. That is a choice and not an oversight: turning
 each gap as far as possible from its neighbour and making the pattern climb are
 different goals. The panel says which one you have — and what to type for the
-other, since a turn that does not divide the spacing evenly spirals up the
-stack.
+other. A repeat can take several full positions: the inspector checks the
+first repeated orientation rather than testing whether one spacing divides by
+the turn. It reports the period, or the bounded search horizon, without claiming
+the pattern never comes back round.
 
 ### The generator checks its own work
 
