@@ -218,6 +218,8 @@ interface KerrosState {
    * compared on every render — so this is what tells the memos to recompute.
    */
   importRevision: number;
+  /** Cache ownership; feature ids are only unique within a project. */
+  projectRevision: number;
   /** Put a feature's axis at the middle of the model's footprint. */
   centreOnModel: (id: string) => void;
   /** Stretch a rod to span the whole model. */
@@ -385,6 +387,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
   mode: 'model',
   panel: 'inspector',
   importRevision: 0,
+  projectRevision: 0,
 
   trueShapeNesting: false,
   nestCell: 2,
@@ -1920,8 +1923,11 @@ export const useKerros = create<KerrosState>((set, get) => ({
     };
   },
 
-  applyProject: (data, nextFeatureNumber) =>
+  applyProject: (data, nextFeatureNumber) => {
+    importVolumes.clear();
     set({
+      importRevision: get().importRevision + 1,
+      projectRevision: get().projectRevision + 1,
       projectName: data.name,
       machine: { ...data.machine },
       material: { ...data.material },
@@ -1956,7 +1962,8 @@ export const useKerros = create<KerrosState>((set, get) => ({
       selectedPartId: null,
       currentLayer: 1,
       currentSheet: 1,
-    }),
+    });
+  },
   setGizmoMode: (gizmoMode) => set({ gizmoMode }),
   setSnapEnabled: (snapEnabled) => set({ snapEnabled }),
   setSeed: (seed) => set({ seed }),

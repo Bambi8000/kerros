@@ -2003,6 +2003,10 @@ wrote it:
   feature still opens.
 - Feature numbering resumes past the highest loaded `fN`, so newly added
   features cannot collide with loaded ones.
+- Opening a project clears baked mesh imports and advances both the import
+  revision and the project revision. Feature ids may recur in another file;
+  they never grant access to the previous project's geometry. Imported meshes
+  must be located again, even when reopening the same project.
 
 The validator round-trips a full project byte-for-byte, then feeds the parser
 garbage, a foreign file, a future version, an empty file, and a file where
@@ -2717,6 +2721,17 @@ composition at all.
 Every job carries a token, and a reply whose token is not the newest is discarded.
 During a drag several jobs are in flight and only the last one asked for is worth
 showing — without that, a slow job finishing late would overwrite a newer result.
+
+Invalidation starts when the inputs change, including the debounce interval.
+Slice and preview replies also belong to a project revision. Opening another
+project hides old results immediately, before the next effect or worker reply.
+Model mode retains its own project's last slice for fixture ghosts without
+reslicing, but that cache carries explicit freshness: changed slice inputs
+disable cut-job exports until Slice, Stack or Sheet has recalculated them.
+Nesting only consumes current slices, and exports require a completed pack for
+the current inputs. A completed pack with every part unplaced says so; it does
+not ask the user to start the pack again. The kerf test is independent and
+remains available.
 
 ### If the worker will not start
 

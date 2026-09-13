@@ -20,6 +20,8 @@ export interface SheetResult extends NestResult {
   pinnedCount: number;
   /** A nest is in flight and what is on screen is the previous one. */
   busy: boolean;
+  /** A completed pack for the current inputs, including an all-unplaced job. */
+  ready: boolean;
   /** How long the last pack took, ms. */
   ms: number;
 }
@@ -33,6 +35,7 @@ const EMPTY: SheetResult = {
   reports: {},
   pinnedCount: 0,
   busy: false,
+  ready: false,
   ms: 0,
 };
 
@@ -85,6 +88,7 @@ export function useSheets(
   windows: { label: string; set: SliceSet }[] = NO_WINDOWS,
 ): SheetResult {
   const features = useKerros((s) => s.features);
+  const projectRevision = useKerros((s) => s.projectRevision);
   const trueShape = useKerros((s) => s.trueShapeNesting);
   const nestCell = useKerros((s) => s.nestCell);
   const machine = useKerros((s) => s.machine);
@@ -159,7 +163,9 @@ export function useSheets(
    * itself rather than becoming a set of positions for parts that no longer
    * exist.
    */
-  const [done, setDone] = useState<{ output: NestOutput; job: BuiltJob } | null>(null);
+  const [done, setDone] = useState<{
+    output: NestOutput; job: BuiltJob; projectRevision: number;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const token = useRef(0);
 
@@ -180,7 +186,7 @@ export function useSheets(
           // During a drag several packs are in flight and only the last one
           // asked for is worth showing.
           if (mine !== token.current) return;
-          setDone({ output, job: built });
+          setDone({ output, job: built, projectRevision });
           setBusy(false);
         })
         .catch((error: unknown) => {
@@ -190,11 +196,15 @@ export function useSheets(
         });
     }, NEST_DEBOUNCE);
 
-    return () => clearTimeout(timer);
-  }, [built]);
+    return () => {
+      clearTimeout(timer);
+      token.current++;
+    };
+  }, [built, projectRevision]);
 
   return useMemo(() => {
-    if (!done) return busy ? { ...EMPTY, busy: true } : EMPTY;
+    if (!built) return EMPTY;
+    if (!done || done.projectRevision !== projectRevision) return { ...EMPTY, busy: true };
 
     const { output, job } = done;
     const nested = rehydrateNest(output, job.parts);
@@ -223,8 +233,9 @@ export function useSheets(
       partCount: job.parts.length,
       reports,
       pinnedCount,
-      busy,
+      busy: busy || done.job !== built,
+      ready: done.job === built && !busy,
       ms: output.ms,
     };
-  }, [done, busy, partPlacements]);
+  }, [done, busy, partPlacements, built, projectRevision]);
 }

@@ -27,11 +27,13 @@ interface Props {
   slices: SliceSet | null;
   reports: GapReport[];
   sheets: SheetResult;
+  sliceFresh: boolean;
   /** Sheets each pins feature left held on one side only. */
   pinLoose: Record<string, number[]>;
 }
 
-export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
+export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: Props) {
+  const exportReady = sliceFresh && sheets.ready;
   const projectName = useKerros((s) => s.projectName);
   const setProjectName = useKerros((s) => s.setProjectName);
   const trueShape = useKerros((s) => s.trueShapeNesting);
@@ -127,17 +129,19 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
   });
 
   const exportSheet = async (which: number) => {
+    if (!exportReady) return;
     const target = sheets.sheets[which - 1];
     if (!target) return;
     announce(await saveText(sheetFile(target)));
   };
 
   const exportAllSheets = async () => {
+    if (!exportReady) return;
     announce(await saveMany(sheets.sheets.map(sheetFile)));
   };
 
   const exportManifest = async () => {
-    if (!slices) return;
+    if (!slices || !exportReady) return;
     announce(
       await saveText(
         {
@@ -169,7 +173,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
    * the thing that turned out to be hard once there was a pile to sort.
    */
   const exportAssembly = async () => {
-    if (!slices) return;
+    if (!slices || !exportReady) return;
     announce(
       await saveText(
         {
@@ -614,8 +618,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
           </div>
         ) : (
           <div className="derived">
-            Open Slice or Stack to slice. Contours are not kerf-compensated yet —
-            that lands with DXF export in M3.
+            Open Slice, Stack or Sheet to calculate kerf-compensated contours.
           </div>
         )}
       </div>
@@ -845,8 +848,12 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
           // not landed yet, not that there is nothing to nest. True shape takes
           // about half a second on a real lamp and longer in the native shell.
           <div className="derived">Nesting the job onto the bed…</div>
+        ) : sheets.ready ? (
+          <div className="derived">
+            Packing finished in {sheets.ms} ms: no parts were placed on a sheet.
+          </div>
         ) : (
-          <div className="derived">Open Sheet to nest the job onto the bed.</div>
+          <div className="derived">Open Slice, Stack or Sheet to calculate the job.</div>
         )}
         {makeSpacers && rodCount === 0 ? (
           <div className="derived">
@@ -918,7 +925,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
         <button
           type="button"
           className="btn btn-wide"
-          disabled={sheetIndex === 0 || sheets.busy}
+          disabled={sheetIndex === 0 || !exportReady}
           onClick={() => void exportSheet(sheetIndex)}
         >
           {sheetIndex > 0 ? `Export sheet ${sheetIndex} as DXF` : 'Export sheet as DXF'}
@@ -926,7 +933,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
         <button
           type="button"
           className="btn btn-wide"
-          disabled={sheetCount === 0 || sheets.busy}
+          disabled={sheetCount === 0 || !exportReady}
           onClick={() => void exportAllSheets()}
         >
           {sheetCount > 1 ? `Export all ${sheetCount} sheets` : 'Export all sheets'}
@@ -934,7 +941,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
         <button
           type="button"
           className="btn btn-wide"
-          disabled={!slices || sheets.busy}
+          disabled={!slices || !exportReady}
           onClick={() => void exportManifest()}
         >
           Export build manifest
@@ -942,7 +949,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
         <button
           type="button"
           className="btn btn-wide"
-          disabled={!slices || sheets.busy}
+          disabled={!slices || !exportReady}
           onClick={() => void exportAssembly()}
         >
           Export assembly PDF
@@ -954,7 +961,14 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose }: Props) {
             it stays live. The three above write the layout, and while a pack is
             in flight the layout on screen is the previous one — exporting it
             would put a file on disk that does not match the bed. */}
-        {sheets.busy ? (
+        {!sliceFresh ? (
+          <div className="derived">
+            {mode === 'model'
+              ? 'Open Slice, Stack or Sheet to update the cut job before exporting.'
+              : 'Calculating the current cut job. Exports will be available when it is ready.'}
+            {slices ? ' Layer readings still refer to the previous calculation.' : ''}
+          </div>
+        ) : sheets.busy ? (
           <div className="derived">
             Nesting in progress, so the sheet exports are held until it lands.
           </div>

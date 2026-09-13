@@ -17,8 +17,8 @@ things in the wrong order, duplicated logic that drifts — rather than reading
    (broad condition before narrow one), early returns that refuse without
    reporting.
 3. **Claim cross-check** — every "the inspector says/warns/counts" sentence in
-   FEATURES read against the code that would have to say it. **Not yet done**;
-   checklist below.
+   FEATURES read against the code that would have to say it. Completed on
+   2026-09-13 at 0.27.0; the original checklist and the findings are below.
 
 Verify was green (21 OK lines) before and throughout; nothing here was found by
 a validator, which is the point — these families live outside what validators
@@ -102,7 +102,7 @@ disagree silently.
 - **~50 exported types nothing imports** — types cannot run anything wrong.
   Cosmetic; strip the `export` keyword opportunistically, not as an audit item.
 
-## Layer 3 checklist — FEATURES claims vs. code (not yet done)
+## Layer 3 checklist — FEATURES claims vs. code
 
 The remaining pass is reading, not scripting. For every claim of the form "the
 inspector says / warns / counts / reports", confirm three things: the branch
@@ -158,10 +158,40 @@ reachability and silence are not, which is exactly where all five came from.
 ## Status
 
 - Layers 1 and 2: **done** (2026-09-02, at 0.26.0, verify green).
-- Layer 3: **pending** — checklist above. Reading work; safe to defer past the
-  morph feature, since it does not get more dangerous by waiting.
+- Layer 3: **done** (2026-09-13, at 0.27.0). Claims were provoked in the browser
+  and compared with real pipeline outputs, including the worker fallback.
 - Fixes A1–A5: **shipped** (2026-09-02, five commits, verify seen green after
   each, smoke-tested in the browser). One deviation from the plan as written:
   the unknown-RIG panel sits at the end of the dispatch rather than at the rod
   branch, because the chain's tail was ShapeInspector — removing the stage
   fallback alone would have swapped one wrong panel for another.
+
+## 0.27.0 audit repairs — 2026-09-13
+
+All seventeen findings were reproduced before editing. The baseline verify
+passed every named check; it did not detect these UI and integration failures.
+
+| ID | Finding | Repair status |
+| --- | --- | --- |
+| B1 | Opening another project reused mesh grids by feature id | Fixed: clear caches and advance revisions; real-store validator |
+| B2 | Model mode could export an old project's or old design's slices | Fixed: project ownership, immediate freshness checks, exports gated on a current pack |
+| B3 | Thin-feature check compared vertices and missed long-segment interiors | Pending |
+| B4 | Pin warnings claimed one-sided fastening and guessed the cause | Pending |
+| B5 | Boss inspector treated a disabled rod as an active support | Pending |
+| B6 | Fixture layer counts ignored the actual band and layer plan | Pending |
+| B7 | Paint inspector disagreed with the pipeline's nearest-plane assignment | Pending |
+| B8 | Gradient rounding text ignored the middle gap | Pending |
+| B9 | Spacer messages confused pending results, zero gaps and short rods | Pending |
+| B10 | Import reach warning used the last shell and recommended resolution | Pending |
+| B11 | Profile reach warning measured a different index from the pipeline | Pending |
+| B12 | Twist and pin repetition messages missed multi-turn repeats | Pending |
+| B13 | Legs selected planned planes but the inspector counted nonempty sheets | Pending |
+| B14 | Every zero-hole pattern was blamed on wall thickness | Pending |
+| B15 | Window clamp notice still used the superseded mathematical limit | Pending |
+| B16 | Known import/profile/sculpt features were labelled unknown | Pending |
+| B17 | Unsliced kerf text and all-unplaced nesting status were obsolete | Fixed: current kerf description and explicit completed-pack status |
+
+Project-state validation loads the actual store through Vite's module loader,
+with no HTTP or WebSocket listener. It bakes an OBJ, opens another project with
+the same feature id, checks both cache invalidation signals, and locates the
+new mesh again. It is part of `npm run verify`.

@@ -38,20 +38,23 @@ export function usePreview(enabled: boolean): PreviewResult {
   const spacerThickness = useKerros((s) => s.stack.spacerThickness);
   const seed = useKerros((s) => s.seed);
   const importRevision = useKerros((s) => s.importRevision);
+  const projectRevision = useKerros((s) => s.projectRevision);
 
-  const [result, setResult] = useState<PreviewResult>(IDLE);
+  const [result, setResult] = useState<PreviewResult & { projectRevision: number }>({
+    ...IDLE, projectRevision,
+  });
   const generation = useRef(0);
 
   useEffect(() => {
+    const mine = ++generation.current;
     if (!enabled) {
-      setResult(IDLE);
+      setResult({ ...IDLE, projectRevision });
       return;
     }
 
     setResult((prev) => ({ ...prev, pending: true }));
 
     const timer = window.setTimeout(() => {
-      const mine = ++generation.current;
       const job: PreviewJob = {
         features,
         resolution,
@@ -65,11 +68,14 @@ export function usePreview(enabled: boolean): PreviewResult {
 
       void requestPreview(job, importRevision).then((output) => {
         if (mine !== generation.current) return;
-        setResult({ ...output, pending: false });
+        setResult({ ...output, pending: false, projectRevision });
       });
     }, PREVIEW_DEBOUNCE_MS);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      generation.current++;
+    };
   }, [
     enabled,
     features,
@@ -81,7 +87,8 @@ export function usePreview(enabled: boolean): PreviewResult {
     spacerThickness,
     seed,
     importRevision,
+    projectRevision,
   ]);
 
-  return result;
+  return result.projectRevision === projectRevision ? result : { ...IDLE, pending: enabled };
 }

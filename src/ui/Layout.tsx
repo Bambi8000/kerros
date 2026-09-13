@@ -81,8 +81,9 @@ export function Layout() {
     pinLoose,
     ms: sliceMs,
     pending: slicePending,
+    fresh: sliceFresh,
   } = useSlices(mode !== 'model');
-  const sheets = useSheets(slices, sliceWindows);
+  const sheets = useSheets(sliceFresh ? slices : null, sliceWindows);
   const layerCount = slices?.slices.length ?? 0;
 
   // Layer stepping belongs to the workspace, not to one panel: paging up and
@@ -288,7 +289,7 @@ export function Layout() {
                   holeMisses={holeMisses}
                   legGaps={legGaps}
                   pinLoose={pinLoose}
-                  sliced={slices !== null}
+                  sliced={sliceFresh && slices !== null}
                 />
               )
             ) : (
@@ -297,6 +298,7 @@ export function Layout() {
                 reports={sliceReports}
                 sheets={sheets}
                 pinLoose={pinLoose}
+                sliceFresh={sliceFresh}
               />
             )}
           </ErrorBoundary>

@@ -11,6 +11,12 @@ FEATURES is right and this file is stale.
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
+The 2026-09-13 audit completed the layer-3 claim cross-check and found seventeen
+issues, recorded in `docs/KERROS-AUDIT.md`. Repairs are in progress. Project
+opening now clears imported mesh caches; cached slices carry ownership and
+freshness, and stale cut jobs cannot be exported. Model mode still retains its
+own last slice for fixture ghosts without paying for a reslice.
+
 ## What Kerros is
 
 A desktop application for designing **sliced lamps**. Build a blob-like form,
