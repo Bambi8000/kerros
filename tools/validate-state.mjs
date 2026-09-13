@@ -32,6 +32,48 @@ try {
   const reloaded = useKerros.getState();
   reloaded.applyProject(reloaded.projectData(), 2);
   assert.equal(importEntry(id), undefined, 'opening even the same project starts with no baked meshes');
+
+  // Follow a user-created punch through saving, reopening, part construction
+  // and the actual DXF export path, rather than rebuilding its geometry here.
+  const { serializeProject, parseProject } = await server.ssrLoadModule('/src/core/project.ts');
+  const { runSliceJob } = await server.ssrLoadModule('/src/core/pipeline.ts');
+  const { buildParts, sheetToDxf } = await server.ssrLoadModule('/src/core/job.ts');
+  const { nestParts } = await server.ssrLoadModule('/src/core/nest.ts');
+  const { writeDxfR12 } = await server.ssrLoadModule('/src/core/dxf.ts');
+  const lamp = useKerros.getState().projectData();
+  lamp.features = [{ id: 'f1', kind: 'roundBox', stage: 'SHAPE', name: 'Body', enabled: true,
+    params: { op: 'union', sx: 80, sy: 80, sz: 30, pz: 15, r: 0 } }];
+  useKerros.getState().applyProject(lamp, 2);
+  useKerros.getState().addHolePunch(10, -8, 10.5, 6);
+  const created = useKerros.getState().features.at(-1);
+  assert.equal(created.kind, 'holePunch');
+  assert.equal(useKerros.getState().selectedId, created.id);
+  assert.equal(useKerros.getState().panel, 'inspector');
+  const reopened = parseProject(serializeProject(useKerros.getState().projectData(), '0.28.0', '2026-09-13T00:00:00Z'));
+  assert.ok(reopened.data);
+  assert.deepEqual(reopened.data.features.at(-1), created);
+  useKerros.getState().applyProject(reopened.data, reopened.nextFeatureNumber);
+  useKerros.getState().moveOriginWorldBy(created.id, 2, 3);
+  const moved = useKerros.getState().features.at(-1);
+  assert.equal(moved.params.pz, created.params.pz, 'dragging a punch keeps its layer height');
+  assert.equal(moved.params.px, 12);
+  assert.equal(moved.params.py, -5);
+  const cuts = runSliceJob({ features: useKerros.getState().features, thickness: 3, spacerHeight: 6,
+    kerf: 0.2, resolution: 80, tolerance: 0.05, smoothing: 1, minFeature: 1, seed: 7 }, new Map());
+  const parts = buildParts(cuts.set, []);
+  assert.equal(parts.flatMap((p) => p.circles).length, 1);
+  assert.equal(parts.find((p) => p.circles.length).layer, 2);
+  const packed = nestParts(parts, { sheetWidth: 720, sheetHeight: 400, gap: 4, labelHeight: 3 });
+  assert.equal(packed.unplaced.length, 0);
+  const documents = packed.sheets.map(sheetToDxf);
+  assert.equal(documents.flatMap((d) => d.circles).length, 1);
+  assert.equal(documents.flatMap((d) => d.circles)[0].r, (6 - 0.2) / 2);
+  assert.ok(documents.some((d) => writeDxfR12(d).includes('CIRCLE')));
+  assert.ok(documents.every((d) => !/NaN|Infinity/.test(writeDxfR12(d))), 'export contains only finite coordinates');
+  useKerros.getState().removeFeature(created.id);
+  assert.equal(useKerros.getState().features.some((f) => f.id === created.id), false);
+  console.log('  ok    hole punch creation, save/open, drag, part building, nesting, DXF and deletion');
+
   // Run the real worker message handler with the platform's structured-clone
   // transport, including buffer detachment. No geometry or algorithm is mocked.
   const previousSelf = globalThis.self;

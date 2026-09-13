@@ -1,19 +1,19 @@
-KERROS INVENTORY  2026-09-13  version 0.27.0
+KERROS INVENTORY  2026-09-13  version 0.28.0
 
 --- source, lines each
-   34013 total
-    2821 src/ui/Inspector.tsx
-    2162 src/core/store.ts
+   34336 total
+    2882 src/ui/Inspector.tsx
+    2179 src/core/store.ts
     1704 src/core/sdf.ts
-    1545 src/core/pipeline.ts
+    1591 src/core/pipeline.ts
     1484 tools/validate-nest.mjs
     1463 src/ui/Viewport.tsx
     1271 src/core/nest.ts
+    1238 src/ui/SliceInspector.tsx
     1221 tools/validate-pipeline.mjs
-    1158 src/ui/SliceInspector.tsx
     1071 src/ui/ProfilePanel.tsx
     1067 src/core/profile2d.ts
-    1019 src/core/slice.ts
+    1022 src/core/slice.ts
      805 tools/validate-sdf.mjs
      787 src/index.css
      772 tools/validate-window.mjs
@@ -34,8 +34,8 @@ KERROS INVENTORY  2026-09-13  version 0.27.0
      379 tools/validate-legs.mjs
      334 src/core/fixture.ts
      330 src/core/legs.ts
-     309 src/ui/Layout.tsx
-     307 src/ui/FeatureTree.tsx
+     312 src/ui/Layout.tsx
+     308 src/ui/FeatureTree.tsx
      283 src/core/meshImport.ts
      283 src/ui/download.ts
      275 tools/validate-boss.mjs
@@ -57,12 +57,13 @@ KERROS INVENTORY  2026-09-13  version 0.27.0
      137 tools/validate-pdf.mjs
      131 src/ui/PartInspector.tsx
      113 tools/validate-twist.mjs
+     108 tools/validate-state.mjs
       97 src/ui/usePreview.ts
       92 src/ui/kerros.worker.ts
       81 src/ui/useSlices.ts
       78 src-tauri/src/lib.rs
+      70 tools/validate-hole-punch.mjs
       68 tools/make-icon.py
-      66 tools/validate-state.mjs
       52 src/assets/hero.png
       51 tools/check-version.mjs
       50 tools/check-docs.mjs
@@ -82,11 +83,12 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-pipeline.mjs
+check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+e38638f Use actual geometry limits and loaded state in feature diagnostics
 f513c89 Explain three-gap rounding, zero spacers and multi-turn repetition accurately
 fba9260 Report actual support state and share layer assignments with inspectors
 ce14d7e Measure thin bridges between complete cut edges and circles
@@ -126,4 +128,3 @@ b10220d Splayed leg holes as the swept hull of two ellipses, with ghosts that st
 d160f68 Keep the last slice while modelling, so a fixture's ghost can find its layers
 09c8b05 Drag per-slice holes in the slice view; docs and inventory at 0.19.0
 6d50d64 One layer selector for fixtures and perforation; per-slice holes remember which feature cut them
-f7d90c9 Docs and inventory at 0.18.0: the layer plan, gaps that grade, and rings as their own material

@@ -8,6 +8,7 @@ import type { Feature } from '../core/types';
 
 /** One line under a feature's name, saying what it does at a glance. */
 function subtitleFor(f: Feature, index: number, op: Op): string {
+  if (f.kind === 'holePunch') return `hole · Ø${f.params.diameter} mm · z ${Number(f.params.pz).toFixed(2)} mm`;
   if (f.kind === 'profile') {
     const keys = usableProfileKeys(f);
     if (keys.length >= 2) {
@@ -146,7 +147,7 @@ export function FeatureTree() {
         <ul className="tree-rows">
           {features.map((f, i) => {
             const op = text(f.params, 'op', 'union') as Op;
-            const known = findModule(f.kind) !== undefined || ['import', 'profile', 'sculpt', 'paint'].includes(f.kind);
+            const known = findModule(f.kind) !== undefined || ['import', 'profile', 'sculpt', 'paint', 'holePunch'].includes(f.kind);
             return (
               <li
                 key={f.id}

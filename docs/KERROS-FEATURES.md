@@ -768,6 +768,11 @@ did.
 part: centre inside the outer ring, outside every existing hole, and no ring
 within a clearance of its edge.
 
+Distance is measured to **whole segments**, not just vertices. Hole punch
+exposed the same sparse-outline trap as the thin-feature check: a circle can
+cross the middle of a long straight edge while remaining far from both ends.
+A tangent circle is refused too; a hole touching the rim has no bridge.
+
 This is not decoration. A hole path that crosses a contour is not a hole, it is
 a bite out of the edge — and feeding one to a polygon tessellator makes it emit
 a fan of garbage across the whole layer, which is exactly what the stack view
@@ -1413,7 +1418,7 @@ material the sampling grid would otherwise cut off.
 
 ### The gestures
 
-The pointer goes through the slice view's tool, of which there are now three.
+The pointer goes through the slice view's tool; Hole punch adds a fourth tool.
 Nothing is written while the button is down: the stroke draws as a plain line
 and the field is evaluated on release, the same arrangement the 3D brush and the
 hole drag both arrived at.
@@ -1438,6 +1443,75 @@ joining it, because three outlines at once is a number nobody can read apart.
 Neighbours are **not turned** when the stack is twisted. This view draws parts as
 the laser cuts them, and a turned neighbour would be a picture of something that
 is never cut that way.
+
+## Hole punch — **shipped** (0.28.0)
+
+One exact circular hole in the sheet currently being edited. In **Slice**, pick
+**Hole punch**, set **Diameter** in millimetres and click the centre. The cursor
+shows the finished circle, amber when it fits and red when it cannot be cut.
+Release creates one `holePunch` feature in the SLICE stage, selects it and
+returns to the selection tool. Arming and cancelling the tool creates nothing.
+Holding the button while aiming moves the preview and commits its final centre.
+Esc and a cancelled pointer gesture create nothing either. A pending slice or
+a layer change during the gesture is refused rather than punching stale data.
+
+Each feature stores `px`, `py`, `pz` and `diameter`. The inspector edits the
+diameter, X, Y and anchor height; **Show layer** returns to its resolved sheet,
+**Use current layer** reassigns the height, and **Delete hole** removes it.
+Selecting and dragging the circle uses the existing release-only position edit.
+Enable/disable, rename, deletion and project saving use the normal feature tree.
+No bulk data or project-format migration is needed.
+
+### The current layer is a height, not a permanent sheet number
+
+The stored height is the mid-plane that was on screen, resolved with the same
+`paintPlaneIndex` rule as per-layer brush strokes. Changing stock thickness or
+spacing can change which sheet is nearest; a height outside the plan is dropped
+rather than clamped. If its planned plane has no part, it stays uncut and says
+so instead of jumping to another nonempty sheet.
+
+### Exact circles, after structural holes and before perforation
+
+`placePunch` and `runSliceJob` in `src/core/pipeline.ts` produce a `CircleHole`
+with an owner. Cut radius is `(diameter - material.kerf) / 2`; a diameter no
+larger than the kerf is refused. The guard uses the finished cut geometry and
+leaves a full kerf between paths, accounting for the beam on both cuts.
+It tests every contour segment and existing circle, so a partial hole or two
+overlapping laser paths cannot slip into triangulation or export.
+
+Punches run in tree order after rods, fixtures and pins have been turned back
+for assembly twist. A punch belongs to the **sheet**, like perforation, so it
+stays where it was clicked in Slice when twist changes. Perforation follows and
+keeps clear of the punched circles. The existing thin-feature check still warns
+about narrow remaining bridges; a full hole fitting does not prove the bridge
+is strong enough.
+
+The same owned circle is drawn in Slice, extruded in Stack, nested in Sheet and
+exported as a DXF CIRCLE. It is absent from Model, like other per-slice drilled
+holes; the inspector states that limitation. The slice readout counts circular
+cuts as well as contour holes.
+
+### A refused punch says why
+
+The initial placement refuses an invalid diameter, a diameter at or below kerf,
+insufficient material around the full circle, or overlap with an existing
+circular cut. It creates no feature on refusal. Later parameter edits retain
+the feature even if it cannot cut: the current pipeline result reports one hole
+on its sheet, outside the stack, an empty plane, insufficient material, overlap,
+too small, or invalid parameters. Disabled and pending results have their own
+messages. An old result is never presented as the result of a new setting.
+
+`tools/validate-hole-punch.mjs` uses the real pipeline to check one-sheet-only
+output, unchanged neighbours, kerf, disabling, twist, changed plans, empty
+planes, cut ordering, sparse edges and thin-bridge warnings.
+`tools/validate-state.mjs` follows creation through saving, reopening, dragging,
+part construction, nesting, DXF and deletion using the real modules. Finished
+hole dimensions remain unproven in material until a physical test cut.
+
+Browser checks covered placement, diameter editing, dragging, unchanged
+neighbouring sheets, reassigning a layer, rejected placements, kerf and height
+warnings, and the resulting Stack and Sheet views. The browser error log was
+also checked rather than relying on the pictures alone.
 
 ## Layer twist — **shipped**
 
@@ -3096,6 +3170,8 @@ usable.
 Run all of them with `npm run check`.
 
 - `tools/check-version.mjs` — package.json version matches `KERROS_VERSION`.
+- `tools/validate-hole-punch.mjs` — exact circular cuts on one planned layer,
+  kerf, unchanged neighbours, empty planes, twist, cut ordering and fit guards.
 - `tools/validate-sdf.mjs` — primitives against analytic distances,
   operation identities (smooth ops with `k = 0` must equal their hard
   counterparts), the EMPTY sentinel, module registry integrity, rotation

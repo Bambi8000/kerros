@@ -74,7 +74,7 @@ import {
   signedArea,
   sliceModel,
 } from './slice.ts';
-import type { GapReport, SliceSet } from './slice.ts';
+import type { GapReport, Slice, SliceSet } from './slice.ts';
 
 /**
  * Every import here names its file with a `.ts` extension.
@@ -124,6 +124,7 @@ export interface SliceOutput {
   reports: GapReport[];
   patternCounts: Record<string, number>;
   holeMisses: Record<string, number>;
+  punchResults: Record<string, PunchResult>;
   /**
    * Layers a legs feature was aimed at that produced no sheet, by feature.
    *
@@ -149,6 +150,7 @@ export const EMPTY_OUTPUT: SliceOutput = {
   reports: [],
   patternCounts: {},
   holeMisses: {},
+  punchResults: {},
   legGaps: {},
   pinLoose: {},
   ms: 0,
@@ -565,6 +567,32 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
           };
         });
 
+  /* --- hole punches: sheet coordinates, after structural hole rotation --- */
+
+  const punches = features.filter((f) => f.kind === 'holePunch' && f.enabled);
+  const punchResults: Record<string, PunchResult> = {};
+  // Work on copies: earlier cuts, and earlier punches in tree order, take
+  // precedence. Perforation comes next and keeps clear of accepted punches.
+  const punched = punches.length === 0 ? twisted : twisted.map((slice) => ({ ...slice, circles: slice.circles.slice() }));
+  for (const feature of punches) {
+    const p = feature.params;
+    const z = Number(p.pz);
+    const planeIndex = Number.isFinite(z) ? paintPlaneIndex(field.plan, z) : null;
+    const plane = field.plan.find((p) => p.index === planeIndex);
+    if (!plane) {
+      punchResults[feature.id] = { status: 'outside-stack' };
+      continue;
+    }
+    const slice = punched.find((s) => Math.abs(s.z - plane.z) < 1e-6);
+    if (!slice) {
+      punchResults[feature.id] = { status: 'empty-layer' };
+      continue;
+    }
+    const result = placePunch(slice, Number(p.px), Number(p.py), Number(p.diameter), kerf);
+    punchResults[feature.id] = { status: result.status, layer: slice.index };
+    if (result.circle) slice.circles.push({ ...result.circle, owner: feature.id });
+  }
+
   /* --- perforation --- */
 
   const patterns = features.filter((f) => f.stage === 'PATTERN' && f.enabled);
@@ -583,8 +611,8 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
 
   const perforated =
     patterns.length === 0
-      ? twisted
-      : twisted.map((slice) => {
+      ? punched
+      : punched.map((slice) => {
           const circles = slice.circles.slice();
           for (const feature of patterns) {
             if (!patternLayers.get(feature.id)?.has(slice.index)) continue;
@@ -623,10 +651,28 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     reports,
     patternCounts,
     holeMisses,
+    punchResults,
     legGaps,
     pinLoose,
     ms: Date.now() - started,
   };
+}
+
+export type PunchStatus = 'placed' | 'outside-stack' | 'empty-layer' | 'no-material' | 'overlap' | 'too-small' | 'invalid';
+export interface PunchResult { status: PunchStatus; layer?: number }
+
+/** A full circular cut, checked against the actual compensated cut geometry. */
+export function placePunch(slice: Slice, x: number, y: number, diameter: number, kerf: number): {
+  status: PunchStatus; circle?: CircleHole;
+} {
+  if (![x, y, diameter, kerf].every(Number.isFinite) || diameter <= 0 || kerf < 0) return { status: 'invalid' };
+  if (diameter <= kerf) return { status: 'too-small' };
+  const circle = { x, y, r: (diameter - kerf) / 2, label: 'Hole punch' };
+  // Each laser path removes half a kerf on either side. A full kerf between
+  // paths leaves material between the finished hole and every other cut.
+  if (!groupContours(slice.contours).some((group) => circleFitsInPart(group, circle, kerf))) return { status: 'no-material' };
+  if (slice.circles.some((other) => Math.hypot(x - other.x, y - other.y) <= circle.r + other.r + kerf)) return { status: 'overlap' };
+  return { status: 'placed', circle };
 }
 
 /* ------------------------------------------------------------------ *

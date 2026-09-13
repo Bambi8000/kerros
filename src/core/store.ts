@@ -253,6 +253,8 @@ interface KerrosState {
   ensureSculpt: () => string;
   /** Start a per-layer brush feature, or reuse the one already selected. */
   ensurePaint: () => string;
+  /** One circular hole, anchored to the current sheet's sampled height. */
+  addHolePunch: (x: number, y: number, z: number, diameter: number) => void;
   /** `stroke` arrives in world coordinates; it is stored in the parent's frame. */
   addStroke: (id: string, stroke: SculptStroke) => void;
   /** Re-attach a sculpt to another shape, carrying its strokes across. */
@@ -1412,6 +1414,21 @@ export const useKerros = create<KerrosState>((set, get) => ({
       });
       return id;
     })(),
+
+  addHolePunch: (x, y, z, diameter) => set((s) => {
+    if (![x, y, z, diameter].every(Number.isFinite) || diameter <= 0) return s;
+    const id = `f${s.nextFeatureNumber}`;
+    return {
+      features: [...s.features, {
+        id, kind: 'holePunch', stage: 'SLICE' as Stage,
+        name: `Hole punch ${s.nextFeatureNumber}`, enabled: true,
+        params: { px: round1(x), py: round1(y), pz: z, diameter },
+      }],
+      nextFeatureNumber: s.nextFeatureNumber + 1,
+      selectedId: id,
+      panel: 'inspector',
+    };
+  }),
 
   ensureSculpt: () => {
     const s = get();

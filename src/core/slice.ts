@@ -555,7 +555,10 @@ export function circleFitsInPart(
   for (const contour of [group.outer, ...group.holes]) {
     const pts = contour.points;
     for (let i = 0; i < pts.length; i += 2) {
-      if (Math.hypot(pts[i] - circle.x, pts[i + 1] - circle.y) < limit) return false;
+      const j = (i + 2) % pts.length;
+      // Simplified outlines can have very long edges. Vertices alone miss a
+      // circle crossing the middle of one, even on a four-vertex rectangle.
+      if (perpendicularDistance(circle.x, circle.y, pts[i], pts[i + 1], pts[j], pts[j + 1]) <= limit) return false;
     }
   }
 

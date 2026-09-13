@@ -77,6 +77,7 @@ export function Layout() {
     windows: sliceWindows,
     patternCounts,
     holeMisses,
+    punchResults,
     legGaps,
     pinLoose,
     ms: sliceMs,
@@ -287,6 +288,8 @@ export function Layout() {
                   slices={slices}
                   patternCounts={patternCounts}
                   holeMisses={holeMisses}
+                  punchResults={punchResults}
+                  sliceFresh={sliceFresh}
                   legGaps={legGaps}
                   pinLoose={pinLoose}
                   sliced={sliceFresh && slices !== null}

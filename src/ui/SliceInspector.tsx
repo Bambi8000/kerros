@@ -5,6 +5,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useKerros } from '../core/store';
 import { groupContours, pointInRing } from '../core/slice';
 import type { CircleHole, Contour, GapReport, Slice, SliceSet } from '../core/slice';
+import { placePunch } from '../core/pipeline';
 
 const COLORS = {
   background: '#121110',
@@ -43,7 +44,7 @@ const GRAB_SLOP_PX = 4;
  * the same button. Model mode already learned this: sculpting is a *mode*, and
  * orbit moves to the right button for its duration.
  */
-type SliceTool = 'select' | 'measure' | 'paint';
+type SliceTool = 'select' | 'measure' | 'paint' | 'punch';
 
 /** Where a measured end landed, and on what. */
 interface Snap {
@@ -154,6 +155,11 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [hovering, setHovering] = useState(false);
   const [tool, setTool] = useState<SliceTool>('select');
+  const addHolePunch = useKerros((s) => s.addHolePunch);
+  const kerf = useKerros((s) => s.material.kerf);
+  const [punchDiameter, setPunchDiameter] = useState(6);
+  const [punchMessage, setPunchMessage] = useState('');
+  const punchRef = useRef<{ x: number; y: number; z: number; diameter: number; set: SliceSet | null } | null>(null);
   /**
    * Onion skin: the sheets either side, drawn behind this one.
    *
@@ -249,6 +255,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
         f.kind === 'pins' ||
         f.kind === 'legs' ||
         f.kind === 'paint' ||
+        f.kind === 'holePunch' ||
         f.kind.startsWith('fixture:');
       if (grabbableKind) out.add(f.id);
     }
@@ -384,6 +391,17 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     const world = toWorld(event.clientX, event.clientY);
     if (!world) return;
 
+    if (tool === 'punch') {
+      if (pending || !slice) {
+        setPunchMessage(pending ? 'Wait for the current layer to finish slicing.' : 'Add a shape and select a layer first.');
+        return;
+      }
+      punchRef.current = { x: Math.round(world[0] * 10) / 10, y: Math.round(world[1] * 10) / 10,
+        z: slice.z, diameter: punchDiameter, set: slices };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
+
     if (tool === 'paint') {
       if (!slice) return;
       const started = [world[0], world[1], slice.z];
@@ -444,6 +462,14 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
 
     if (tool === 'measure') {
       setCursor(snapAt(world[0], world[1], event.altKey));
+      return;
+    }
+    if (tool === 'punch') {
+      const x = Math.round(world[0] * 10) / 10, y = Math.round(world[1] * 10) / 10;
+      // While aiming with the button down, the preview and committed centre
+      // follow the same point. Geometry is still written only on release.
+      if (punchRef.current) punchRef.current = { ...punchRef.current, x, y };
+      setCursor({ x, y, on: 'free' });
       return;
     }
 
@@ -521,6 +547,29 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
   };
 
   const endDrag = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (tool === 'punch') {
+      const punch = punchRef.current;
+      punchRef.current = null;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      if (!punch || event.type === 'pointercancel') return;
+      if (pending || !slice || punch.set !== slices || punch.z !== slice.z) {
+        setPunchMessage('The layer changed. Wait for slicing, then click again.');
+        return;
+      }
+      const result = placePunch(slice, punch.x, punch.y, punch.diameter, kerf);
+      if (result.status !== 'placed') {
+        setPunchMessage(result.status === 'too-small' ? 'No hole added: diameter must exceed the material kerf.'
+          : result.status === 'overlap' ? 'No hole added: move away from existing circular cuts.'
+          : result.status === 'invalid' ? 'No hole added: enter a positive diameter.'
+          : 'No hole added: the complete circle must fit in material, clear of every rim and opening.');
+        return;
+      }
+      addHolePunch(punch.x, punch.y, punch.z, punch.diameter);
+      setPunchMessage('');
+      setCursor(null);
+      setTool('select');
+      return;
+    }
     if (tool === 'paint') {
       endPaint(event);
       return;
@@ -600,6 +649,17 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
 
   /** Escape puts the tape away. Changing layer keeps it, which is the point. */
   useEffect(() => {
+    if (tool === 'punch') {
+      const cancel = (event: KeyboardEvent) => {
+        if (event.key !== 'Escape') return;
+        punchRef.current = null;
+        setTool('select');
+        setCursor(null);
+        setPunchMessage('');
+      };
+      window.addEventListener('keydown', cancel);
+      return () => window.removeEventListener('keydown', cancel);
+    }
     if (tool !== 'measure') return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
@@ -932,6 +992,16 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
         ctx.arc(toScreenX(cursor.x), toScreenY(cursor.y), brushRadius * scale, 0, Math.PI * 2);
         ctx.stroke();
       }
+      if (tool === 'punch' && cursor) {
+        const fits = !pending && placePunch(slice, cursor.x, cursor.y, punchDiameter, kerf).status === 'placed';
+        ctx.strokeStyle = fits ? COLORS.selected : COLORS.carve;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.arc(toScreenX(cursor.x), toScreenY(cursor.y), punchDiameter * scale / 2, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
 
       // Scale bar, so the eye has something absolute to hold on to.
       const barLength = 10 * scale;
@@ -954,7 +1024,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
     const observer = new ResizeObserver(draw);
     observer.observe(wrap);
     return () => observer.disconnect();
-  }, [slice, extent, fitToLayer, widest, report, selectedId, drag, tool, measure, cursor, pickedPin, onion, slices, painting, carving, brushRadius]);
+  }, [slice, extent, fitToLayer, widest, report, selectedId, drag, tool, measure, cursor, pickedPin, onion, slices, painting, carving, brushRadius, punchDiameter, kerf, pending]);
 
   const selected = features.find((f) => f.id === selectedId) ?? null;
   const selectedHere =
@@ -970,7 +1040,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
   const pinsDown = slice ? slice.circles.filter((c) => c.pinTo !== undefined && c.pinTo < slice.index).length : 0;
 
   const partCount = slice ? groupContours(slice.contours).length : 0;
-  const holeCount = slice ? slice.contours.filter((c) => c.isHole).length : 0;
+  const holeCount = slice ? slice.contours.filter((c) => c.isHole).length + slice.circles.length : 0;
   const area = slice ? slice.contours.reduce((sum, c) => sum + c.area, 0) : 0;
 
   return (
@@ -980,7 +1050,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
           ref={canvasRef}
           style={{
             cursor:
-              tool === 'measure' || tool === 'paint'
+              tool === 'measure' || tool === 'paint' || tool === 'punch'
                 ? 'crosshair'
                 : drag
                   ? 'grabbing'
@@ -992,7 +1062,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
-          onPointerLeave={() => setHovering(false)}
+          onPointerLeave={() => { setHovering(false); setCursor(null); }}
         />
         {!slice ? (
           <div className="slice-placeholder">
@@ -1002,11 +1072,19 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
       </div>
 
       <div className="slice-bar">
-        {/*
-          Two tools, one pointer layer. A push brush will be a third rather than
-          a second set of canvas handlers, which is the whole reason the layer
-          is there.
-        */}
+        {/* Each tool owns its pointer branch before the select fallback. */}
+        <button type="button" className={`btn${tool === 'punch' ? ' is-active' : ''}`}
+          aria-pressed={tool === 'punch'} title="Click to add one round hole on this layer. Esc cancels."
+          disabled={!slice || pending} onClick={() => {
+            setTool(tool === 'punch' ? 'select' : 'punch');
+            setPunchMessage(''); setCursor(null); setMeasure(null); setPickedPin(null);
+          }}>Hole punch</button>
+        {tool === 'punch' ? (
+          <label className="slice-brush">Ø
+            <input type="number" aria-label="Hole diameter" value={punchDiameter} min={0.1} step={0.5}
+              onChange={(e) => { const value = Number(e.target.value); if (Number.isFinite(value)) setPunchDiameter(Math.max(0.1, value)); }} /> mm
+          </label>
+        ) : null}
         <button
           type="button"
           className={`btn${tool === 'paint' && !carving ? ' is-active' : ''}`}
@@ -1090,7 +1168,9 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
         </button>
 
         <span className="slice-readout">
-          {tool === 'paint' ? (
+          {tool === 'punch' ? (
+            punchMessage || `Hole punch · layer ${layerIndex} · Ø${punchDiameter} mm · click the centre in material; Esc cancels`
+          ) : tool === 'paint' ? (
             `${carving ? 'Carving' : 'Painting'} layer ${layerIndex} · brush ${brushRadius} mm · wheel resizes, Shift draws straight, and it lands on this sheet only`
           ) : tool === 'measure' ? (
             (() => {
@@ -1109,7 +1189,7 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
             <>
               Layer {layerIndex} / {total} · z {slice.z.toFixed(2)} mm ·{' '}
               {partCount} {partCount === 1 ? 'part' : 'parts'}
-              {holeCount > 0 ? ` · ${holeCount} holes` : ''} ·{' '}
+              {holeCount > 0 ? ` · ${holeCount} ${holeCount === 1 ? 'hole' : 'holes'}` : ''} ·{' '}
               {area.toFixed(0)} mm² · sliced in {ms.toFixed(0)} ms
               {onion ? (
                 <span className="slice-note"> · onion: violet below, green above</span>

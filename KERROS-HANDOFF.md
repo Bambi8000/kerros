@@ -7,9 +7,18 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.27.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.28.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+**Hole punch** adds one exact circular cut to the sheet being edited in Slice.
+Click a centre after choosing the diameter; each punch is an editable feature,
+anchored to its sampled height through the same nearest-plane rule as paint.
+It stays in sheet coordinates, takes kerf from the material and is added after
+structural holes are turned, before perforation. A complete circle must fit;
+rejected cuts name the reason. The shared circle-fit guard now measures complete
+segments, because simplified long edges could previously be crossed between
+their vertices. Hole punches appear in Slice, Stack, Sheet and DXF, not Model.
 
 The 2026-09-13 audit completed the layer-3 claim cross-check and found seventeen
 issues, recorded and repaired in `docs/KERROS-AUDIT.md`. Project
@@ -307,10 +316,10 @@ Four workspace modes: **Model** (preview, direct manipulation, sculpting),
 **Slice** (one layer in 2D, fixed scale, and where per-slice holes are picked up
 and moved), **Stack** (exploded at real pitch), **Sheet** (nesting on the bed).
 
-Slice mode routes the pointer through a **tool**, of which there are three:
-select, measure, and the brush. That the pointer went through a tool at all is
+Slice mode routes the pointer through a **tool**, of which there are four:
+select, measure, the brush and Hole punch. That the pointer went through a tool at all is
 what made the brush an addition rather than a rewrite — and the guard that ends
-the select branch sits *after* the others, or a fourth tool is unreachable the
+the select branch sits *after* the others, or another tool is unreachable the
 way `FixtureInspector` was.
 
 ## Known limits
@@ -395,6 +404,9 @@ file, check this first.
 Everything here is validated in code and unproven in material. Test cuts were
 about to happen when this handoff was written; ask before assuming.
 
+- **Hole punch.** The exact circle, single-layer assignment, kerf, save/open
+  and DXF path are validated; its finished diameter still needs a cut in the
+  chosen stock with a measured kerf.
 - **True-shape nesting.** The validator proves no collisions, but that is code
   proving code. Look at the DXF on screen before burning a sheet: a part inside a
   ring's hole is correct and looks alarming.

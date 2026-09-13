@@ -48,6 +48,7 @@ import {
 import type { LayerSelectorKind } from '../core/layers';
 import type { SliceSet } from '../core/slice';
 import { NumberField } from './NumberField';
+import type { PunchResult } from '../core/pipeline';
 
 const SELECTOR_LABELS: Record<LayerSelectorKind, string> = {
   all: 'Every layer',
@@ -995,6 +996,61 @@ function WindowInspector({ feature }: { feature: Feature }) {
         </div>
       </div>
     </>
+  );
+}
+
+function HolePunchInspector({ feature, result, fresh, slices }: {
+  feature: Feature; result?: PunchResult; fresh: boolean; slices: SliceSet | null;
+}) {
+  const setParam = useKerros((s) => s.setParam);
+  const renameFeature = useKerros((s) => s.renameFeature);
+  const removeFeature = useKerros((s) => s.removeFeature);
+  const setMode = useKerros((s) => s.setMode);
+  const setCurrentLayer = useKerros((s) => s.setCurrentLayer);
+  const currentLayer = useKerros((s) => s.currentLayer);
+  const kerf = useKerros((s) => s.material.kerf);
+  const active = slices?.slices[Math.min(Math.max(currentLayer, 1), slices.slices.length) - 1];
+  const diameter = Number(feature.params.diameter);
+  const reasons = {
+    'outside-stack': 'No hole cut: its saved height is outside the layer plan.',
+    'empty-layer': 'No hole cut: the planned layer at this height has no material.',
+    'no-material': 'No hole cut: the full circle needs material around it. Move it away from the rim or existing openings, or reduce its diameter.',
+    overlap: 'No hole cut: it overlaps or touches an earlier circular cut. Move it or reduce its diameter.',
+    'too-small': 'No hole cut: its diameter must be larger than the material kerf.',
+    invalid: 'No hole cut: enter finite coordinates and a positive diameter.',
+    placed: `One hole on layer ${result?.layer}.`,
+  };
+  return (
+    <div className="group">
+      <div className="group-head">Hole punch</div>
+      <label className="field"><span className="field-label">Name</span><span className="field-input">
+        <input value={feature.name} onChange={(e) => renameFeature(feature.id, e.target.value)} />
+      </span></label>
+      <NumberField label="Diameter" unit="mm" value={diameter} min={0.1} step={0.5}
+        onChange={(v) => setParam(feature.id, 'diameter', v)} />
+      {(['px', 'py', 'pz'] as const).map((key, i) => (
+        <NumberField key={key} label={['X', 'Y', 'Anchor height'][i]} unit="mm"
+          value={Number(feature.params[key])} step={0.1} onChange={(v) => setParam(feature.id, key, v)} />
+      ))}
+      <div className={feature.enabled && fresh && result?.status !== 'placed' ? 'warn' : 'derived'} role="status">
+        {!feature.enabled ? 'This hole punch is switched off.' : !fresh
+          ? 'Open Slice, Stack or Sheet and wait for the current cut result.'
+          : result ? reasons[result.status] : 'No hole cut: there are no layers in the current model.'}
+      </div>
+      {diameter > kerf ? <div className="derived">Cut path Ø{(diameter - kerf).toFixed(2)} mm for a finished Ø{diameter} mm hole, using {kerf} mm kerf.</div> : null}
+      <div className="derived">
+        Only the sheet nearest the saved height is punched. Changing the layer plan may change which sheet owns it.
+        The hole stays at its drawn position on the cut sheet when assembly twist changes.
+        Visible in Slice, Stack and Sheet; the Model preview does not show per-slice holes.
+      </div>
+      <button type="button" className="btn" disabled={!fresh || !result?.layer} onClick={() => {
+        if (result?.layer) { setCurrentLayer(result.layer); setMode('slice'); }
+      }}>Show layer</button>
+      <button type="button" className="btn" disabled={!fresh || !active} onClick={() => {
+        if (active) setParam(feature.id, 'pz', active.z);
+      }}>Use current layer</button>
+      <button type="button" className="btn" onClick={() => removeFeature(feature.id)}>Delete hole</button>
+    </div>
   );
 }
 
@@ -2735,6 +2791,8 @@ interface InspectorProps {
   patternCounts: Record<string, number>;
   /** Fixture holes that did not fit, by feature id. */
   holeMisses: Record<string, number>;
+  punchResults: Record<string, PunchResult>;
+  sliceFresh: boolean;
   /** Chosen layers with no sheet, by legs feature. */
   legGaps: Record<string, number>;
   pinLoose: Record<string, number[]>;
@@ -2742,7 +2800,7 @@ interface InspectorProps {
   sliced: boolean;
 }
 
-export function Inspector({ slices, patternCounts, holeMisses, legGaps, pinLoose, sliced }: InspectorProps) {
+export function Inspector({ slices, patternCounts, holeMisses, punchResults, sliceFresh, legGaps, pinLoose, sliced }: InspectorProps) {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
 
@@ -2768,6 +2826,9 @@ export function Inspector({ slices, patternCounts, holeMisses, legGaps, pinLoose
    * The rod test is on the kind now. Matching a whole stage was always going to
    * catch whatever else moved into that stage next, and something did.
    */
+  if (feature.kind === 'holePunch') {
+    return <HolePunchInspector feature={feature} result={punchResults[feature.id]} fresh={sliceFresh} slices={slices} />;
+  }
   if (feature.kind.startsWith('fixture:')) {
     return <FixtureInspector feature={feature} slices={slices} misses={holeMisses[feature.id]} />;
   }

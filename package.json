@@ -1,14 +1,14 @@
 {
   "name": "kerros",
   "private": true,
-  "version": "0.27.0",
+  "version": "0.28.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "check": "node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-pipeline.mjs",
+    "check": "node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs",
     "tauri": "tauri",
     "verify": "npm run check && npm run build"
   },
