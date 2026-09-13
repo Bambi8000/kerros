@@ -96,7 +96,7 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
         {choose('outline', 'Outline', [['frame', 'Open frame'], ['rectangle', 'Solid rectangle']], 'rectangle')}
         {follows ? <>
           {number('frameWidth', 'Frame width', num(feature, 'tabHeight', 12) + 6)}{number('profileInset', 'Profile inset', 4)}
-          <p className="hint">Upper and lower rails follow the usable shoulder band of each rib. Rounded ends join them into one open frame. Width sets the rail thickness in the drawing; inset moves it farther inside the profile. Tab heights follow automatically.</p>
+          <p className="hint">Upper and lower rails follow every rib’s usable shoulder band. Rounded ends join them into one open frame. Width sets rail thickness; inset moves the rails inward. Short ribs reduce the inset locally or use one centred tab, keeping the requested tab height.</p>
         </> : <>
         {number('width', 'Plate width')}{number('height', 'Plate height')}{number('cornerRadius', 'Corner radius')}{number('margin', 'Fit margin', 8)}
         <button className="btn" disabled={pending || !set?.assembly} onClick={() => {
@@ -115,7 +115,7 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
       </div>
       <div className="group"><div className="group-head">Glued tabs</div>
         {number('tabHeight', 'Tab height')}{!follows && number('tabSpacing', 'Tab centre spacing')}{number('tabProtrusion', 'Protrusion behind plate')}
-        <p className="hint">Two tabs per rib. Shoulders set insertion depth; oblique slots include both stock thicknesses. Glue choice and strength require a physical test.</p>
+        <p className="hint">{follows ? 'Two tabs per rib where they fit; short ribs use one centred tab. The checks name any adaptation and count attached ribs.' : 'Two tabs per rib.'} Shoulders set insertion depth; oblique slots include both stock thicknesses. Glue choice and strength require a physical test.</p>
       </div>
       <details className="group" open><summary>Wall mounting openings</summary>
         {choose('mount', 'Opening', [['none', 'None'], ['screw', 'Screw holes'], ['keyhole', 'Keyholes']], 'screw')}

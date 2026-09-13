@@ -145,8 +145,8 @@ function boundaryFits(points: number[], part: WorkPart, margin: number): boolean
 }
 function contourBox(contours: Contour[]): Box2 { return polyBox(contours.flatMap((c) => c.points)); }
 
-/** Two tabs in the longest continuous shoulder band, inset from its ends. */
-function followingTabs(rib: WorkPart, shoulder: number, padding: number, tabH: number, bridge: number): number[] {
+/** Fit full-height tabs to the longest shoulder band, including short end ribs. */
+function followingTabs(rib: WorkPart, shoulder: number, padding: number, tabH: number, bridge: number, fit: number): { heights: number[]; adjusted: boolean } {
   const count = Math.max(1, Math.ceil((rib.box.maxY - rib.box.minY) / rib.step));
   let start: number | undefined, best: [number, number] | undefined;
   for (let i = 0; i <= count + 1; i++) {
@@ -158,7 +158,15 @@ function followingTabs(rib: WorkPart, shoulder: number, padding: number, tabH: n
       start = undefined;
     }
   }
-  return best && best[1] - best[0] >= 2 * padding + 2 * tabH ? [best[0] + padding, best[1] - padding] : [];
+  if (!best || best[1] - best[0] < tabH) return { heights: [], adjusted: false };
+  const span = best[1] - best[0];
+  // Leave a real bridge between the two clearance slots, with one sample of
+  // slack. Rail bands may merge locally at a short rib; the centre stays open
+  // wherever the rest of the profile allows it.
+  const gap = tabH + 2 * fit + bridge + rib.step;
+  if (span < tabH + gap) return { heights: [(best[0] + best[1]) / 2], adjusted: true };
+  const actualPadding = Math.min(padding, (span - gap) / 2);
+  return { heights: [best[0] + actualPadding, best[1] - actualPadding], adjusted: actualPadding < padding };
 }
 
 /** One active layout. Disabled layouts leave the legacy layer workflow intact. */
@@ -269,7 +277,7 @@ export function buildAssembly(
     }
   }
 
-  // Each wall joint trims the rib to the front face and adds two tabs. The
+  // Each wall joint trims the rib to the front face and adds fitted tabs. The
   // slot in the backplate is the projection of the complete tab prism through
   // the backplate slab: both thicknesses contribute at an oblique angle.
   if (backs.length > 1) say('error', backs.map((p) => p.meta.id), 'Use one backplate per assembly; multiple-wall insertion is not resolved.');
@@ -293,15 +301,23 @@ export function buildAssembly(
       const shoulder = faceU + Math.abs(rib.meta.n[1]) * rib.meta.thickness / (2 * uy);
       const protrusion = Math.max(0, num(f, 'tabProtrusion', 0));
       const backU = faceU - (back.meta.thickness + protrusion + Math.abs(rib.meta.n[1]) * rib.meta.thickness / 2) / uy;
-      const tabZ = follows ? followingTabs(rib, shoulder, frameWidth / 2 + inset, tabH, minBridge)
-        : [-tabGap / 2, tabGap / 2].map((z) => z + back.meta.origin[2] - rib.meta.origin[2]);
-      if (!tabZ.length) say('error', [rib.meta.id, back.meta.id], 'No continuous shoulder band fits two frame tabs. Reduce frame width, profile inset or tab height, or change the rib profile.');
+      const placement = follows ? followingTabs(rib, shoulder, frameWidth / 2 + inset, tabH, minBridge, fit)
+        : { heights: [-tabGap / 2, tabGap / 2].map((z) => z + back.meta.origin[2] - rib.meta.origin[2]), adjusted: false };
+      const tabZ = placement.heights;
+      if (!tabZ.length) say('error', [rib.meta.id, back.meta.id], 'No shoulder band fits even one full-height frame tab. Reduce tab height, move the wall plane or change this rib profile.');
+      else if (placement.adjusted) say('info', [rib.meta.id, back.meta.id], tabZ.length === 1
+        ? 'This short rib uses one centred glue tab at the requested height; two separate tabs do not fit. Test the joint in the chosen stock.'
+        : 'Rail inset is reduced locally to fit two full-height tabs on this short rib.');
       const openings = tabZ.map((z) => prismOpening(back.meta, sheetWorld(rib.meta, backU, z), sheetWorld(rib.meta, shoulder + minBridge, z), rib.meta.n, rib.meta.v, [-rib.meta.thickness / 2 - fit, -tabH / 2 - fit, rib.meta.thickness / 2 + fit, -tabH / 2 - fit, rib.meta.thickness / 2 + fit, tabH / 2 + fit, -rib.meta.thickness / 2 - fit, tabH / 2 + fit]));
       return [{ rib, shoulder, backU, tabZ, openings }];
     });
     let upper: number[][] = [];
     if (follows) {
-      const pairs = plans.filter((p) => p.openings.length === 2 && p.openings.every((o) => o.length)).map((p) => p.openings.map((o) => {
+      if (plans.length !== ribs.length || plans.some((p) => !p.openings.length || p.openings.some((o) => !o.length))) {
+        say('error', [f.id], 'The frame cannot reach every rib with a valid tab. Fix the named ribs; a partial frame has not been generated.');
+        parts.splice(parts.indexOf(back), 1); continue;
+      }
+      const pairs = plans.map((p) => [p.openings[0], p.openings.at(-1)!].map((o) => {
         const box = polyBox(o);
         // X/Z offset moves the outline; the mating cuts remain at the ribs.
         return [(box.minX + box.maxX) / 2 + back.meta.origin[0], (box.minY + box.maxY) / 2 + back.meta.origin[2]];
@@ -339,7 +355,7 @@ export function buildAssembly(
         subtract(back, cut);
         rib.zones.push({ field: tab, box }); back.zones.push({ field: cut, box: polyBox(opening) }); made++;
       }
-      if (made === 2) joints.push({ id: `${rib.meta.id}:${back.meta.id}`, parts: [rib.meta.id, back.meta.id], instruction: `Insert ${rib.meta.label} along its negative U direction until both shoulders meet ${back.meta.label}. Dry-fit, then glue with an adhesive suitable for the chosen stock.` });
+      if (made > 0 && made === tabZ.length) joints.push({ id: `${rib.meta.id}:${back.meta.id}`, parts: [rib.meta.id, back.meta.id], instruction: `Insert ${rib.meta.label} along its negative U direction until ${made === 1 ? 'the shoulders around its single centred tab' : 'both shoulders'} meet ${back.meta.label}. Dry-fit, then glue with an adhesive suitable for the chosen stock.` });
     }
     const mount = String(f.params.mount || 'screw');
     if (mount !== 'none') {
@@ -384,6 +400,14 @@ export function buildAssembly(
       }
     }
     if (num(f, 'wallOffset') < num(f, 'tabProtrusion')) say('error', [back.meta.id], 'Wall offset is smaller than the protruding tabs. Increase the offset or shorten the tabs.');
+  }
+
+  // Count enabled feature IDs, including ribs whose source plane was empty.
+  // A plausible partial support must never be reported as a complete assembly.
+  for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:backplate')) {
+    const expected = children.filter((r) => r.enabled && r.kind === 'assembly:rib');
+    const missing = expected.filter((r) => !joints.some((j) => j.parts.includes(f.id) && j.parts.includes(r.id)));
+    say(missing.length ? 'error' : 'info', [f.id, ...missing.map((r) => r.id)], `Wall attachment: ${expected.length - missing.length} of ${expected.length} enabled ribs have complete tab joints.${missing.length ? ' The named ribs are unattached; resolve their checks before export.' : ''}`);
   }
 
   for (const f of children.filter((f) => f.kind === 'assembly:channel')) {

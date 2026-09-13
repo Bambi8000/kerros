@@ -7,13 +7,18 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.30.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.30.1.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
 New linear assemblies use a minimal, open wall frame. Its upper and lower rails
-follow each rib's usable shoulder profile and placement; two tabs per rib follow
-the same heights. Rail width and profile inset are editable. Two mounting holes
+follow each rib's usable shoulder profile and placement. Since 0.30.1, short ribs
+reduce the rail inset locally to fit two tabs, or use one centred tab if a pair
+cannot fit; the requested tab height is preserved. The old two-tab spacing
+requirement could omit a small end rib from the entire frame. Wall attachment
+checks now count every enabled rib, including empty source planes, and block
+export when any is unattached. An unplaceable tab stops frame generation rather
+than leaving a plausible partial support. Rail width and profile inset are editable. Two mounting holes
 follow the upper rail, with small inward pads where a dense rib row needs room.
 Old projects retain their rectangular backplate until `Outline` is changed to
 `Open frame`. The sphere validator uses 72.2% less backplate area
@@ -22,8 +27,8 @@ geometry result, not a strength rating: the frame still needs a physical coupon.
 
 **Ribs & Supports** adds upright radial and linear assemblies. Each rib has a
 persistent feature ID, a source sampling plane and a separate editable placement.
-Horizontal ring supports use complementary half slots; a wall backplate uses two
-glued tabs per rib and full-thickness, angle-aware slots. A straight LED channel
+Horizontal ring supports use complementary half slots; a wall backplate uses
+glued tabs and full-thickness, angle-aware slots. A straight LED channel
 cuts round or rectangular openings through selected final parts. Its clearance
 is per side and separate from kerf. Finished 2D contours are redistanced before
 kerf; restricting the source SDF to an oblique plane is not enough.
@@ -454,7 +459,8 @@ about to happen when this handoff was written; ask before assuming.
 
 - **Upright assemblies.** Cut a two-rib/two-ring coupon and a two-rib wall
   coupon using the actual LED tube or profile. Measure kerf, slot and tab fit,
-  including the open frame's rails, mounting pads and two profile-following tabs,
+  including the open frame's rails, mounting pads, profile-following tab pairs
+  and the single-tab joint on short ribs,
   insertion sequence, remaining bridges and wall clearance. Glued oblique
   shoulders meet at an edge rather than a laser-cut bevel. No load rating or
   LED retention follows from the geometric checks.

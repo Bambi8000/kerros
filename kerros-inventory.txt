@@ -1,7 +1,7 @@
-KERROS INVENTORY  2026-09-13  version 0.30.0
+KERROS INVENTORY  2026-09-13  version 0.30.1
 
 --- source, lines each
-   35987 total
+   36063 total
     2882 src/ui/Inspector.tsx
     2230 src/core/store.ts
     1704 src/core/sdf.ts
@@ -21,7 +21,7 @@ KERROS INVENTORY  2026-09-13  version 0.30.0
      687 tools/validate-slice.mjs
      644 src/ui/SheetView.tsx
      601 src/core/job.ts
-     563 src/core/assembly.ts
+     587 src/core/assembly.ts
      527 src/core/window.ts
      493 src/core/project.ts
      471 tools/validate-rig-export.mjs
@@ -56,6 +56,7 @@ KERROS INVENTORY  2026-09-13  version 0.30.0
      162 src/core/paint.ts
      153 src/core/pdf.ts
      151 tools/validate-assembly.mjs
+     141 tools/validate-wall-frame.mjs
      138 src/core/twist.ts
      138 tools/validate-paint.mjs
      137 tools/validate-pdf.mjs
@@ -65,7 +66,6 @@ KERROS INVENTORY  2026-09-13  version 0.30.0
      108 tools/validate-state.mjs
       97 src/ui/usePreview.ts
       92 src/ui/kerros.worker.ts
-      89 tools/validate-wall-frame.mjs
       82 src/ui/useSlices.ts
       78 src-tauri/src/lib.rs
       70 tools/validate-hole-punch.mjs
@@ -96,6 +96,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+c0a9d1e Add minimal wall frames that follow rib profiles
 ce7f57c Add move and full rotation gizmo for LED channels
 b999047 Add upright rib assemblies, wall tabs and LED channels
 f23ed44 Record rib assembly, wall mount and LED channel design
@@ -135,4 +136,3 @@ aa019ba Docs and inventory at 0.24.0
 5dbe462 Docs and inventory at 0.22.0
 e6fd419 Interleaved pins that check their own work, bosses kept inside the form, and digits that can be told apart
 41b5cba Interleaved pins that check their own work, in two colours, and removable by hand
-30f31fd Docs and inventory at 0.21.0

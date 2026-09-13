@@ -3301,8 +3301,22 @@ the wall mount's Outline. The upper and lower rails follow the longest
 continuous band of material at each rib's shoulder. Their centre heights sit
 half a frame width plus `Profile inset` inside the sampled band ends. The rails
 connect those stations in X order and close with rounded end rails, leaving an
-open centre. The same heights place two mating tabs per rib. Moving a rib or
-editing its source updates both the frame and its joints.
+open centre. The same heights place mating tabs. Moving a rib or editing its
+source updates both the frame and its joints.
+
+Since 0.30.1, the inset is a preference on short ribs: it reduces locally until
+two full-height tabs fit, keeping a minimum bridge plus sampling slack between
+their clearance slots. If a pair cannot fit, one centred tab uses the requested
+height. Upper and lower rails meet at that tab; they may merge locally while
+the rest of the frame stays open. The checks name each adaptation. Tab height,
+joint clearance and stock thickness are never reduced by this fitting step.
+Previously the stricter two-tab spacing test dropped a short end rib from the
+frame plan, leaving it unattached. A rib with no room even for one tab now stops
+frame generation and names the reason instead of producing a partial frame.
+Wall attachment checks count complete joints against every enabled rib ID,
+including ribs with empty source planes. Any missing joint blocks export;
+disabled ribs are excluded from the count. Single-tab assembly instructions
+also appear in the manifest and PDF.
 
 `Frame width` controls the band around that closed path; `Profile inset` moves
 the rails inward. A frame needs at least two usable ribs and enough separation
@@ -3317,7 +3331,8 @@ Saved projects without an Outline retain the original `Solid rectangle`,
 editable in width, height, position, margin, rounded corners and stock.
 `Fit plate to current ribs` fits that rectangle around the assembled rib extents.
 Switch Outline explicitly to adopt the frame. Each rib is trimmed to the
-front face and gains two glued tabs. Tab height, rectangle tab spacing, protrusion,
+front face and gains glued tabs: two for rectangles, fitted pairs or a single
+centred tab for frames. Tab height, rectangle tab spacing, protrusion,
 wall offset, stock thickness, joint clearance per side and laser kerf are
 separate values. Both full sheet thicknesses determine oblique slot envelopes;
 a copied mating thickness would be wrong. Ribs must face away from the wall and
@@ -3445,7 +3460,10 @@ manifest/PDF and actual worker message handler. `tools/validate-wall-frame.mjs`
 covers the open centre and single connected part, all mating tabs and mounting
 holes, curved source profiles, individual rib movement, width and inset, keyholes,
 mixed stock, oblique joints, kerf direction, LED coexistence and explicit refusal
-cases. Its sphere fixture uses 72.2% less backplate area than the rectangle;
+cases. Short end and middle rib regressions check actual slot contours, unchanged
+tab height, tab material through both backplate faces, a connected frame and
+complete attachment coverage. Too-short and empty source profiles block export;
+disabled ribs are excluded explicitly. Its sphere fixture uses 72.2% less backplate area than the rectangle;
 this does not establish strength. All three validators are in `npm run verify`.
 Channel gizmo checks cover quaternion roundtrips, vertical poles, section roll,
 rotated layouts, a route anchor distinct from fitted midpoint, actual bore
@@ -3454,5 +3472,5 @@ a browser check that selecting and dragging the rendered handles is reachable.
 
 Before a complete lamp, cut a small two-rib/two-ring coupon and a two-rib wall
 coupon in the chosen stock. Use the actual LED tube/profile. Measure slot and
-tab fit, test the documented insertion sequence, inspect bridges and confirm
+tab fit (including a short rib's single tab), test the documented insertion sequence, inspect bridges and confirm
 wall clearance. The current software results are not physical acceptance.

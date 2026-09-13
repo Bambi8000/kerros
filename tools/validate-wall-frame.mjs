@@ -54,6 +54,58 @@ for (const slot of tabSlots) {
 }
 console.log('  ok    curved rails, rib movement and actual tab/slot alignment');
 
+// Regression: a short end rib used to vanish from the frame plan altogether.
+// Check actual slot contours and mating material, not just a joint count.
+const field=s=>{const index=indexProfile({rings:s.contours.map(c=>c.points),fill:'holes'},1,.025,4);return (x,y)=>indexedDistance(index,x,y);};
+for (const [ordinal,sourceX,expectedTabs] of [[0,-36,2],[0,-38,2],[8,38,2],[0,-39,1],[4,-39,1]]) {
+  const features=structuredClone(assembly.features), short=features.find(f=>f.kind==='assembly:rib'&&f.params.ordinal===ordinal);
+  Object.assign(short.params,{sourceX,pz:3});
+  const result=run(features), plate=backSlice(result), part=result.slices.find(s=>s.part.id===short.id);
+  assert.deepEqual(errors(result),[]);
+  const expected=features.filter(f=>f.kind==='assembly:rib').map(f=>f.id).sort();
+  assert.deepEqual(result.assembly.joints.map(j=>j.parts.find(id=>id!==wall.id)).sort(),expected,'every rib has its wall joint');
+  assert.ok(result.assembly.issues.some(i=>i.message==='Wall attachment: 9 of 9 enabled ribs have complete tab joints.'));
+  assert.equal(groupContours(plate.contours).length,1,'short-rib contact stays connected to the frame');
+  const holes=slots(result).filter(c=>Math.abs(sheetWorld(plate.part,box(c).cx,box(c).cy)[0]-part.part.origin[0])<.1);
+  assert.equal(holes.length,expectedTabs,'the short rib has the required separate slots');
+  const ribField=field(part), plateField=field(plate);
+  for(const hole of holes){
+    const b=box(hole), local=sheetLocal(part.part,sheetWorld(plate.part,b.cx,b.cy));
+    near(b.h,wall.params.tabHeight+2*assembly.features[0].params.jointClearance-options.kerf);
+    assert.ok(ribField(local[0],local[1])<0,'the wall slot meets a full-height rib tab');
+    // Both faces of the wall plate sit within the tab's depth, and material
+    // beyond the slot is part of the single connected frame.
+    for(const n of [-plate.part.thickness/2+.3,plate.part.thickness/2-.3]){
+      const q=sheetLocal(part.part,sheetWorld(plate.part,b.cx,b.cy,n));
+      assert.ok(ribField(q[0],q[1])<0,'the tab reaches through the wall plate');
+    }
+    assert.ok(plateField(b.cx+b.w/2+options.minFeature/2,b.cy)<0,'frame material surrounds the tab slot');
+  }
+  if(sourceX===-38)assert.ok(result.assembly.issues.some(i=>i.ids.includes(short.id)&&i.message.includes('inset is reduced')));
+  if(expectedTabs===1){
+    near(box(holes[0]).cy,part.part.origin[2]);
+    assert.ok(result.assembly.joints.find(j=>j.parts.includes(short.id)).instruction.includes('single centred tab'));
+    assert.ok(result.assembly.issues.some(i=>i.ids.includes(short.id)&&i.message.includes('one centred glue tab')));
+  }
+}
+console.log('  ok    short end and middle ribs: fitted pairs or one full-height tab, real frame contact and every rib attached');
+
+for(const sourceX of [-39.7,-41]){
+  const features=structuredClone(assembly.features), short=features.find(f=>f.kind==='assembly:rib');
+  short.params.sourceX=sourceX;
+  const invalid=run(features);
+  assert.equal(invalid.assembly.cuttable,false);
+  assert.ok(errors(invalid).some(i=>i.ids.includes(short.id)&&i.message.includes('of 9 enabled ribs')),'unattached and empty-source ribs remain in the coverage check');
+  if(sourceX===-39.7){
+    assert.ok(errors(invalid).some(i=>i.message.includes('even one full-height frame tab')));
+    assert.equal(backSlice(invalid),undefined,'never draw a partial frame after dropping an unattachable rib');
+  }
+  short.enabled=false;
+  const disabled=run(features);assert.deepEqual(errors(disabled),[]);
+  assert.ok(disabled.assembly.issues.some(i=>i.message==='Wall attachment: 8 of 8 enabled ribs have complete tab joints.'));
+}
+console.log('  ok    impossible tabs and empty source planes block export; disabled ribs are excluded explicitly');
+
 for (const mount of ['none','keyhole']) {
   const features=structuredClone(assembly.features);backFeature(features).params.mount=mount;
   const result=run(features);assert.deepEqual(errors(result),[]);
