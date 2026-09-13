@@ -3085,6 +3085,31 @@ attaches them.
 `npm run tauri build` produces `Kerros.app` and a `.dmg` under
 `src-tauri/target/release/bundle/`.
 
+### Browser build for GitHub Pages
+
+`.github/workflows/pages.yml` builds the same UI as the native shell. Pushes to
+`main` and manual runs install the locked dependencies on Node.js 24, run the
+complete `npm run verify` and upload **only `dist/`**. The deploy job depends on
+the successful build, runs only for `main`, and uses the `github-pages`
+environment. Only that job receives Pages and deployment-token write access;
+the build has read-only repository access. Actions are pinned to commit hashes.
+
+The repository's Pages source must be **GitHub Actions**. The target URL is
+`https://bambi8000.github.io/kerros/`. `GITHUB_PAGES=true` switches Vite's base to
+`/kerros/`, so scripts, styles, icons, dynamic imports and the worker resolve
+under the project path. Development and Tauri builds retain `/`. The Pages
+verification command builds the actual release artifact; no second unverified
+build replaces it before upload.
+
+The site exposes the browser application and its static assets. Repository
+visibility is a separate setting; publishing `dist/` does not require uploading
+the source tree, docs, imported meshes or saved projects as site files. The
+compiled JavaScript delivered to a browser is public. All geometry and file
+processing remain local to that browser, using the existing file-input and
+download branches. No backend, account system or remote project storage is added.
+The workspace is in memory: save a `.kerros.json` before refreshing, and locate
+external meshes and SVG files again when reopening it.
+
 ### The icon is source, not output
 
 `assets/kerros-icon.png` is a 1024 px master, drawn by `tools/make-icon.py`.

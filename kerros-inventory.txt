@@ -88,6 +88,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+bf9f66d Add editable hole punches to the current slice
 e38638f Use actual geometry limits and loaded state in feature diagnostics
 f513c89 Explain three-gap rounding, zero spacers and multi-turn repetition accurately
 fba9260 Report actual support state and share layer assignments with inspectors
@@ -127,4 +128,3 @@ c12d1fb Docs and inventory at 0.20.0: legs from the field, and the layer selecto
 b10220d Splayed leg holes as the swept hull of two ellipses, with ghosts that stop where the holes do
 d160f68 Keep the last slice while modelling, so a fixture's ghost can find its layers
 09c8b05 Drag per-slice holes in the slice view; docs and inventory at 0.19.0
-6d50d64 One layer selector for fixtures and perforation; per-slice holes remember which feature cut them

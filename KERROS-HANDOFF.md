@@ -38,6 +38,14 @@ as the pipeline. Window messages use the physical ceilings, zero perforation
 results name the known cause, and imported/profile/sculpt features are recognised
 in the tree.
 
+The browser release has a GitHub Pages workflow in `.github/workflows/pages.yml`.
+Once Pages is enabled with GitHub Actions as its source, pushes to `main` run
+the complete verify chain and publish only `dist/` at
+`https://bambi8000.github.io/kerros/`. `GITHUB_PAGES=true` selects that URL base;
+local and native builds use the root. The public browser bundle contains the
+application, while project files stay in the browser and are saved by download.
+Repository visibility is separate from the site's visibility.
+
 ## What Kerros is
 
 A desktop application for designing **sliced lamps**. Build a blob-like form,
@@ -324,6 +332,9 @@ way `FixtureInspector` was.
 
 ## Known limits
 
+- **The browser workspace lives in memory.** Save a project before refreshing
+  or closing the page. GitHub Pages serves the application; it stores no lamp
+  projects or imported files.
 - **WKWebView is 1.5–2× slower than Chrome** at the numeric work, and the native
   shell uses it. `npm run dev` in a browser is still the faster way to develop.
 - **True-shape nesting resolution is not monotonic.** Greedy bottom-left packing
