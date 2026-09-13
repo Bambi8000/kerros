@@ -495,7 +495,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
   for (const spec of legs) {
     const feature = features.find((f) => f.id === spec.id);
     const chosen = resolveLayers(
-      selectorFromParams(feature?.params, { kind: 'range', from: 1, to: 2 }),
+      selectorForLegs(feature?.params),
       sliced.planes.map((plane) => ({ index: plane.index + 1, z: plane.z })),
     );
     let missing = 0;
@@ -901,6 +901,19 @@ export function selectorForFixture(
 ): LayerSelector {
   const selector = selectorFromParams(params, { kind: 'band', z, length });
   return selector.kind === 'band' ? { ...selector, z, length } : selector;
+}
+
+/** Legs select planned planes, including empty ones, starting with the first two. */
+export function selectorForLegs(params: Feature['params'] | undefined): LayerSelector {
+  return selectorFromParams(params, { kind: 'range', from: 1, to: 2 });
+}
+
+/** The plane that owns a paint height; extrapolated indices outside the plan are dropped. */
+export function paintPlaneIndex(plan: LayerPlan, z: number): number | null {
+  if (plan.length === 0) return null;
+  const index = layerIndexAt(plan, z);
+  const at = index - plan[0].index;
+  return at >= 0 && at < plan.length ? plan[at].index : null;
 }
 
 /** Every enabled legs feature, with its spread measured at the model's bottom. */
@@ -1360,11 +1373,7 @@ export function composeField(
   const paintByPlane = new Map<number, { cut: boolean; strokes: PaintStroke[] }[]>();
 
   if (plan.length > 0) {
-    const planeAt = (z: number) => {
-      const index = layerIndexAt(plan, z);
-      const at = index - plan[0].index;
-      return at >= 0 && at < plan.length ? plan[at].index : null;
-    };
+    const planeAt = (z: number) => paintPlaneIndex(plan, z);
     for (const feature of painted) {
       for (const [planeIndex, strokes] of strokesByPlane(feature.strokes, planeAt)) {
         const list = paintByPlane.get(planeIndex) ?? [];
@@ -1455,7 +1464,7 @@ export function composeField(
   for (const spec of legs) {
     const feature = features.find((f) => f.id === spec.id);
     const chosen = resolveLayers(
-      selectorFromParams(feature?.params, { kind: 'range', from: 1, to: 2 }),
+      selectorForLegs(feature?.params),
       plan.map((plane) => ({ index: plane.index + 1, z: plane.z })),
     );
     for (const ordinal of chosen) {
@@ -1531,4 +1540,3 @@ export function composeField(
     bounds,
   };
 }
-

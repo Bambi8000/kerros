@@ -17,6 +17,9 @@ import {
   rehydrateNest,
   attachFrameFor,
   fixturesFromFeatures,
+  selectorForFixture,
+  selectorForLegs,
+  paintPlaneIndex,
   EMPTY_OUTPUT,
   EMPTY_PREVIEW,
   EMPTY_NEST,
@@ -25,6 +28,7 @@ import {
 import { nestByMaterial } from '../src/core/nest.ts';
 import { defaultParams, defaultModifierParams, findModule, shellModifier } from '../src/core/sdf.ts';
 import { groupContours } from '../src/core/slice.ts';
+import { resolveLayers, describeSelector } from '../src/core/layers.ts';
 import { importMesh } from '../src/core/meshImport.ts';
 import { voxelise } from '../src/core/voxelise.ts';
 
@@ -91,6 +95,33 @@ console.log('pipeline: a leg hole beside a simplified straight rim');
   // maxX(outer) alone overestimates clearance: RDP leaves a slightly tilted rim.
   check('reported clearance agrees with the measured cut geometry', Math.abs(output.reports[0].minGap - 0.7115052690478139) < 1e-6,
     `${output.reports[0].minGap} measured`);
+}
+
+console.log('pipeline: inspector layer assignments');
+{
+  const box = feature('box', 'roundBox', 'SHAPE', { op: 'union', sx: 80, sy: 80, sz: 30, r: 0, pz: 15 });
+  const paint = feature('paint', 'paint', 'CARVE', {}, {
+    strokes: [-1, 6, 100].map((z) => ({ op: 'subtract', radius: 5, k: 0, points: [0, 0, z] })),
+  });
+  const output = runSliceJob(baseJob([box, paint]), new Map());
+  const planes = output.set.planes;
+  check('paint just below the first sheet belongs to its planned band', paintPlaneIndex(planes, -1) === planes[0].index);
+  check('paint at a mid-plane tie belongs to the higher plane', paintPlaneIndex(planes, 6) === planes[1].index);
+  check('paint beyond the planned bands is dropped', paintPlaneIndex(planes, 100) === null);
+  check('the first two sheets really carry the assigned strokes', output.set.slices.slice(0, 2).every((s) => s.contours.some((c) => c.isHole)));
+  check('the other sheets do not inherit those strokes', output.set.slices.slice(2).every((s) => s.contours.every((c) => !c.isHole)));
+  const socket = feature('socket', 'fixture:socket', 'RIG', { pz: 100, length: 9, preset: 'nipple' });
+  const fixture = fixturesFromFeatures([box, socket], 0.2)[0];
+  const selection = selectorForFixture(socket.params, fixture.z, fixture.length);
+  check('a socket band above the model reports zero real sheets', resolveLayers(selection, output.set.slices).length === 0);
+  check('the band description explains the missing sheets', describeSelector(selection, output.set.slices).includes('highest sheet'));
+  const lower = { ...box, params: { ...box.params, sz: 9, pz: 4.5 } };
+  const upper = { ...box, id: 'upper', params: { ...box.params, sz: 9, pz: 31.5 } };
+  const leg = feature('leg', 'legs', 'RIG', { legCount: 3, diameter: 12, radius: 20, tilt: 0, selKind: 'range', selFrom: 4, selTo: 4 });
+  const sparse = runSliceJob(baseJob([lower, upper, leg]), new Map()).set;
+  const chosen = resolveLayers(selectorForLegs(leg.params), sparse.planes.map((p) => ({ index: p.index + 1, z: p.z })));
+  check('legs select the fourth plane even with only two real sheets', sparse.slices.length === 2 && chosen.join() === '4');
+  check('that selection cuts the upper sheet', sparse.slices[1].contours.filter((c) => c.isHole).length === 3);
 }
 
 console.log('pipeline: an empty tree');

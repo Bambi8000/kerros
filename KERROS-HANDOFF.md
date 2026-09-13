@@ -18,6 +18,9 @@ freshness, and stale cut jobs cannot be exported. Model mode still retains its
 own last slice for fixture ghosts without paying for a reslice.
 The thin-feature check now measures whole cut segments and circles: the audit's
 0.7115 mm leg-to-rim bridge is warned about even after contour simplification.
+Inspector layer readings now use the pipeline's actual fixture bands, planned
+leg layers and nearest-plane paint assignment. Pin warnings include fully
+unfastened sheets without guessing why pins are absent; bosses name disabled rods.
 
 ## What Kerros is
 

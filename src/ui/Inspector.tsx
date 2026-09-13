@@ -11,6 +11,8 @@ import {
   useKerros,
 } from '../core/store';
 import { openBinary, openText } from './download';
+import { fixturesFromFeatures, paintPlaneIndex, selectorForFixture, selectorForLegs } from '../core/pipeline';
+import { strokesByPlane } from '../core/paint';
 import type { BrushOp } from '../core/store';
 import {
   BLEND_PARAM,
@@ -73,9 +75,14 @@ function LayerSelectorFields({
   bandIsPosition?: boolean;
 }) {
   const setParam = useKerros((s) => s.setParam);
-  const list = slices?.slices ?? [];
+  const planned = feature.kind === 'legs' || feature.kind === 'boss';
+  const list = planned
+    ? (slices?.planes ?? []).map((p) => ({ index: p.index + 1, z: p.z }))
+    : slices?.slices ?? [];
   const fallback = bandIsPosition ? { kind: 'band' as LayerSelectorKind } : {};
-  const selector = selectorFromParams(feature.params, fallback);
+  const selector = feature.kind === 'legs'
+    ? selectorForLegs(feature.params)
+    : selectorFromParams(feature.params, fallback);
 
   /*
    * Switching away from a band takes the feature with it.
@@ -100,6 +107,12 @@ function LayerSelectorFields({
   return (
     <div className="group">
       <div className="group-head">Layers</div>
+      {planned ? (
+        <div className="derived">
+          Counts planned layers, including empty planes. These numbers can differ
+          from the nonempty sheets numbered in the Slice view.
+        </div>
+      ) : null}
       <label className="field">
         <span className="field-label">Choose by</span>
         <span className="field-input">
@@ -997,21 +1010,15 @@ function PaintInspector({ feature, slices }: PaintProps) {
    * program keeps having to fix.
    */
   const planes = slices?.planes ?? [];
-  const lowest = planes.length > 0 ? planes[0].z0 : 0;
-  const highest =
-    planes.length > 0 ? planes[planes.length - 1].z0 + planes[planes.length - 1].thickness : 0;
-  const stranded =
-    planes.length === 0
-      ? 0
-      : strokes.filter((s) => {
-          const z = s.points.length >= 3 ? s.points[2] : 0;
-          return z < lowest || z > highest;
-        }).length;
+  const assigned = strokesByPlane(strokes, (z) => paintPlaneIndex(planes, z));
+  const assignedCount = [...assigned.values()].reduce((n, group) => n + group.length, 0);
+  const stranded = planes.length === 0 ? 0 : strokes.filter((s) => s.points.length >= 3).length - assignedCount;
 
   /** Which sheets carry a stroke, by the height each was drawn at. */
   const touched = new Set<number>();
-  for (const stroke of strokes) {
-    const z = stroke.points.length >= 3 ? stroke.points[2] : 0;
+  for (const planeIndex of assigned.keys()) {
+    const z = planes.find((p) => p.index === planeIndex)?.z;
+    if (z === undefined) continue;
     const slice = slices?.slices.find((s) => Math.abs(s.z - z) < 1e-6);
     if (slice) touched.add(slice.index);
   }
@@ -1044,8 +1051,8 @@ function PaintInspector({ feature, slices }: PaintProps) {
           <div className="warn">
             {stranded} stroke{stranded === 1 ? '' : 's'} sit{stranded === 1 ? 's' : ''} outside the
             stack and {stranded === 1 ? 'does' : 'do'} nothing. A stroke is anchored to the height
-            it was drawn at, so changing the material thickness can leave one above the top sheet
-            or below the bottom one.
+            it was drawn at. Heights belong to the nearest planned mid-plane;
+            beyond the end planes' half-pitch bands they are dropped.
           </div>
         ) : null}
         <div className="derived">
@@ -1439,6 +1446,7 @@ function BossInspector({ feature, slices }: BossProps) {
   const rods = features.filter((f) => f.kind === 'rod');
   const attachTo = typeof feature.params.attachTo === 'string' ? feature.params.attachTo : '';
   const rod = rods.find((r) => r.id === attachTo);
+  const active = feature.enabled && rod?.enabled === true;
 
   const radius = num(feature.params, 'radius', 10);
   const spokes = Math.max(Math.round(num(feature.params, 'spokes', 3)), 0);
@@ -1465,12 +1473,16 @@ function BossInspector({ feature, slices }: BossProps) {
           which rod it wanted is the difference between a fixable mistake and a
           feature that appears to do nothing.
         */}
-        {!rod ? (
+        {!feature.enabled ? (
+          <div className="derived">This boss is switched off and adds nothing.</div>
+        ) : !rod ? (
           <div className="warn">
             {attachTo === ''
               ? 'Not attached to a rod, so it has nowhere to stand and adds nothing.'
-              : `The rod this thickens (${attachTo}) is gone or switched off, so it adds nothing.`}
+              : `The rod this thickens (${attachTo}) is gone, so it adds nothing.`}
           </div>
+        ) : !rod.enabled ? (
+          <div className="warn">{rod.name} is switched off, so this boss adds nothing.</div>
         ) : null}
         <div className="derived">
           A local thickening so a rod standing in the cavity has material to be
@@ -1492,14 +1504,14 @@ function BossInspector({ feature, slices }: BossProps) {
               <option value="">Nothing — adds nothing</option>
               {rods.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.name}
+                  {r.name}{r.enabled ? '' : ' (switched off)'}
                 </option>
               ))}
             </select>
           </span>
         </label>
         <div className="derived">
-          {rod
+          {active && rod
             ? `Stands where ${rod.name} does, and follows it when it moves.`
             : 'Pick a rod. A boss is a lump around something, not a shape of its own.'}
         </div>
@@ -1574,7 +1586,7 @@ function BossInspector({ feature, slices }: BossProps) {
           the wall differs on every layer of a curved form, so a typed number is
           only right once — and the clip means overshooting costs nothing.
         */}
-        {spokes === 0 ? (
+        {!active ? null : spokes === 0 ? (
           <div className="warn">
             No spokes, so the boss is an island in the cavity: a loose disc on
             every sheet it appears on.
@@ -1610,7 +1622,7 @@ function BossInspector({ feature, slices }: BossProps) {
 interface PinsProps {
   feature: Feature;
   slices: SliceSet | null;
-  /** Sheets left held on one side only. */
+  /** Sheets missing one or more required neighbouring connections. */
   loose: number[] | undefined;
 }
 
@@ -1648,9 +1660,9 @@ function PinsInspector({ feature, slices, loose }: PinsProps) {
         {loose && loose.length > 0 ? (
           <div className="warn">
             {loose.length === 1 ? 'Sheet' : 'Sheets'} {loose.join(', ')}{' '}
-            {loose.length === 1 ? 'is' : 'are'} held on one side only — the pins
-            in the gap next to {loose.length === 1 ? 'it' : 'them'} would not fit
-            both sheets. Move the ring in or out, or use a smaller pin.
+            {loose.length === 1 ? 'is' : 'are'} missing one or more required
+            connections to neighbouring sheets. Check refused holes and pins
+            removed by hand; a sheet may be completely unfastened.
           </div>
         ) : null}
         <div className="derived">
@@ -1954,16 +1966,20 @@ function FixtureInspector({ feature, slices, misses }: FixtureProps) {
   const features = useKerros((s) => s.features);
   const setFixtureParent = useKerros((s) => s.setFixtureParent);
   const kerf = useKerros((s) => s.material.kerf);
-  const thickness = useKerros((s) => s.material.thickness);
-  const spacer = useKerros((s) => s.stack.spacerHeight);
 
   const kind = text(feature.params, 'fixture', 'socket') as FixtureKind;
   const preset = text(feature.params, 'preset', 'nipple');
   const shape = text(feature.params, 'shape', 'round');
-  const pitch = thickness + spacer;
-  const band = num(feature.params, 'length', pitch);
+  const band = num(feature.params, 'length', 0);
   const selectorKind = selectorFromParams(feature.params, { kind: 'band' }).kind;
-  const layers = Math.max(Math.floor(band / Math.max(pitch, 0.01)) + 1, 1);
+  const resolved = fixturesFromFeatures(features, kerf).find((f) => f.id === feature.id);
+  const bandReading = !feature.enabled
+    ? 'This fixture is switched off and cuts no holes.'
+    : !slices || slices.slices.length === 0
+      ? 'No cut layers are available yet. Open Slice, Stack or Sheet to calculate them.'
+      : resolved
+        ? describeSelector(selectorForFixture(feature.params, resolved.z, resolved.length), slices.slices)
+        : 'No fixture could be resolved.';
 
   const spec = {
     kind,
@@ -2242,7 +2258,7 @@ function FixtureInspector({ feature, slices, misses }: FixtureProps) {
         </button>
         <div className="derived">
           {selectorKind === 'band'
-            ? `Reaches ${layers} ${layers === 1 ? 'layer' : 'layers'} at the current ${pitch.toFixed(1)} mm pitch. `
+            ? `${bandReading} `
             : 'The position follows the layers chosen below, so the ghost stands where the holes are cut. '}
           Holes are cut {kerf} mm under size so they open out to the numbers
           above.

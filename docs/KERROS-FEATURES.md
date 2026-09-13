@@ -797,6 +797,12 @@ and shapes do not.
 plane there and produces no sheet, and "the bottom three sheets" means three
 sheets a person can hold. Tested against a stack with a gap in it.
 
+Legs and bosses are field features and therefore select the **planned** layers,
+including empty planes, before nonempty sheets can be known. Their shared
+inspector explicitly says which numbering it uses. Legs share their default
+first-two-plane selector with the pipeline; plane 4 can cut output sheet 2 in
+a model with a void along Z.
+
 **`every` counts by position, not by layer number.** What matters for a pin is
 which sheets are *next to each other*, and a void must not put the phase out.
 Three phases at n = 3 never overlap and together cover the whole stack — which
@@ -812,6 +818,11 @@ the pipeline has and a module with no imports cannot.
 So `selectorForFixture` builds `{ kind: 'band', z: the resolved z, length }`,
 which is the default and is exactly what the old test did — a project that has
 never heard of selectors lands on the same sheets, and a validator asserts it.
+
+The fixture inspector uses that same resolved world-space band against the
+actual sliced layers. It reports no layers for a band above, below or between
+sheets; a band length divided by a nominal pitch cannot answer this question,
+especially with attachment or rounded, varying gaps.
 
 The other kinds ignore the position entirely, which buys something that was not
 the point: **"this socket is on the bottom two sheets"** is now sayable, instead
@@ -1363,6 +1374,13 @@ end** — clamping would silently move somebody's edit onto a sheet they never
 drew on — and the inspector counts them, because a drop that says nothing is the
 silence this program keeps having to fix.
 
+Here "outside" means outside the nearest-mid-plane assignment, including the
+extrapolated half-pitch bands beyond the first and last mid-planes. It does not
+mean outside the physical sheet faces. The inspector and pipeline share
+`paintPlaneIndex`: ties go upward, a stroke at -1 mm can belong to the first
+plane at 1.5 mm, and touched-sheet numbers come from the assigned plane rather
+than an exact match to the stroke's height.
+
 ### One pitch tall, and after the shell
 
 The band is one pitch, centred on the plane the slice is sampled at, so a stroke
@@ -1513,14 +1531,17 @@ stack.
 
 ### The generator checks its own work
 
-`loosePins` names the sheets left held on one side only. A pattern of holes is
+`loosePins` names sheets missing any required neighbouring connection, including
+completely unfastened sheets. The inspectors report that state without claiming
+every missing pin failed to fit: hand-removed pins can also leave a gap empty.
+A pattern of holes is
 not a structure: if a gap's pins do not fit the sheets they pass through, those
 two sheets are simply not fastened together, and a stack that comes apart in the
 middle is worse than one that was never pinned.
 
-It returns **which sheets**, not how many. The two ends of the run are left out,
-because the lowest sheet has no gap below it and the highest none above, and
-crying wolf on every stack teaches somebody to stop reading the warning.
+It returns **which sheets**, not how many. End sheets need one connection and
+interior sheets need two. An unconnected end is reported; an end with its one
+required connection is not asked for a nonexistent second neighbour.
 
 The count also appears in the profiles panel rather than only in the pins
 inspector. A thin wall is a warning about how a part will cut; a sheet fastened
@@ -1624,6 +1645,9 @@ mistake people actually make.
 A boss whose rod has been deleted or switched off contributes **nothing** rather
 than falling back to the axis: a boss silently jumping to the middle of the lamp
 is worse than one that is missing, and the inspector says which rod it wanted.
+Disabled rods remain selectable and are labelled as switched off. A disabled
+boss or a boss with no enabled rod reports that it adds nothing; spoke and
+island statements are only shown for an active boss with an enabled rod.
 
 ## PATTERN — **shipped** (M7)
 

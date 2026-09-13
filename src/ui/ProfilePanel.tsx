@@ -28,7 +28,7 @@ interface Props {
   reports: GapReport[];
   sheets: SheetResult;
   sliceFresh: boolean;
-  /** Sheets each pins feature left held on one side only. */
+  /** Sheets each pins feature left without all required connections. */
   pinLoose: Record<string, number[]>;
 }
 
@@ -658,9 +658,9 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
         {looseSheets.length > 0 ? (
           <div className="warn">
             {looseSheets.length === 1 ? 'Sheet' : 'Sheets'} {looseSheets.join(', ')}{' '}
-            {looseSheets.length === 1 ? 'is' : 'are'} pinned on one side only.
-            The pins in the gap beside {looseSheets.length === 1 ? 'it' : 'them'}{' '}
-            did not fit both sheets, so the stack is not fastened through there.
+            {looseSheets.length === 1 ? 'is' : 'are'} missing one or more required
+            pin connections to neighbouring sheets. Check refused holes and
+            pins removed by hand; a sheet may be completely unfastened.
           </div>
         ) : null}
       </div>

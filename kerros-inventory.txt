@@ -1,15 +1,15 @@
 KERROS INVENTORY  2026-09-13  version 0.27.0
 
 --- source, lines each
-   33849 total
-    2791 src/ui/Inspector.tsx
+   33904 total
+    2807 src/ui/Inspector.tsx
     2162 src/core/store.ts
     1704 src/core/sdf.ts
-    1534 src/core/pipeline.ts
+    1542 src/core/pipeline.ts
     1484 tools/validate-nest.mjs
     1463 src/ui/Viewport.tsx
     1271 src/core/nest.ts
-    1166 tools/validate-pipeline.mjs
+    1197 tools/validate-pipeline.mjs
     1158 src/ui/SliceInspector.tsx
     1067 src/core/profile2d.ts
     1066 src/ui/ProfilePanel.tsx
@@ -87,6 +87,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+ce14d7e Measure thin bridges between complete cut edges and circles
 51408af Keep imported meshes and cut jobs within their project and reject stale exports
 44a6472 AGENTS.md: working agreement for repo-native agents
 696a006 Inventory counts source, not Cargo.lock
@@ -126,4 +127,3 @@ d160f68 Keep the last slice while modelling, so a fixture's ghost can find its l
 f7d90c9 Docs and inventory at 0.18.0: the layer plan, gaps that grade, and rings as their own material
 ac2ef94 Gradient controls in the panel; spacer rings nest as their own material; fix a composeField call the 3b core missed
 dff1226 Gradient controls in the panel, and fix a composeField call the 3b core missed
-106ed83 Spacer rings get their own material and a gap that can grade up the stack
