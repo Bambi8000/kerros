@@ -29,7 +29,7 @@ import {
 } from '../core/sdf';
 import type { Op } from '../core/sdf';
 import { shellModifier } from '../core/sdf';
-import { ROD_CLEARANCE, ROD_SIZES } from '../core/rig';
+import { ROD_CLEARANCE, ROD_SIZES, rodFromFeature, rodPose, rodIsVertical } from '../core/rig';
 import { LEG_COUNTS, MAX_TILT, legSpacing } from '../core/legs';
 import { defaultStagger } from '../core/rig';
 import { spokesStickOut } from '../core/boss';
@@ -47,6 +47,8 @@ import {
 } from '../core/layers';
 import type { LayerSelectorKind } from '../core/layers';
 import type { SliceSet } from '../core/slice';
+import { activeAssembly } from '../core/assembly';
+import { AssemblyStatus } from './AssemblyInspector';
 import { NumberField } from './NumberField';
 import type { PunchResult } from '../core/pipeline';
 
@@ -228,7 +230,8 @@ function LayerSelectorFields({
   );
 }
 
-function RodInspector({ feature }: { feature: Feature }) {
+function RodInspector({ feature, slices, fresh }: { feature: Feature; slices: SliceSet | null; fresh: boolean }) {
+  const mode = useKerros((s) => s.mode);
   const setParam = useKerros((s) => s.setParam);
   const renameFeature = useKerros((s) => s.renameFeature);
   const fitRodToModel = useKerros((s) => s.fitRodToModel);
@@ -239,6 +242,9 @@ function RodInspector({ feature }: { feature: Feature }) {
   const [zStart, zEnd] = rodSpanOf(feature.params);
   const centre = (zStart + zEnd) / 2;
   const length = zEnd - zStart;
+  const rod = rodFromFeature(feature), pose = rodPose(rod), tilted = !rodIsVertical(rod);
+  const route = slices?.rods?.routes.find((r) => r.id === feature.id);
+  const assemblyRoute = slices?.assembly?.channels.find((r) => r.id === feature.id);
 
   return (
     <>
@@ -321,14 +327,23 @@ function RodInspector({ feature }: { feature: Feature }) {
           className="btn btn-wide"
           onClick={() => fitRodToModel(feature.id)}
         >
-          Fit to model height
+          Fit length to model
         </button>
+        {(['rx', 'ry', 'rz'] as const).map((key) => <NumberField key={key} label={`Rotation ${key[1].toUpperCase()}`} value={num(feature.params, key, 0)} unit="°" step={1} onChange={(value) => setParam(feature.id, key, value)} />)}
+        <button type="button" className="btn btn-wide" onClick={() => { const state = useKerros.getState(); state.setMode(activeAssembly(state.features) ? 'stack' : 'model'); state.setGizmoMode('rotate'); }}>Rotate rod</button>
         <div className="derived">
-          Position Z is the middle of the rod, the same as every other feature,
-          so the gizmo moves it in all three axes. Spans z {zStart.toFixed(1)} to{' '}
-          {zEnd.toFixed(1)} mm. Only layers whose mid-plane falls inside that
-          span get a hole, so a rod can stop partway up the stack.
+          Move and Rotate use the rod centre; rotation preserves its length. Angles and position are in world coordinates.
+          Ends: {pose.start.map((v) => v.toFixed(1)).join(' / ')} → {pose.end.map((v) => v.toFixed(1)).join(' / ')} mm.
+          {tilted ? ' Inclined openings cover the full sheet thickness. A closed hole needs a complete crossing.' : ' Vertical rods drill the layers within their endpoint heights.'}
         </div>
+        {tilted && <div className="derived">Ordinary spacer rings and vertical bosses cannot follow an inclined rod. Spacer rings are omitted; disable attached bosses before export.</div>}
+        {!feature.enabled ? <div className="derived">Disabled; no rod cuts.</div> : !fresh ? <div className="derived">{mode === 'model' ? 'Open Assembly to check rod openings.' : 'Checking rod openings…'}</div> : <>
+          {assemblyRoute && <div className="derived">{assemblyRoute.status}</div>}
+          {route && <div className="derived">Holes in {route.layers.length} layers: {route.layers.join(', ') || 'none'}.</div>}
+          {slices?.rods?.issues.filter((i) => i.id === feature.id).map((i, index) => <div key={index} className="derived">{i.message}</div>)}
+        </>}
+        {slices?.assembly && <AssemblyStatus set={slices} pending={!fresh} />}
+
       </div>
     </>
   );
@@ -1512,7 +1527,8 @@ function BossInspector({ feature, slices }: BossProps) {
   const rods = features.filter((f) => f.kind === 'rod');
   const attachTo = typeof feature.params.attachTo === 'string' ? feature.params.attachTo : '';
   const rod = rods.find((r) => r.id === attachTo);
-  const active = feature.enabled && rod?.enabled === true;
+  const tilted = rod ? !rodIsVertical(rodFromFeature(rod)) : false;
+  const active = feature.enabled && rod?.enabled === true && !tilted;
 
   const radius = num(feature.params, 'radius', 10);
   const spokes = Math.max(Math.round(num(feature.params, 'spokes', 3)), 0);
@@ -1579,7 +1595,7 @@ function BossInspector({ feature, slices }: BossProps) {
         <div className="derived">
           {active && rod
             ? `Stands where ${rod.name} does, and follows it when it moves.`
-            : 'Pick a rod. A boss is a lump around something, not a shape of its own.'}
+            : tilted ? 'This boss cannot follow an inclined rod. Disable the boss or return the rod to vertical before export.' : 'Pick a rod. A boss is a lump around something, not a shape of its own.'}
         </div>
       </div>
 
@@ -2848,7 +2864,7 @@ export function Inspector({ slices, patternCounts, holeMisses, punchResults, sli
     return <LegsInspector feature={feature} slices={slices} gaps={legGaps[feature.id]} />;
   }
   if (feature.kind === 'rod') {
-    return <RodInspector feature={feature} />;
+    return <RodInspector feature={feature} slices={slices} fresh={sliceFresh} />;
   }
   if (feature.kind === 'import') return <ImportInspector feature={feature} />;
   if (feature.kind === 'sculpt') return <SculptInspector feature={feature} />;

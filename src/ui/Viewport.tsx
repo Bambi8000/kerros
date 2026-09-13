@@ -9,7 +9,7 @@ import { usePreview } from './usePreview';
 import { buildGeometry } from '../core/mesh';
 import { circleFitsInPart, groupContours } from '../core/slice';
 import type { SliceSet } from '../core/slice';
-import { rodDiameter, rodSpan } from '../core/rig';
+import { rodDiameter, rodPose } from '../core/rig';
 import { socketDiameter } from '../core/fixture';
 import { legAzimuths, MAX_TILT } from '../core/legs';
 import { parseTwistOverrides, twistAt } from '../core/twist';
@@ -30,7 +30,7 @@ import type { Feature } from '../core/types';
 
 /**
  * Kerros world convention, fixed here and nowhere else:
- *   - Z is up. Slices stack along +Z, rods run along Z.
+ *   - Z is up. Slices stack along +Z; rods have a world-space rigid pose.
  *   - 1 three.js unit = 1 mm.
  * three.js defaults to Y-up, so every camera sets `up` explicitly.
  *
@@ -915,10 +915,9 @@ export function Viewport({ slices }: ViewportProps) {
     gizmo.showY = true;
     gizmo.showZ = true;
 
-    // Rods and windows move in all three axes but have no orientation to set:
-    // a rod turned about its own axis is unchanged, and a window is aimed by
-    // its angle parameter. Translate is the only mode they get.
-    if (!hasRotation(feature)) gizmo.setMode('translate');
+    // Windows and fixtures use their own direction parameters. Rods and
+    // shapes share the full rigid transform, including Rotate.
+    gizmo.setMode(hasRotation(feature) ? useKerros.getState().gizmoMode : 'translate');
 
     applyWorldTransform(proxy, feature);
     if (!hasRotation(feature)) {
@@ -983,8 +982,8 @@ export function Viewport({ slices }: ViewportProps) {
     if (mode === 'slice') return;
 
     for (const rod of rodsFromFeatures(features)) {
-      const [low, high] = rodSpan(rod);
-      const length = Math.max(high - low, 0.5);
+      const pose = rodPose(rod);
+      const length = Math.max(pose.length, 0.5);
       const geometry = new THREE.CylinderGeometry(
         rodDiameter(rod) / 2,
         rodDiameter(rod) / 2,
@@ -1002,7 +1001,8 @@ export function Viewport({ slices }: ViewportProps) {
           metalness: 0.6,
         }),
       );
-      mesh.position.set(rod.x, rod.y, low + length / 2);
+      mesh.position.set(...pose.centre);
+      mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...pose.u), new THREE.Vector3(...pose.v), new THREE.Vector3(...pose.direction)));
       mesh.userData.featureId = rod.id;
       group.add(mesh);
     }

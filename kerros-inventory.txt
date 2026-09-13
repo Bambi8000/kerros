@@ -1,32 +1,32 @@
-KERROS INVENTORY  2026-09-13  version 0.32.1
+KERROS INVENTORY  2026-09-13  version 0.33.0
 
 --- source, lines each
-   36862 total
-    2882 src/ui/Inspector.tsx
-    2243 src/core/store.ts
+   37172 total
+    2898 src/ui/Inspector.tsx
+    2246 src/core/store.ts
     1704 src/core/sdf.ts
-    1608 src/core/pipeline.ts
+    1676 src/core/pipeline.ts
     1484 tools/validate-nest.mjs
     1463 src/ui/Viewport.tsx
     1271 src/core/nest.ts
     1238 src/ui/SliceInspector.tsx
     1221 tools/validate-pipeline.mjs
-    1083 src/ui/ProfilePanel.tsx
-    1072 src/core/slice.ts
+    1086 src/ui/ProfilePanel.tsx
+    1077 src/core/slice.ts
     1067 src/core/profile2d.ts
      826 src/index.css
      805 tools/validate-sdf.mjs
-     786 src/core/assembly.ts
+     787 src/core/assembly.ts
      772 tools/validate-window.mjs
      736 tools/validate-profile.mjs
      687 tools/validate-slice.mjs
      644 src/ui/SheetView.tsx
-     601 src/core/job.ts
+     619 src/core/job.ts
      527 src/core/window.ts
      493 src/core/project.ts
+     489 src/core/rig.ts
      471 tools/validate-rig-export.mjs
      470 tools/validate-project.mjs
-     448 src/core/rig.ts
      410 src/core/voxelise.ts
      392 tools/validate-pattern.mjs
      388 src/core/pattern.ts
@@ -37,7 +37,7 @@ KERROS INVENTORY  2026-09-13  version 0.32.1
      332 src/ui/Layout.tsx
      330 src/core/legs.ts
      322 src/ui/FeatureTree.tsx
-     287 src/ui/AssemblyViewport.tsx
+     304 src/ui/AssemblyViewport.tsx
      283 src/core/meshImport.ts
      283 src/ui/download.ts
      275 tools/validate-boss.mjs
@@ -60,6 +60,7 @@ KERROS INVENTORY  2026-09-13  version 0.32.1
      151 tools/validate-assembly.mjs
      138 src/core/twist.ts
      138 tools/validate-paint.mjs
+     138 tools/validate-rod-rotation.mjs
      137 tools/validate-pdf.mjs
      131 src/ui/PartInspector.tsx
      122 tools/validate-assembly-preview.mjs
@@ -95,11 +96,12 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs
+check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+6517014 Preview rib angles immediately and coalesce obsolete worker jobs
 0613f37 Add odd and even rib angle groups with a symmetric fan
 ff2cc76 Add rib cross joints and clearance cuts with assembly order checks
 bacea84 Add Minimal solid profile-following backplates
@@ -139,4 +141,3 @@ e34b9da A capsule that bends into a sausage, and layers turned at assembly so th
 aa019ba Docs and inventory at 0.24.0
 0f40250 SVG outlines as a first-class 2D profile, indexed, and unioned rather than nested
 56b2d9f Docs and inventory at 0.23.0
-93d5c30 An assembly PDF whose drawings are the document, at one scale so parts can be told apart

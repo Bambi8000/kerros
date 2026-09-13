@@ -47,6 +47,7 @@ import {
 import { localiseFixture } from './fixture';
 import { assemblyFeatures, assemblyMember, ribOperation } from './assemblyFeatures';
 import type { AssemblyMember, RibOperation } from './assemblyFeatures';
+import { rodFromFeature, rodPose, fitRodToBounds } from './rig';
 import { ribAngleKey } from './assembly';
 import type { RibAngleScope } from './assembly';
 
@@ -1351,6 +1352,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
               pz: Math.round(((zStart + zEnd) / 2) * 10) / 10,
               length: Math.max(Math.round((zEnd - zStart) * 10) / 10, 1),
               diameter: 0,
+              rx: 0, ry: 0, rz: 0,
             },
           },
         ],
@@ -1363,12 +1365,9 @@ export const useKerros = create<KerrosState>((set, get) => ({
     set((s) => {
       const bounds = modelBounds(s.features.filter((f) => f.stage === 'SHAPE'));
       if (!bounds) return s;
-      const pz = Math.round(((bounds.min[2] + bounds.max[2]) / 2) * 10) / 10;
-      const length = Math.max(Math.round((bounds.max[2] - bounds.min[2]) * 10) / 10, 1);
       return {
-        features: s.features.map((f) =>
-          f.id === id ? { ...f, params: { ...f.params, pz, length } } : f,
-        ),
+        features: s.features.map((f) => f.id === id && f.kind === 'rod'
+          ? { ...f, params: { ...f.params, ...fitRodToBounds(rodFromFeature(f), bounds) } } : f),
       };
     }),
 
@@ -1408,14 +1407,14 @@ export const useKerros = create<KerrosState>((set, get) => ({
   setParam: (id, key, value) =>
     set((s) => ({
       features: s.features.map((f) =>
-        f.id === id ? { ...f, params: { ...f.params, [key]: value } } : f,
+        f.id === id ? { ...f, params: { ...f.params, ...(f.kind === 'rod' ? { pz: rodPose(rodFromFeature(f)).centre[2], length: rodPose(rodFromFeature(f)).length } : {}), [key]: value } } : f,
       ),
     })),
 
   setTransform: (id, patch) =>
     set((s) => ({
       features: s.features.map((f) =>
-        f.id === id ? { ...f, params: { ...f.params, ...patch } } : f,
+        f.id === id ? { ...f, params: { ...f.params, ...(f.kind === 'rod' ? { pz: rodPose(rodFromFeature(f)).centre[2], length: rodPose(rodFromFeature(f)).length } : {}), ...patch } } : f,
       ),
     })),
 
@@ -1720,6 +1719,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
                   ...f,
                   params: {
                     ...f.params,
+                    ...(f.kind === 'rod' ? { length: rodPose(rodFromFeature(f)).length } : {}),
                     px: round1(position[0]),
                     py: round1(position[1]),
                     pz: round1(position[2]),
@@ -2088,12 +2088,11 @@ export function isBakedVolume(kind: string): boolean {
 /**
  * Can this feature be rotated?
  *
- * Only shapes. A rod turned about its own axis is unchanged, and a window is
- * turned by its `angle` parameter, which is an angle about the stack rather
- * than a free orientation.
+ * Shapes and rods have a full rigid orientation. Windows use their own
+ * angle parameter about the stack.
  */
 export function hasRotation(feature: Feature): boolean {
-  return isBakedVolume(feature.kind) || findModule(feature.kind) !== undefined;
+  return feature.kind === 'rod' || isBakedVolume(feature.kind) || findModule(feature.kind) !== undefined;
 }
 
 /** Where a feature's gizmo should stand, in world mm. */
@@ -2228,6 +2227,10 @@ export function worldTransformOf(
   features: Feature[],
   feature: Feature,
 ): { position: [number, number, number]; rotation: [number, number, number] } {
+  if (feature.kind === 'rod') {
+    const rod = rodFromFeature(feature);
+    return { position: rodPose(rod).centre, rotation: [rod.rx || 0, rod.ry || 0, rod.rz || 0] };
+  }
   const world = worldRigidOf(features, feature);
   return {
     position: world.t,

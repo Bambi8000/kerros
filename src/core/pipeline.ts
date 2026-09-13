@@ -18,7 +18,7 @@
 
 import type { Feature, ProfileKey } from './types.ts';
 import {
-  ROD_CLEARANCE,
+  rodFromFeature, rodPose, rodDiameter, rodIsVertical,
   applyRods,
   loosePins,
   pinGaps,
@@ -48,7 +48,7 @@ import { resolveLayerSet, resolveLayers, selectorFromParams } from './layers.ts'
 import { legSections, sectionsDistance } from './legs.ts';
 import { bossField } from './boss.ts';
 import { extrudeMorph, extrudeProfile, indexProfile, indexedDistance, profileBounds } from './profile2d.ts';
-import { activeAssembly, buildAssembly } from './assembly.ts';
+import { activeAssembly, buildAssembly, channelAngles, prismOpening } from './assembly.ts';
 import type { MorphEasing, MorphEntry } from './profile2d.ts';
 import { parseTwistOverrides, twistAt, untwistPoint } from './twist.ts';
 import { paintDistance, strokesBounds, strokesByPlane } from './paint.ts';
@@ -270,7 +270,20 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     const started = Date.now();
     const field = composeField(job.features.filter(isFieldFeature), job.kerf, job.seed, job.thickness, { spacerHeight: 0 }, volumes);
     if (!field.bounds) return EMPTY_OUTPUT;
-    const set = buildAssembly(job.features, field.solid, field.bounds, job, {
+    const layout = activeAssembly(job.features)!;
+    // Rods stay in world coordinates. Convert only the worker input to the
+    // shared finite-cylinder route representation, never the saved feature.
+    const angle = Number(layout.params.angle || 0), a = -angle * Math.PI / 180;
+    const origin = field.bounds.min.map((v, i) => (v + field.bounds!.max[i]) / 2 + Number(layout.params[['px', 'py', 'pz'][i]] || 0));
+    const assemblyFeatures = job.features.map((f): Feature => {
+      if (f.kind !== 'rod') return f;
+      const rod = rodFromFeature(f), pose = rodPose(rod), d = pose.centre.map((v, i) => v - origin[i]);
+      return { ...f, kind: 'assembly:channel', params: { groupId: layout.id, rod: true, shape: 'tube',
+        px: d[0] * Math.cos(a) - d[1] * Math.sin(a), py: d[0] * Math.sin(a) + d[1] * Math.cos(a), pz: d[2],
+        ...channelAngles(pose.u, pose.v, angle), length: pose.length, diameter: rodDiameter(rod), clearance: 0,
+        through: false, ribTarget: true, supportTarget: true, backplateTarget: true } };
+    });
+    const set = buildAssembly(assemblyFeatures, field.solid, field.bounds, job, {
       trace: traceSheet,
       distance: (contours, reach) => {
         const index = indexProfile({ rings: contours.map((c) => c.points), fill: 'holes' }, 1, 0.02, Math.min(reach, Math.max(8, job.minFeature * 3, job.kerf * 2)));
@@ -584,13 +597,21 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
           };
         });
 
+  // Oblique openings are placed after twist so their world axes are transformed
+  // back into each sheet's cutting coordinates before containment is checked.
+  const inclined = cutInclinedRods(twisted, rodsFromFeatures(features), job, (slice) => twistAt(twistSpec, slice.index, twistTable));
+  for (const boss of features.filter((f) => f.enabled && f.kind === 'boss')) {
+    const rod = features.find((f) => f.enabled && f.kind === 'rod' && f.id === boss.params.attachTo);
+    if (rod && !rodIsVertical(rodFromFeature(rod))) inclined.issues.push({ id: boss.id, severity: 'error', message: `${boss.name}: vertical bosses cannot follow a tilted rod. Disable the boss or return the rod to vertical.` });
+  }
+
   /* --- hole punches: sheet coordinates, after structural hole rotation --- */
 
   const punches = features.filter((f) => f.kind === 'holePunch' && f.enabled);
   const punchResults: Record<string, PunchResult> = {};
   // Work on copies: earlier cuts, and earlier punches in tree order, take
   // precedence. Perforation comes next and keeps clear of accepted punches.
-  const punched = punches.length === 0 ? twisted : twisted.map((slice) => ({ ...slice, circles: slice.circles.slice() }));
+  const punched = punches.length === 0 ? inclined.slices : inclined.slices.map((slice) => ({ ...slice, circles: slice.circles.slice() }));
   for (const feature of punches) {
     const p = feature.params;
     const z = Number(p.pz);
@@ -655,7 +676,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
           return { ...slice, circles };
         });
 
-  const set: SliceSet = { ...sliced, slices: perforated };
+  const set: SliceSet = { ...sliced, slices: perforated, ...(inclined.routes.length || inclined.issues.length ? { rods: { routes: inclined.routes, issues: inclined.issues } } : {}) };
 
   // Whichever is larger: what the maker asked for, or two kerfs, below which the
   // material burns through however good the geometry is.
@@ -851,6 +872,69 @@ export function isFieldFeature(feature: Feature): boolean {
   return feature.stage === 'SHAPE' || feature.stage === 'CARVE';
 }
 
+/** Full-stock projection of finite inclined rods, in each sheet's cut frame. */
+function cutInclinedRods(slices: Slice[], rods: RodSpec[], job: SliceJob, angleAt: (slice: Slice) => number) {
+  const routes: NonNullable<SliceSet['rods']>['routes'] = [];
+  const issues: NonNullable<SliceSet['rods']>['issues'] = [];
+  let result = slices;
+  for (const rod of rods.filter((r) => !rodIsVertical(r))) {
+    const pose = rodPose(rod), diameter = rodDiameter(rod), radius = diameter / 2 / Math.cos(Math.PI / 96);
+    const section = Array.from({ length: 96 }, (_, i) => [radius * Math.cos(i * Math.PI / 48), radius * Math.sin(i * Math.PI / 48)]).flat();
+    const route = { id: rod.id, label: rod.label, start: pose.start, end: pose.end, diameter, layers: [] as number[] };
+    routes.push(route);
+    result = result.map((slice) => {
+      const a = angleAt(slice) * Math.PI / 180;
+      const part: NonNullable<Slice['part']> = { id: String(slice.index), label: `Layer ${slice.index}`, kind: 'support',
+        origin: [0, 0, slice.zBottom + job.thickness / 2], u: [Math.cos(a), Math.sin(a), 0], v: [-Math.sin(a), Math.cos(a), 0], n: [0, 0, 1], thickness: job.thickness, kerf: job.kerf, material: '' };
+      const polygon = prismOpening(part, pose.start, pose.end, pose.u, pose.v, section);
+      if (!polygon.length) return slice;
+      const xs = polygon.filter((_, i) => i % 2 === 0), ys = polygon.filter((_, i) => i % 2 === 1);
+      const box = { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+      const reach = Math.max(box.maxX - box.minX, box.maxY - box.minY, 10) * 2;
+      const opening = indexProfile({ rings: [polygon], fill: 'holes' }, 1, 0.02, reach);
+      const material = indexProfile({ rings: slice.contours.map((c) => c.points), fill: 'holes' }, 1, 0.02, reach);
+      const cut = (x: number, y: number) => indexedDistance(opening, x, y);
+      const solid = (x: number, y: number) => indexedDistance(material, x, y);
+      // Sample entire segments; testing vertices alone misses thin crossings.
+      const edgeSome = (points: number[], test: (x: number, y: number) => boolean): boolean => {
+        for (let i = 0; i < points.length; i += 2) {
+          const j = (i + 2) % points.length, dx = points[j] - points[i], dy = points[j + 1] - points[i + 1];
+          const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 0.25));
+          for (let k = 0; k <= steps; k++) if (test(points[i] + dx * k / steps, points[i + 1] + dy * k / steps)) return true;
+        }
+        return false;
+      };
+      if (!edgeSome(polygon, (x, y) => solid(x, y) < 0) && !slice.contours.some((c) => edgeSome(c.points, (x, y) => cut(x, y) < 0))) return slice;
+      const refuse = (message: string) => { issues.push({ id: rod.id, severity: 'error', message: `${rod.label}, layer ${slice.index}: ${message}` }); return slice; };
+      const extentZ = radius * Math.hypot(pose.u[2], pose.v[2]);
+      if (Math.abs(pose.direction[2]) < 0.05 || Math.min(pose.start[2], pose.end[2]) + extentZ > slice.zBottom + 1e-8
+        || Math.max(pose.start[2], pose.end[2]) - extentZ < slice.zBottom + job.thickness - 1e-8) {
+        return refuse('the rod ends inside the sheet or runs along its face. Extend or rotate it for a complete crossing.');
+      }
+      const bridge = Math.max(job.minFeature, job.kerf * 2);
+      // Outlines already include kerf. Reserve its half-width as well as the
+      // nominal bridge, and reject an opening that encloses an existing hole.
+      if (edgeSome(polygon, (x, y) => solid(x, y) > -bridge - job.kerf / 2)
+        || slice.contours.some((c) => c.isHole && edgeSome(c.points, (x, y) => cut(x, y) < bridge + job.kerf / 2))
+        || slice.circles.some((c) => cut(c.x, c.y) < c.r + bridge + job.kerf / 2)) {
+        return refuse('the closed opening reaches an edge, another hole or an insufficient bridge. Move the rod or reduce its diameter.');
+      }
+      const margin = Math.max(1, job.kerf), step = Math.max(0.015, Math.min(0.12, diameter / 24), reach / 1000);
+      const traced = traceSheet(cut, { minX: box.minX - margin, minY: box.minY - margin, maxX: box.maxX + margin, maxY: box.maxY + margin }, step, -job.kerf / 2, Math.min(job.tolerance, 0.02));
+      if (traced.length !== 1 || traced[0].points.length < 6) return refuse('the compensated opening could not be resolved. Increase the diameter or reduce kerf.');
+      const points = traced[0].points.slice();
+      if (signedArea(points) > 0) {
+        const pairs = Array.from({ length: points.length / 2 }, (_, i) => points.slice(i * 2, i * 2 + 2)).reverse().flat();
+        points.splice(0, points.length, ...pairs);
+      }
+      route.layers.push(slice.index);
+      return { ...slice, contours: [...slice.contours, { points, area: signedArea(points), isHole: true, owner: rod.id }] };
+    });
+    if (!route.layers.length && !issues.some((i) => i.id === rod.id)) issues.push({ id: rod.id, severity: 'warning', message: `${rod.label}: no holes; the rod misses material in all layers.` });
+  }
+  return { slices: result, routes, issues };
+}
+
 /**
  * A rod's span, from centre and length.
  *
@@ -870,23 +954,7 @@ export function rodSpanOf(params: Feature['params']): [number, number] {
 
 /** Turn the RIG features of a tree into rod specs the rig module understands. */
 export function rodsFromFeatures(features: Feature[]): RodSpec[] {
-  const rods: RodSpec[] = [];
-  for (const f of features) {
-    if (f.kind !== 'rod' || !f.enabled) continue;
-    const size = typeof f.params.size === 'string' ? f.params.size : 'M5';
-    const [zStart, zEnd] = rodSpanOf(f.params);
-    rods.push({
-      id: f.id,
-      label: f.name,
-      size: ROD_CLEARANCE[size] ? size : 'M5',
-      x: Number(f.params.px) || 0,
-      y: Number(f.params.py) || 0,
-      zStart,
-      zEnd,
-      diameter: Number(f.params.diameter) || 0,
-    });
-  }
-  return rods;
+  return features.filter((f) => f.kind === 'rod' && f.enabled).map(rodFromFeature);
 }
 
 /**
@@ -1002,7 +1070,7 @@ export function bossesFromFeatures(
 
     const rodId = typeof f.params.attachTo === 'string' ? f.params.attachTo : '';
     const rod = features.find((r) => r.id === rodId && r.kind === 'rod' && r.enabled);
-    if (!rod) continue;
+    if (!rod || !rodIsVertical(rodFromFeature(rod))) continue;
 
     // The chosen layers become a span: bottom of the lowest, top of the highest.
     const chosen = resolveLayers(

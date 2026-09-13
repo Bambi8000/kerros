@@ -568,6 +568,7 @@ export function buildAssembly(
   }
 
   for (const f of children.filter((f) => f.kind === 'assembly:channel')) {
+    const componentName = f.params.rod === true ? 'Rod' : 'LED';
     const position: Vec3 = [num(f, 'px'), num(f, 'py', radius * 0.35), num(f, 'pz')];
     const { direction, u: a, v: b } = channelFrame(num(f, 'yaw'), num(f, 'elevation'), num(f, 'roll'));
     const clearance = num(f, 'clearance', 0.25);
@@ -578,7 +579,7 @@ export function buildAssembly(
     const selectedIds = String(f.params.targetIds || '').split(/[ ,]+/).filter(Boolean);
     const chosen = selectedIds.length ? targets.filter((p) => selectedIds.includes(p.meta.id)) : targets;
     const missingIds = selectedIds.filter((id) => !parts.some((p) => p.meta.id === id));
-    if (f.enabled && missingIds.length) say('error', [f.id, ...missingIds], 'Explicit LED targets are missing or disabled. Update the target IDs.');
+    if (f.enabled && missingIds.length) say('error', [f.id, ...missingIds], `Explicit ${componentName} targets are missing or disabled. Update the target IDs.`);
     let length = num(f, 'length', radius * 3);
     let low = -length / 2, high = length / 2;
     if (f.params.through !== false && chosen.length) {
@@ -586,12 +587,12 @@ export function buildAssembly(
       low = Math.min(...extents) - Math.max(width, h); high = Math.max(...extents) + Math.max(width, h); length = high - low;
     }
     const start = add3(position, mul3(direction, low)), end = add3(position, mul3(direction, high));
-    const result = { id: f.id, hits: [] as string[], status: '', origin: position, localOrigin: position, start, end, u: a, v: b, width, height: h };
+    const result = { ...(f.params.rod === true ? { kind: 'rod' as const } : {}), id: f.id, hits: [] as string[], status: '', origin: position, localOrigin: position, start, end, u: a, v: b, width, height: h };
     channels.push(result);
     if (!f.enabled) { result.status = 'Disabled; no cuts applied.'; continue; }
     const componentValid = tube ? num(f, 'diameter', 16) > 0 : num(f, 'width', 12) > 0 && num(f, 'height', 5) > 0 && num(f, 'cornerRadius') >= 0 && num(f, 'cornerRadius') <= Math.min(num(f, 'width', 12), num(f, 'height', 5)) / 2;
     if (!(length > 0 && width > 0 && h > 0 && clearance >= 0 && componentValid)) {
-      result.status = 'Invalid route or cross-section.'; say('error', [f.id], 'LED component dimensions and length must be positive; clearance cannot be negative, and corner radius must fit the component.'); continue;
+      result.status = 'Invalid route or cross-section.'; say('error', [f.id], `${componentName} component dimensions and length must be positive; clearance cannot be negative, and corner radius must fit the component.`); continue;
     }
     if (!chosen.length) { result.status = 'No enabled target parts.'; say('warning', [f.id], result.status); continue; }
     const section: number[] = [];
@@ -619,10 +620,10 @@ export function buildAssembly(
       const extentN = Math.max(...section.filter((_, i) => i % 2 === 0).map((x, i) => Math.abs(x * dot3(a, part.meta.n) + section[i * 2 + 1] * dot3(b, part.meta.n))));
       const startN = sheetLocal(part.meta, start)[2], endN = sheetLocal(part.meta, end)[2];
       if (!edgeOpen && (Math.abs(dn) < 0.05 || Math.min(startN, endN) + extentN > -part.meta.thickness / 2 || Math.max(startN, endN) - extentN < part.meta.thickness / 2)) {
-        say('error', [f.id, part.meta.id], 'The route ends inside this sheet or runs along its face. A closed laser opening needs a complete crossing; extend the route or choose an edge-open notch.'); continue;
+        say('error', [f.id, part.meta.id], f.params.rod === true ? 'The rod ends inside this sheet or runs along its face. Extend or rotate it for a complete crossing.' : 'The route ends inside this sheet or runs along its face. A closed laser opening needs a complete crossing; extend the route or choose an edge-open notch.'); continue;
       }
       if (!edgeOpen && !boundaryFits(polygon, part, minBridge)) {
-        say('error', [f.id, part.meta.id], 'The closed LED opening reaches an edge, existing opening or insufficient bridge. Move it or explicitly choose an edge-open notch.'); continue;
+        say('error', [f.id, part.meta.id], `The closed ${componentName} opening reaches an edge, existing opening or insufficient bridge. ${f.params.rod === true ? 'Move the rod or reduce its diameter.' : 'Move it or explicitly choose an edge-open notch.'}`); continue;
       }
       if (edgeOpen) {
         const angle = num(f, 'openAngle', 90) * Math.PI / 180;
@@ -632,14 +633,14 @@ export function buildAssembly(
         box = polyBox(polygon); cut = polygonDistance(polygon, kernel, reach);
       }
       if (part.zones.some((zone) => samples(zone.box, Math.max(part.step, 0.5), (x, y) => zone.field(x, y) < minBridge && cut(x, y) < minBridge))) {
-        say('error', [f.id, part.meta.id], 'The LED opening conflicts with a joint or mounting opening. Move the route or change its dimensions.'); continue;
+        say('error', [f.id, part.meta.id], `The ${componentName} opening conflicts with a joint or mounting opening. Move the route or change its dimensions.`); continue;
       }
       subtract(part, cut); result.hits.push(part.meta.id);
     }
     for (const part of parts.filter((p) => !chosen.includes(p))) {
       const opening = prismOpening(part.meta, start, end, a, b, section);
       if (opening.length && overlaps(part, polygonDistance(opening, kernel, reach), polyBox(opening))) {
-        say('error', [f.id, part.meta.id], 'An excluded part obstructs the LED component. Include it as a target or move the route. No cut was made in this part.');
+        say('error', [f.id, part.meta.id], `An excluded part obstructs the ${componentName} component. Include it as a target or move the route. No cut was made in this part.`);
       }
     }
     if (result.hits.length && f.params.open !== true) {
@@ -651,8 +652,8 @@ export function buildAssembly(
         return opening.length > 0 && overlaps(part, polygonDistance(opening, kernel, reach), polyBox(opening));
       });
       const lowBlocked = blocked(lowEnd, end), highBlocked = blocked(start, highEnd);
-      if (lowBlocked && highBlocked) say('error', [f.id], 'Both straight insertion directions are obstructed. Use an edge-open notch or revise the surrounding parts.');
-      else say('info', [f.id], `LED insertion: feed from the route ${!lowBlocked ? 'start' : 'end'} after dry-fitting the assembly. Component retention is a separate design decision.`);
+      if (lowBlocked && highBlocked) say('error', [f.id], f.params.rod === true ? 'Both straight rod insertion directions are obstructed. Revise the surrounding parts or rod placement.' : 'Both straight insertion directions are obstructed. Use an edge-open notch or revise the surrounding parts.');
+      else say('info', [f.id], `${componentName} insertion: feed from the route ${!lowBlocked ? 'start' : 'end'} after dry-fitting the assembly. Component retention is a separate design decision.`);
     }
     result.status = result.hits.length ? `${result.hits.length} of ${chosen.length} targeted parts cut.` : `No cuts in ${chosen.length} targeted parts; the route misses them or the named checks refused it.`;
     if (!result.hits.length && !issues.some((i) => i.ids.includes(f.id))) say('warning', [f.id], result.status);

@@ -237,6 +237,7 @@ export function manifestText(input: ManifestInput): string {
   }
   lines.push('');
 
+  lines.push(...rodManifest(set));
   lines.push('LAYERS');
   lines.push('  #    z (mm)   parts  holes  sheet');
   for (const slice of set.slices) {
@@ -527,7 +528,19 @@ export function assemblyDocument(input: AssemblyInput): PdfPage[] {
     pages.push({ width: PAGE_W, height: PAGE_H, polylines });
   }
 
+  if (set.rods) pages.push(...textPages(rodManifest(set)));
   return pages;
+}
+
+/** Rod placement is manufacturing information, carried into both manifest and PDF. */
+function rodManifest(set: SliceSet): string[] {
+  if (!set.rods) return [];
+  const lines = ['INCLINED RODS / WORLD COORDINATES (mm, Z up)', 'Ordinary spacer rings are omitted for inclined rods. Dry-fit an angled hole coupon in the actual stock.'];
+  for (const rod of set.rods.routes) lines.push(`${rod.label} ID ${rod.id}: clearance diameter ${rod.diameter.toFixed(2)} mm.`,
+    `  Ends ${rod.start.map((v) => v.toFixed(2)).join(' / ')} to ${rod.end.map((v) => v.toFixed(2)).join(' / ')}.`,
+    `  Layers ${rod.layers.join(', ') || 'none'}.`);
+  for (const issue of set.rods.issues) lines.push(`${issue.severity.toUpperCase()} ${issue.id}: ${issue.message}`);
+  lines.push(''); return lines;
 }
 
 /** Persistent part IDs are the link between the assembled drawing and the bed. */
@@ -548,21 +561,21 @@ function uprightManifest(input: ManifestInput): string[] {
   lines.push('', 'JOINTS AND INSERTION');
   for (const joint of report.joints) lines.push(`${joint.id}: ${joint.instruction}`);
   if (!report.joints.length) lines.push('No generated attachments.');
-  lines.push('', 'LED CHANNELS');
-  for (const channel of report.channels) lines.push(`${channel.id}: ${channel.status}`, `  Route ${channel.start.map((v) => v.toFixed(2)).join(' / ')} to ${channel.end.map((v) => v.toFixed(2)).join(' / ')}`, `  Clearance envelope ${channel.width.toFixed(2)} x ${channel.height.toFixed(2)} mm. Parts: ${channel.hits.join(' / ') || 'none'}.`);
+  lines.push('', report.channels.some((c) => c.kind === 'rod') ? 'RODS AND LED CHANNELS' : 'LED CHANNELS');
+  for (const channel of report.channels) lines.push(`${channel.kind === 'rod' ? 'Rod ' : ''}${channel.id}: ${channel.status}`, `  Route ${channel.start.map((v) => v.toFixed(2)).join(' / ')} to ${channel.end.map((v) => v.toFixed(2)).join(' / ')}`, `  Clearance envelope ${channel.width.toFixed(2)} x ${channel.height.toFixed(2)} mm. Parts: ${channel.hits.join(' / ') || 'none'}.`);
   if (!report.channels.length) lines.push('No LED channels.');
   lines.push('', 'CHECKS');
   for (const issue of report.issues) lines.push(`${issue.severity.toUpperCase()} ${issue.ids.join(' / ')}: ${issue.message}`);
   return lines;
 }
-function uprightDocument(input: AssemblyInput): PdfPage[] {
+function textPages(lines: string[]): PdfPage[] {
   const pages: PdfPage[] = [];
   let polylines: PdfPolyline[] = [], pen = penFor(polylines), y = PAGE_H - MARGIN;
   const nextPage = () => {
     if (polylines.length) pages.push({ width: PAGE_W, height: PAGE_H, polylines });
     polylines = []; pen = penFor(polylines); y = PAGE_H - MARGIN;
   };
-  for (const line of [input.projectName, ...uprightManifest(input)]) {
+  for (const line of lines) {
     const wrapped: string[] = [];
     let text = '';
     for (const word of line.split(' ')) {
@@ -580,6 +593,11 @@ function uprightDocument(input: AssemblyInput): PdfPage[] {
     }
   }
   nextPage();
+  return pages;
+}
+
+function uprightDocument(input: AssemblyInput): PdfPage[] {
+  const pages = textPages([input.projectName, ...uprightManifest(input)]);
   const drawings = input.set.slices.map((slice) => ({ slice, box: boxOf(slice.contours.flatMap((c) => c.points)) }));
   const cellW = (PAGE_W - MARGIN * 2) / 2, cellH = (PAGE_H - MARGIN * 2 - 16) / 2;
   const scale = Math.min(1, ...drawings.map((d) => Math.min((cellW - 12) / Math.max(d.box.w, 1), (cellH - 30) / Math.max(d.box.h, 1))));

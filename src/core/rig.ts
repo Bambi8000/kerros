@@ -1,14 +1,15 @@
 /**
  * Kerros rig features.
  *
- * A rod is a threaded rod running along Z through some span of the stack. It
- * is not a solid in the SDF sense — it removes nothing from the form. It adds
- * a clearance hole to every slice whose mid-plane falls inside its span, and
- * nothing to the slices outside it.
+ * A rod is a finite cylinder placed in world coordinates. It is not part of
+ * the source SDF. Vertical rods retain the original circular-hole path; tilted
+ * rods use full-thickness openings in the pipeline and assembly kernel.
  *
  * DELIBERATE CONSTRAINT: no value imports. Node validators load this as the
  * real module.
  */
+
+import type { Feature } from './types.ts';
 
 export const ROD_SIZES = ['M3', 'M4', 'M5', 'M6', 'M8'] as const;
 export type RodSize = (typeof ROD_SIZES)[number];
@@ -36,6 +37,8 @@ export interface RodSpec {
   zEnd: number;
   /** Overrides the table when greater than zero. */
   diameter: number;
+  /** Degrees, R = Rz Ry Rx, around the centre of the axial span. */
+  rx?: number; ry?: number; rz?: number;
 }
 
 export interface CircleHole {
@@ -79,17 +82,53 @@ export function rodDiameter(rod: RodSpec): number {
   return ROD_CLEARANCE[rod.size] ?? ROD_CLEARANCE.M5;
 }
 
-/** Span with the ends in order, so a rod dragged backwards still works. */
+/** Read both centre/length projects and the original two-end representation. */
+export function rodFromFeature(feature: Feature): RodSpec {
+  const p = feature.params, length = Number(p.length) || 0;
+  const centre = Number(p.pz) || 0;
+  const size = typeof p.size === 'string' && ROD_CLEARANCE[p.size] ? p.size : 'M5';
+  return { id: feature.id, label: feature.name, size, x: Number(p.px) || 0, y: Number(p.py) || 0,
+    zStart: length > 0 ? centre - length / 2 : Number(p.zStart) || 0,
+    zEnd: length > 0 ? centre + length / 2 : Number(p.zEnd) || 0,
+    diameter: Number(p.diameter) || 0, rx: Number(p.rx) || 0, ry: Number(p.ry) || 0, rz: Number(p.rz) || 0 };
+}
+
+/** Complete orthonormal world frame, shared by preview and manufacturing. */
+export function rodPose(rod: RodSpec) {
+  const x = (rod.rx || 0) * Math.PI / 180, y = (rod.ry || 0) * Math.PI / 180, z = (rod.rz || 0) * Math.PI / 180;
+  const cx = Math.cos(x), sx = Math.sin(x), cy = Math.cos(y), sy = Math.sin(y), cz = Math.cos(z), sz = Math.sin(z);
+  const u: [number, number, number] = [cz * cy, sz * cy, -sy];
+  const v: [number, number, number] = [cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx];
+  const direction: [number, number, number] = [cz * sy * cx + sz * sx, sz * sy * cx - cz * sx, cy * cx];
+  const centre: [number, number, number] = [rod.x, rod.y, (rod.zStart + rod.zEnd) / 2];
+  const length = Math.abs(rod.zEnd - rod.zStart);
+  const end = (sign: number): [number, number, number] => centre.map((c, i) => c + sign * direction[i] * length / 2) as [number, number, number];
+  return { centre, length, direction, u, v, start: end(-1), end: end(1) };
+}
+export const rodIsVertical = (rod: RodSpec): boolean => Math.hypot(...rodPose(rod).direction.slice(0, 2)) < 1e-9;
+
+/** Physical endpoint heights; length is measured along the rod, not along Z. */
 export function rodSpan(rod: RodSpec): [number, number] {
-  return rod.zStart <= rod.zEnd ? [rod.zStart, rod.zEnd] : [rod.zEnd, rod.zStart];
+  const { start, end } = rodPose(rod);
+  return [Math.min(start[2], end[2]), Math.max(start[2], end[2])];
+}
+
+/** Fit along the existing axis, preserving the transverse location and rotation. */
+export function fitRodToBounds(rod: RodSpec, bounds: { min: number[]; max: number[] }) {
+  const pose = rodPose(rod);
+  const along = [bounds.min[0], bounds.max[0]].flatMap(x => [bounds.min[1], bounds.max[1]].flatMap(y => [bounds.min[2], bounds.max[2]].map(z =>
+    [x, y, z].reduce((sum, value, i) => sum + (value - pose.centre[i]) * pose.direction[i], 0))));
+  const low = Math.min(...along), high = Math.max(...along);
+  const centre = pose.centre.map((c, i) => c + pose.direction[i] * (low + high) / 2);
+  return { px: centre[0], py: centre[1], pz: centre[2], length: Math.max(high - low, 1) };
 }
 
 /**
  * Does this rod pass through a layer sampled at `z`?
  *
- * The test is on the layer's mid-plane, matching how the slice itself was
- * taken. A rod that stops halfway through a sheet does not get a hole in it:
- * a half-drilled hole is not a thing a laser can cut.
+ * The original vertical path selects by mid-plane, including both endpoints.
+ * Inclined rods bypass this path and require a complete slab crossing in the
+ * pipeline; their partial-depth intersections are refused.
  */
 export function rodSpansZ(rod: RodSpec, z: number): boolean {
   const [low, high] = rodSpan(rod);
@@ -110,7 +149,7 @@ export function rodCutRadius(diameter: number, kerf: number): number {
 export function rodHolesAt(rods: RodSpec[], z: number, kerf: number): CircleHole[] {
   const holes: CircleHole[] = [];
   for (const rod of rods) {
-    if (!rodSpansZ(rod, z)) continue;
+    if (!rodIsVertical(rod) || !rodSpansZ(rod, z)) continue;
     holes.push({
       x: rod.x,
       y: rod.y,
@@ -261,6 +300,8 @@ export function spacerPlans(
 
   const plans: SpacerPlan[] = [];
   for (const rod of rods) {
+    // Ordinary flat rings cannot seat against a sheet on an inclined rod.
+    if (!rodIsVertical(rod)) continue;
     /*
      * Rings are counted from the gaps that are actually there, sheet to sheet,
      * rather than from the requested spacer height multiplied by the gap count.

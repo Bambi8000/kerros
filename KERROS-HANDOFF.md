@@ -7,9 +7,24 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.32.1.** The MVP as originally scoped is
+**State at the time of writing: version 0.33.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+Rods now rotate freely with the Rotate gizmo in Model and upright Assembly,
+or with Rotation X/Y/Z in the inspector. Rotation preserves centre and length;
+`Fit length to model` fits along the current axis. Old two-end projects keep
+their centre on first edit. Rods remain world-anchored when a layout is moved.
+Inclined rods cut the full stock-thickness envelope, with in-plane kerf, in
+horizontal stacks and Linear/Radial ribs. Upright rods share the LED cylinder
+kernel and target ribs, supports and backplates automatically; they remain rod
+features in the project. Refused crossings name the sheet and block export.
+Horizontal vertical rods retain the original circular, mid-plane-selected path.
+Ordinary spacer rings are omitted for inclined rods; vertical bosses cannot
+follow them and must be disabled or returned to a vertical rod before export.
+These limits are visible in the inspector and export panel. Manifests and PDFs
+carry inclined rod endpoints and actual cut layers/parts. Physical fit still
+needs a coupon. See FEATURES and `tools/validate-rod-rotation.mjs`.
 
 Angle edits now reorient the last cut outlines immediately in Assembly,
 including Selected/Odd/Even/All and Fan. The viewport labels this as a placement
@@ -389,7 +404,7 @@ so sculpting a spout and then shelling hollows the spout too.
    Shapes can be grouped under other shapes.
 2. **CARVE** — shell with optional solid caps; windows, which subtract a wedge and
    emit the removed piece as a part in another material.
-3. **RIG** — rods with Z-span and clearance holes, spacer rings, the lamp
+3. **RIG** — finite, freely oriented rods with clearance holes, spacer rings, the lamp
    fixtures, and splayed legs. Legs are the one thing in this stage cut from
    the field rather than per slice, so that a leg over the rim notches it.
 4. **SLICE** — mid-plane sampling, marching squares, Chaikin then RDP, kerf at the
@@ -513,6 +528,9 @@ about to happen when this handoff was written; ask before assuming.
   both stock thicknesses, including relief radius, split, remaining bridges
   and wall-last insertion. Clearance cuts need the same fit test and do not
   attach the ribs. Sampled collision/order checks do not prove joint strength.
+- **Inclined rods.** Cut a full-thickness angled-hole coupon at the intended
+  angle, kerf and diameter. Verify actual rod clearance, insertion and support;
+  flat spacer rings and vertical bosses are not generated for inclined rods.
 - **Hole punch.** The exact circle, single-layer assignment, kerf, save/open
   and DXF path are validated; its finished diameter still needs a cut in the
   chosen stock with a measured kerf.

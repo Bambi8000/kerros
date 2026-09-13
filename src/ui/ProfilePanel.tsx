@@ -7,7 +7,7 @@ import { kerfTestDocument, writeDxfR12 } from '../core/dxf';
 import { assemblyDocument, manifestText, sheetToDxf } from '../core/job';
 import { writePdf } from '../core/pdf';
 import { MAX_REPEAT_STEPS, parseTwistOverrides, twistPeriod } from '../core/twist';
-import { ringThickness, rodLayerCount } from '../core/rig';
+import { ringThickness, rodLayerCount, rodIsVertical } from '../core/rig';
 import { workerAvailable } from './workerBridge';
 import { KERROS_VERSION } from '../version';
 import { parseProject, projectFilename, serializeProject } from '../core/project';
@@ -37,7 +37,7 @@ interface Props {
 
 export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: Props) {
   const assemblyMode = useKerros((s) => Boolean(activeAssembly(s.features)));
-  const exportReady = sliceFresh && sheets.ready && (!assemblyMode || slices?.assembly?.cuttable === true);
+  const exportReady = !slices?.rods?.issues.some((i) => i.severity === 'error') && sliceFresh && sheets.ready && (!assemblyMode || slices?.assembly?.cuttable === true);
   const projectName = useKerros((s) => s.projectName);
   const setProjectName = useKerros((s) => s.setProjectName);
   const trueShape = useKerros((s) => s.trueShapeNesting);
@@ -93,7 +93,8 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
   const features = useKerros((s) => s.features);
   const rods = rodsFromFeatures(features);
   const rodCount = rods.length;
-  const spanningRod = slices && rods.some((rod) => rodLayerCount(rod, slices.slices) >= 2);
+  const verticalRods = rods.filter(rodIsVertical);
+  const spanningRod = slices && verticalRods.some((rod) => rodLayerCount(rod, slices.slices) >= 2);
   const fluteDirection = useKerros((s) => s.fluteDirection);
   const setFluteDirection = useKerros((s) => s.setFluteDirection);
   const flutePitch = useKerros((s) => s.flutePitch);
@@ -870,6 +871,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
             {sliceFresh ? 'No cut layers to nest.' : 'Open Slice, Assembly or Sheet to calculate the job.'}
           </div>
         )}
+        {!assemblyMode && makeSpacers && verticalRods.length < rodCount && <div className="derived">Ordinary spacer rings are omitted for {rodCount - verticalRods.length} inclined rods; flat rings cannot seat against these sheets.</div>}
         {!assemblyMode && makeSpacers && rodCount === 0 ? (
           <div className="derived">
             No spacer rings, because there are no rods. A ring fills the gap
@@ -877,7 +879,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
             &ldquo;Add rod&rdquo; in the feature tree.
           </div>
         ) : null}
-        {!assemblyMode && makeSpacers && sheets.ready && sliceFresh && rodCount > 0 && spacerTotal === 0 && total > 1 ? (
+        {!assemblyMode && makeSpacers && sheets.ready && sliceFresh && verticalRods.length > 0 && spacerTotal === 0 && total > 1 ? (
           <div className="derived">
             {spanningRod
               ? 'No spacer rings: the gaps reached by the rods need zero rings at this ring thickness.'
@@ -938,6 +940,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
 
       <div className="group">
         <div className="group-head">Export</div>
+        {!assemblyMode && sliceFresh && slices?.rods?.issues.map((issue, i) => <div className="derived" key={i}>{issue.severity === 'error' ? 'Resolve before export: ' : ''}{issue.message}</div>)}
         {assemblyMode && <AssemblyStatus set={slices} pending={!sliceFresh} />}
         <button
           type="button"

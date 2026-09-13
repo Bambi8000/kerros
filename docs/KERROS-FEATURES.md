@@ -295,7 +295,7 @@ radius is dropped and reported, and the good strokes around it survive.
 
 ### Direct manipulation — M1.5
 
-Shapes are selected by clicking them in the viewport and moved with a gizmo,
+Shapes and rods are selected by clicking them in the viewport and moved with a gizmo,
 alongside the numeric fields in the inspector. Both write the same six
 parameters; there is no second source of truth for placement.
 
@@ -521,9 +521,9 @@ sphere took the shell along and left the windows behind.
 
 So a window carries `px` `py` for its axis, defaulting to the model's XY centre
 when added, and it gets a gizmo. `hasRotation()` now separates the two questions
-the viewport was conflating: shapes can be turned freely, while rods and windows
-can be moved in all three axes but have no orientation to set — a rod turned
-about its own axis is unchanged, and a window is aimed by its `angle` parameter.
+the viewport was conflating: shapes and, since 0.33.0, rods can be turned freely.
+Windows can be moved in all three axes, and are aimed by their own `angle`
+parameter instead of a general rigid orientation.
 
 Moving the axis does **not** reroll which layers got windows: the rolls are
 seeded from the layer number, not from the geometry. Validated, because
@@ -641,24 +641,27 @@ Wago chamber in M8.
 | `size` | M3 · M4 · M5 · M6 · M8 | M5 |
 | `diameter` | clearance override in mm, 0 uses the table | 0 |
 | `px` `py` `pz` | position, mm — `pz` is the **middle** of the rod | placed off-centre, centred vertically |
-| `length` | how long the rod is, mm | the model's full height |
+| `length` | length along the rod axis, mm | the model's full height |
+| `rx` `ry` `rz` | world rotation, degrees, Rz·Ry·Rx | 0 |
 
 `pz` is the centre rather than an end, matching every other feature, so the
 gizmo moves a rod in all three axes exactly like it moves a shape and the
 length stays a number you set rather than a subtraction you do. The span is
-derived: `[pz − length/2, pz + length/2]`. `rodSpanOf()` also reads the older
-two-ended form, so a tree built before the change still resolves.
+derived from `centre ± direction * length/2`; the unrotated axial span is
+`[pz − length/2, pz + length/2]`. `rodSpanOf()` also reads the older two-ended
+form. `rodFromFeature` and `rodPose` preserve that centre and length when the
+first transform or numeric edit writes the current representation.
 
 Clearance table (medium fit): M3 3.2 · M4 4.3 · M5 5.3 · M6 6.4 · M8 8.4 mm.
 Overridable per rod, because a painted rod or a fat cheap thread wants its own
 number.
 
 **A rod is not a solid.** It takes no part in the SDF and removes nothing from
-the form. It is applied after slicing, adding a clearance hole to every layer
-whose **mid-plane** falls inside its span — the same plane the slice itself was
-taken on. A rod that stops halfway through a sheet gets no hole in it, because
-a half-drilled hole is not something a laser can cut. Spans entered backwards
-are ordered before use.
+the form. It is applied after slicing. The original vertical path adds a
+circular clearance hole to every layer whose **mid-plane** falls inside its
+span, inclusive of the endpoints. Spans entered backwards are ordered before
+use. This legacy selection does not require a full-thickness crossing; the
+new inclined path below does.
 
 Rod count is unlimited and each rod is independent, which is the whole point:
 six rods with different spans is the design case, not an edge case.
@@ -669,8 +672,64 @@ that.
 
 Rods are drawn in the viewport as cylinders at clearance diameter over their
 span, which makes them clickable — they get first refusal on a raycast, since
-otherwise a rod inside the form could never be selected. Rotation is disabled
-for them, because rotating a rod about its own axis means nothing.
+otherwise a rod inside the form could never be selected. Rotate is available
+in Model and upright Assembly. `Rotate rod` in the inspector opens the right
+workspace and activates the handle; numeric Rotation X/Y/Z edits use the same
+pose. All three rotation axes are available, with the existing 15° snap option.
+The pivot is the rod centre and length is unchanged by rotation.
+
+### Inclined rods — 0.33.0
+
+`rodPose` defines the cylinder frame once: R = Rz·Ry·Rx, Z is its axis, X/Y
+are the section basis. `Fit length to model` projects the source bounds onto
+that axis and fits the axial range, preserving transverse position and angles.
+It is a conservative length fit, not a promise that every part will be crossed.
+Rods use world coordinates and remain in place when an upright layout moves.
+
+For horizontal sheets, inclined rods bypass `applyRods`' circular path.
+The pipeline calls the real `prismOpening` kernel to clip a finite cylinder
+against the entire stock slab, then projects it into the sheet's cutting frame.
+Its 96-sided circumscribed section contains the round rod (radius excess below
+0.054% before tracing). A tilted hole includes the sweep across the stock
+thickness, not only the mid-plane ellipse. With layer twist, the frame is
+rotated before containment is checked, keeping the finished openings aligned
+with the world-space rod. Fixtures and pins are already present; accepted rod
+contours carry their owner ID and precede hole punches and perforation.
+
+The opening is indexed as an in-plane distance and traced at **−kerf/2**.
+Existing outlines are left unchanged. Full boundary segments are sampled at
+0.25 mm for containment and overlap, with the configured minimum feature and
+twice kerf as the bridge threshold. A footprint that reaches an edge, surrounds
+an existing opening, crowds a circle, ends within the sheet, or runs along its
+face is refused. Refusals identify the rod and layer and block export until
+resolved; a complete miss is a warning. These are sampled geometry checks.
+The new hole contour reaches Part, nesting, DXF and PDF through the existing
+contour path. The manifest and a separate PDF page record actual layers and
+world-space endpoints.
+
+In Linear/Radial assemblies the pipeline converts rods only in its temporary
+input to the shared finite tube route, with zero additional LED allowance:
+the rod clearance diameter already includes its allowance. Ribs, supports and
+backplates are all targets. Per-part stock/kerf, protected joints and mounting
+holes, connected parts and straight insertion checks are shared with LED
+channels. Rod features and Euler angles remain unchanged in the saved project;
+reports distinguish rods from LED channels. The Assembly gizmo previews the
+physical cylinder during a drag, then commits one complete pose on release.
+Disabled rods are neither drawn nor cut. Cut freshness still gates exports.
+
+Flat spacer rings cannot seat against sheets on an inclined rod and are
+omitted with a visible explanation. Existing bosses are vertical columns:
+a boss attached to an inclined rod contributes no geometry and blocks horizontal
+export with an explicit instruction to disable it or make the rod vertical.
+Upright assemblies retain their existing exclusion of horizontal boss features.
+Neither angled spacers nor slanted bosses are silently approximated.
+
+`tools/validate-rod-rotation.mjs` exercises the real frame, pipeline, assembly
+kernel, store and exporters: centre/length invariance, the ZYX convention,
+legacy pivots, axis fitting, full-depth cylinder containment, kerf and twist,
+finite/edge/collision refusals, mixed placements, Linear ribs and Radial
+supports, spacer/boss limits, save/open and the manifest/PDF/DXF paths.
+Material fit and rod retention still require a physical coupon.
 
 ### Spacer rings — M4
 
@@ -678,7 +737,7 @@ for them, because rotating a rod about its own axis means nothing.
 radius, outside = rod radius + ring width + half a kerf. A rod spanning n
 layers has n−1 gaps; a rod reaching one layer or none needs no spacers.
 
-Spacers exist **per rod**, so a model with no rods generates none — there are
+Spacers exist **per vertical rod**, so a model with no vertical rods generates none — there are
 no gaps to fill. That is correct, but silence about it reads as a bug, so the
 profiles panel says so plainly, and says it again when rods exist but none of
 them reaches two layers.
@@ -3475,7 +3534,7 @@ a larger rib around a shorter rib, or an edge opening if the part stays
 connected. A disconnected result or damaged joint is refused without applying
 the operation. All operations use rib profiles after wall/ring joints but
 before any rib operations, so a preceding cut cannot silently shrink the next
-cutter. LED channels run afterwards and respect the new protected joint zones.
+cutter. LED channels and rod openings run afterwards and respect the new protected joint zones.
 
 Successful cross joints switch insertion planning to **ribs first, wall last**.
 The solver searches straight disassembly upward, downward and along each rib's

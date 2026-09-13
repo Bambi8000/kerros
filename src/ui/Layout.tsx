@@ -55,7 +55,7 @@ export function Layout() {
     const feature = s.features.find((f) => f.id === s.selectedId);
     if (!feature) return false;
     return s.mode === 'stack' && activeAssembly(s.features)
-      ? ['assembly:rib', 'assembly:support', 'assembly:backplate', 'assembly:channel'].includes(feature.kind)
+      ? ['assembly:rib', 'assembly:support', 'assembly:backplate', 'assembly:channel', 'rod'].includes(feature.kind)
       : hasTransform(feature);
   });
   const sculptMode = useKerros((s) => s.sculptMode);
@@ -222,7 +222,7 @@ export function Layout() {
               key={m.key}
               type="button"
               title={m.hint}
-              disabled={!movable || (mode !== 'model' && !(mode === 'stack' && assembly)) || Boolean(assembly && mode === 'stack' && m.key === 'rotate' && !['assembly:rib', 'assembly:channel'].includes(selectedFeature?.kind ?? ''))}
+              disabled={!movable || (mode !== 'model' && !(mode === 'stack' && assembly)) || Boolean(assembly && mode === 'stack' && m.key === 'rotate' && !['assembly:rib', 'assembly:channel', 'rod'].includes(selectedFeature?.kind ?? ''))}
               className={`view-btn${gizmoMode === m.key ? ' is-active' : ''}`}
               onClick={() => setGizmoMode(m.key)}
             >

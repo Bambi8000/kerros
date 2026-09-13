@@ -85,13 +85,18 @@ export interface Slice {
 
 export interface SliceSet {
   slices: Slice[];
+  /** Oblique rods in horizontal stacks. Refused cuts block manufacturing export. */
+  rods?: {
+    routes: { id: string; label: string; start: [number, number, number]; end: [number, number, number]; diameter: number; layers: number[] }[];
+    issues: { id: string; severity: 'error' | 'warning'; message: string }[];
+  };
   assembly?: {
     id: string;
     cuttable: boolean;
     issues: { severity: 'error' | 'warning' | 'info'; ids: string[]; message: string; ribCollision?: [string, string] }[];
     joints: { id: string; parts: string[]; instruction: string }[];
     channels: {
-      id: string; hits: string[]; status: string;
+      id: string; hits: string[]; status: string; kind?: 'rod';
       /** Route anchor in world and assembly coordinates, independent of fitted ends. */
       origin: [number, number, number]; localOrigin: [number, number, number];
       start: [number, number, number]; end: [number, number, number];

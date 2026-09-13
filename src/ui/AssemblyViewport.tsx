@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { SliceSet } from '../core/slice';
 import type { Feature } from '../core/types';
+import { rodFromFeature, rodPose } from '../core/rig';
 import { groupContours } from '../core/slice';
 import { channelAngles, ribAnglePreview, ribAngleTargets, ribAngleValue } from '../core/assembly';
 import type { RibAngleScope } from '../core/assembly';
@@ -53,7 +54,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
     camera.position.set(240, -360, 250);
     const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     element.appendChild(renderer.domElement);
-    renderer.domElement.setAttribute('aria-label', 'Assembly preview. Select a part or LED channel to move or rotate it.');
+    renderer.domElement.setAttribute('aria-label', 'Assembly preview. Select a part, rod or LED channel to move or rotate it.');
     scene.add(new THREE.HemisphereLight(0xfff4e3, 0x555566, 2.3));
     const key = new THREE.DirectionalLight(0xffffff, 3); key.position.set(200, -300, 400); scene.add(key);
     const fill = new THREE.DirectionalLight(0xe0d5c2, 1.5); fill.position.set(-200, 200, 150); scene.add(fill);
@@ -107,7 +108,15 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
       } else if (dragId) {
         const feature = store.features.find((f) => f.id === dragId);
         const layout = store.features.find((f) => f.id === feature?.params.groupId);
-        if (feature && layout && store.projectRevision === dragProject) {
+        if (feature?.kind === 'rod' && dragChannel && store.projectRevision === dragProject) {
+          const rod = rodFromFeature(feature), pose = rodPose(rod);
+          const rotation = new THREE.Euler((rod.rx || 0) * Math.PI / 180, (rod.ry || 0) * Math.PI / 180, (rod.rz || 0) * Math.PI / 180, 'ZYX');
+          const q = new THREE.Quaternion().setFromEuler(rotation);
+          const position = new THREE.Vector3(...pose.centre);
+          if (dragMode === 'rotate') rotation.setFromQuaternion(q.premultiply(proxy.quaternion), 'ZYX');
+          else position.add(proxy.position.clone().sub(dragStart));
+          store.setTransformWorld(dragId, position.toArray(), [rotation.x, rotation.y, rotation.z].map(THREE.MathUtils.radToDeg) as [number, number, number]);
+        } else if (feature && layout && store.projectRevision === dragProject) {
           if (dragMode === 'rotate' && dragChannel) {
             const u = new THREE.Vector3(...dragChannel.u).applyQuaternion(proxy.quaternion);
             const v = new THREE.Vector3(...dragChannel.v).applyQuaternion(proxy.quaternion);
@@ -199,6 +208,13 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
       if (!feature?.enabled || !(channel.width > 0 && channel.height > 0)) continue;
       const a = new THREE.Vector3(...channel.start), b = new THREE.Vector3(...channel.end), d = b.clone().sub(a);
       const selected = selectedId === channel.id;
+      if (feature.kind === 'rod') {
+        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(channel.width / 2, channel.width / 2, d.length(), 32),
+          new THREE.MeshStandardMaterial({ color: selected ? '#e89155' : '#aeb7bf', roughness: 0.35, metalness: 0.6 }));
+        mesh.position.copy(a).add(b).multiplyScalar(0.5);
+        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize());
+        mesh.userData.featureId = channel.id; e.channels.add(mesh); continue;
+      }
       const tube = feature.params.shape !== 'strip';
       const makeEnvelope = (width: number, height: number, radius: number) => {
         const shape = new THREE.Shape();
@@ -255,6 +271,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
       if (object instanceof THREE.LineSegments && object.material instanceof THREE.LineBasicMaterial) object.material.color.set(selected || grouped ? '#ffc389' : '#403831');
     }
     for (const object of e.channels.children) {
+      if (object.userData.featureId && object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) object.material.color.set(object.userData.featureId === selectedId ? '#e89155' : '#aeb7bf');
       if (object.userData.featureId && object instanceof THREE.Mesh && object.material instanceof THREE.MeshBasicMaterial) object.material.opacity = object.userData.featureId === selectedId ? 0.3 : 0.14;
     }
   }, [set, selectedId, angleScope, anglePreview, dragging]);
@@ -282,6 +299,6 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
   return <section className="assembly-canvas">
     <div ref={host} className="assembly-three" />
     <div className="assembly-overlay"><strong>Assembly</strong><span>{anglePreview ? dragging ? 'Angle preview' : 'Angle preview · checking cuts…' : pending ? 'Rebuilding…' : `${set?.slices.length ?? 0} parts`}</span><button className="btn" onClick={() => engine.current?.fit()}>Fit view</button></div>
-    <div className="assembly-caption">{anglePreview ? 'Live placement using the last cut outlines. Joints, supports and cut checks update after editing.' : !set?.slices.length ? pending ? 'Building the first assembly preview…' : 'Add a source shape, then create Radial ribs or Linear ribs.' : report?.channels.some((c) => c.id === selectedId) ? 'LED channel · M to move · R to rotate · drag a handle · cuts update on release' : 'Click a part or LED channel to select · drag to orbit · scroll to zoom'}<br />{report && !pending && !dragging && !report.cuttable && 'Some parts need attention. Read the assembly checks in the inspector.'}</div>
+    <div className="assembly-caption">{anglePreview ? 'Live placement using the last cut outlines. Joints, supports and cut checks update after editing.' : !set?.slices.length ? pending ? 'Building the first assembly preview…' : 'Add a source shape, then create Radial ribs or Linear ribs.' : report?.channels.some((c) => c.id === selectedId) ? `${features.find((f) => f.id === selectedId)?.kind === 'rod' ? 'Rod' : 'LED channel'} · M to move · R to rotate · drag a handle · cuts update on release` : 'Click a part, rod or LED channel to select · drag to orbit · scroll to zoom'}<br />{report && !pending && !dragging && !report.cuttable && 'Some parts need attention. Read the assembly checks in the inspector.'}</div>
   </section>;
 }
