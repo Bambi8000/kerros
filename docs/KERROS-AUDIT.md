@@ -175,7 +175,7 @@ passed every named check; it did not detect these UI and integration failures.
 | --- | --- | --- |
 | B1 | Opening another project reused mesh grids by feature id | Fixed: clear caches and advance revisions; real-store validator |
 | B2 | Model mode could export an old project's or old design's slices | Fixed: project ownership, immediate freshness checks, exports gated on a current pack |
-| B3 | Thin-feature check compared vertices and missed long-segment interiors | Pending |
+| B3 | Thin-feature check compared vertices and missed long-segment interiors | Fixed: segment/circle distances, geometric neighbourhood, sparse-rim and dense-curve validators |
 | B4 | Pin warnings claimed one-sided fastening and guessed the cause | Pending |
 | B5 | Boss inspector treated a disabled rod as an active support | Pending |
 | B6 | Fixture layer counts ignored the actual band and layer plan | Pending |

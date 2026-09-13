@@ -255,6 +255,21 @@ console.log('rig: cut radius and holes');
 
 console.log('checks: thin features');
 {
+  const contour = (points) => ({ points, area: signedArea(points), isHole: false });
+  const rectangle = (x, y, w, h) => contour([x, y, x + w, y, x + w, y + h, x, y + h]);
+  const outer = rectangle(-40, -40, 80, 80);
+  const hole = rectangle(38.5, -2, 1, 4);
+  const sparse = minFeatureGap({ contours: [outer, hole], circles: [] }, 1);
+  check('a hole beside the middle of a long edge is measured', near(sparse.minGap, 40 - (38.5 + 1), 1e-9));
+  const circleEdge = minFeatureGap({ contours: [outer], circles: [{ x: 38, y: 0, r: 1.5 }] }, 1);
+  check('a circular hole beside a long edge is measured', near(circleEdge.minGap, 40 - 38 - 1.5, 1e-9));
+  check('a four-vertex thin rectangle has a narrow interior',
+    near(minFeatureGap({ contours: [rectangle(0, 0, 80, 0.6)], circles: [] }, 1).minGap, 0.6, 1e-9));
+  check('a circular cut crossing a long edge has zero clearance',
+    minFeatureGap({ contours: [outer], circles: [{ x: 39, y: 0, r: 2 }] }, 1).minGap === 0);
+  check('an ordinary four-vertex box has no narrow neck', !minFeatureGap({ contours: [outer], circles: [] }, 1).tooThin);
+  check('densifying a smooth ring does not create a narrow neck',
+    !minFeatureGap({ contours: [contour(ringPoints(0, 0, 50, 4000))], circles: [] }, 1).tooThin);
   const wideRing = {
     contours: [
       { points: ringPoints(0, 0, 50, 200), area: 1, isHole: false },

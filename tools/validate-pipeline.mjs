@@ -75,6 +75,24 @@ function feature(id, kind, stage, params, extra = {}) {
 const shell = feature('sh', 'shell', 'CARVE', { ...defaultModifierParams(shellModifier), t: 10 });
 const body = feature('b', 'sphere', 'SHAPE', { ...defaultParams(sphere), op: 'union', r: 60, pz: 65 });
 
+console.log('pipeline: a leg hole beside a simplified straight rim');
+{
+  const box = feature('box', 'roundBox', 'SHAPE', { op: 'union', sx: 80, sy: 80, sz: 30, r: 0, pz: 15 });
+  const legs = feature('legs', 'legs', 'RIG', { legCount: 3, diameter: 12, radius: 33.5, tilt: 0, selKind: 'all' });
+  const output = runSliceJob({ ...baseJob([box, legs]), resolution: 200 }, new Map());
+  const slice = output.set.slices[0];
+  const maxX = (c) => Math.max(...c.points.filter((_, i) => i % 2 === 0));
+  const outer = slice.contours.find((c) => !c.isHole);
+  const rightHole = slice.contours.filter((c) => c.isHole).sort((a, b) => maxX(b) - maxX(a))[0];
+  const expected = maxX(outer) - maxX(rightHole);
+  check('the test really has a sparse rim and a sub-limit bridge', outer.points.length <= 16 && expected > 0 && expected < 1);
+  check('every layer warns about the bridge without turning off simplification', output.reports.every((r) => r.tooThin));
+  // Recorded from the audit's independent point-to-cut-segment measurement.
+  // maxX(outer) alone overestimates clearance: RDP leaves a slightly tilted rim.
+  check('reported clearance agrees with the measured cut geometry', Math.abs(output.reports[0].minGap - 0.7115052690478139) < 1e-6,
+    `${output.reports[0].minGap} measured`);
+}
+
 console.log('pipeline: an empty tree');
 {
   const output = runSliceJob(baseJob([]), new Map());

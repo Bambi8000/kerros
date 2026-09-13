@@ -1205,8 +1205,15 @@ close to each other. Points far apart **along the same ring** are compared too,
 because that is what a narrow neck looks like; immediate neighbours are
 excluded so an ordinary smooth curve is not mistaken for one.
 
-Points are bucketed into a grid of cell size `threshold`, so the cost stays
-linear in point count rather than quadratic.
+Whole segments are compared, including their interiors, and circular cuts are
+measured against those segments and each other. An X sweep and bounding-box
+rejection keep distant edges out of the distance calculation. On one ring,
+adjacent edges and points within two thresholds along its perimeter are local
+neighbours; that distance is measured in millimetres, independent of vertex
+count. Dense smooth curves therefore do not become warnings, while a simplified
+four-vertex neck can still be checked. A regression slices an 80 mm box with
+three 12 mm leg holes at 33.5 mm spread: its eight-vertex rim has a measured
+0.7115 mm bridge, which the old vertex-only check missed at a 1 mm threshold.
 
 The threshold is whichever is larger: the maker's `minFeature` setting or two
 kerfs, below which material burns through however good the geometry is.

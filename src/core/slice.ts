@@ -883,107 +883,132 @@ export interface GapReport {
   tooThin: boolean;
 }
 
+interface GapEdge {
+  ax: number; ay: number; bx: number; by: number;
+  minX: number; maxX: number; minY: number; maxY: number;
+  ring: number; index: number; count: number;
+  start: number; length: number; perimeter: number;
+}
+
+/** Parameter of the closest point on an edge, including degenerate edges. */
+function gapProjection(edge: GapEdge, x: number, y: number): number {
+  const dx = edge.bx - edge.ax, dy = edge.by - edge.ay;
+  const squared = dx * dx + dy * dy;
+  return squared > 0 ? Math.max(0, Math.min(1, ((x - edge.ax) * dx + (y - edge.ay) * dy) / squared)) : 0;
+}
+
 /**
- * Find the narrowest place in a slice.
- *
- * A slice can be geometrically valid and still fall apart on the bed: a wall
- * thinner than a couple of kerfs burns through, and a rod hole too near an
- * edge blows out. This measures the smallest gap between any two pieces of cut
- * geometry — including two distant points on the same ring, which is what a
- * narrow neck looks like — and between rod holes and everything else.
- *
- * Points are bucketed into a grid of cell size `threshold`, so only genuine
- * candidates are compared and the cost stays linear in point count.
+ * Distance between cut paths, including segment interiors and circular holes.
+ * The X sweep rejects disjoint boxes before measuring candidate edge pairs.
+ * On the same ring, skip adjacent edges and points less than two thresholds
+ * apart along the perimeter: dense samples on a curve are not a thin neck.
+ * This neighbourhood is measured in mm, so simplification cannot change it.
  */
-export function minFeatureGap(
-  slice: Slice,
-  threshold: number,
-  minIndexSeparation = 8,
-): GapReport {
+export function minFeatureGap(slice: Slice, threshold: number): GapReport {
   if (!(threshold > 0)) return { minGap: Infinity, at: null, tooThin: false };
-
-  const xs: number[] = [];
-  const ys: number[] = [];
-  const ring: number[] = [];
-  const position: number[] = [];
-  const ringLength: number[] = [];
-
+  const edges: GapEdge[] = [];
   for (let r = 0; r < slice.contours.length; r++) {
     const pts = slice.contours[r].points;
     const count = pts.length / 2;
-    ringLength.push(count);
+    const first = edges.length;
+    let start = 0;
     for (let i = 0; i < count; i++) {
-      xs.push(pts[i * 2]);
-      ys.push(pts[i * 2 + 1]);
-      ring.push(r);
-      position.push(i);
+      const j = (i + 1) % count;
+      const ax = pts[2 * i], ay = pts[2 * i + 1], bx = pts[2 * j], by = pts[2 * j + 1];
+      const length = Math.hypot(bx - ax, by - ay);
+      edges.push({ ax, ay, bx, by, minX: Math.min(ax, bx), maxX: Math.max(ax, bx),
+        minY: Math.min(ay, by), maxY: Math.max(ay, by), ring: r, index: i, count,
+        start, length, perimeter: 0 });
+      start += length;
     }
+    for (let i = first; i < edges.length; i++) edges[i].perimeter = start;
   }
-
+  edges.sort((a, b) => a.minX - b.minX);
   let best = threshold;
   let at: [number, number] | null = null;
-
-  const buckets = new Map<string, number[]>();
-  const keyOf = (x: number, y: number) =>
-    `${Math.floor(x / threshold)}:${Math.floor(y / threshold)}`;
-
-  for (let i = 0; i < xs.length; i++) {
-    const key = keyOf(xs[i], ys[i]);
-    const bucket = buckets.get(key);
-    if (bucket) bucket.push(i);
-    else buckets.set(key, [i]);
-  }
-
-  for (let i = 0; i < xs.length; i++) {
-    const cellX = Math.floor(xs[i] / threshold);
-    const cellY = Math.floor(ys[i] / threshold);
-
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dy = -1; dy <= 1; dy++) {
-        const bucket = buckets.get(`${cellX + dx}:${cellY + dy}`);
-        if (!bucket) continue;
-
-        for (const j of bucket) {
-          if (j <= i) continue;
-
-          if (ring[i] === ring[j]) {
-            // Neighbours along the same ring are not a narrow neck.
-            const n = ringLength[ring[i]];
-            const along = Math.abs(position[i] - position[j]);
-            const cyclic = Math.min(along, n - along);
-            if (cyclic < minIndexSeparation) continue;
-          }
-
-          const gap = Math.hypot(xs[i] - xs[j], ys[i] - ys[j]);
-          if (gap < best) {
-            best = gap;
-            at = [(xs[i] + xs[j]) / 2, (ys[i] + ys[j]) / 2];
-          }
-        }
+  const record = (ax: number, ay: number, bx: number, by: number) => {
+    const gap = Math.hypot(ax - bx, ay - by);
+    if (gap < best) {
+      best = gap;
+      at = [(ax + bx) / 2, (ay + by) / 2];
+    }
+  };
+  const compare = (a: GapEdge, ta: number, b: GapEdge, tb: number) => {
+    if (a.ring === b.ring) {
+      const along = Math.abs(a.start + ta * a.length - b.start - tb * b.length);
+      if (Math.min(along, a.perimeter - along) < 2 * threshold) return;
+    }
+    record(a.ax + ta * (a.bx - a.ax), a.ay + ta * (a.by - a.ay),
+      b.ax + tb * (b.bx - b.ax), b.ay + tb * (b.by - b.ay));
+  };
+  for (let i = 0; i < edges.length; i++) {
+    const a = edges[i];
+    for (let j = i + 1; j < edges.length; j++) {
+      const b = edges[j];
+      if (b.minX > a.maxX + threshold) break;
+      if (b.minY > a.maxY + threshold || a.minY > b.maxY + threshold) continue;
+      if (a.ring === b.ring) {
+        const apart = Math.abs(a.index - b.index);
+        if (Math.min(apart, a.count - apart) <= 1) continue;
+      }
+      // Non-crossing, non-parallel segments have their closest pair at an
+      // endpoint of at least one edge. Midpoints also measure the interior of
+      // a long parallel neck whose end is excluded as a local neighbourhood.
+      for (const t of [0, 0.5, 1]) {
+        compare(a, t, b, gapProjection(b, a.ax + t * (a.bx - a.ax), a.ay + t * (a.by - a.ay)));
+        compare(a, gapProjection(a, b.ax + t * (b.bx - b.ax), b.ay + t * (b.by - b.ay)), b, t);
+      }
+      const adx = a.bx - a.ax, ady = a.by - a.ay;
+      const bdx = b.bx - b.ax, bdy = b.by - b.ay;
+      const cross = adx * bdy - ady * bdx;
+      if (Math.abs(cross) > 1e-12) {
+        const dx = b.ax - a.ax, dy = b.ay - a.ay;
+        const ta = (dx * bdy - dy * bdx) / cross;
+        const tb = (dx * ady - dy * adx) / cross;
+        if (ta >= 0 && ta <= 1 && tb >= 0 && tb <= 1) compare(a, ta, b, tb);
       }
     }
   }
 
-  // Rod holes against the contours, and against each other.
   for (let c = 0; c < slice.circles.length; c++) {
     const circle = slice.circles[c];
-    for (let i = 0; i < xs.length; i++) {
-      const gap = Math.abs(Math.hypot(xs[i] - circle.x, ys[i] - circle.y) - circle.r);
-      if (gap < best) {
-        best = gap;
-        at = [(xs[i] + circle.x) / 2, (ys[i] + circle.y) / 2];
+    for (const edge of edges) {
+      const reach = circle.r + threshold;
+      if (edge.minX > circle.x + reach) break;
+      if (edge.maxX < circle.x - reach || edge.minY > circle.y + reach || edge.maxY < circle.y - reach) continue;
+      const t = gapProjection(edge, circle.x, circle.y);
+      let x = edge.ax + t * (edge.bx - edge.ax), y = edge.ay + t * (edge.by - edge.ay);
+      const near = Math.hypot(x - circle.x, y - circle.y);
+      const da = Math.hypot(edge.ax - circle.x, edge.ay - circle.y);
+      const db = Math.hypot(edge.bx - circle.x, edge.by - circle.y);
+      if (near <= circle.r && Math.max(da, db) >= circle.r) {
+        // The line crosses the circumference. Walk from its nearest point
+        // towards the farther endpoint by the remaining radius along the line.
+        const endX = da > db ? edge.ax : edge.bx, endY = da > db ? edge.ay : edge.by;
+        const length = Math.hypot(endX - x, endY - y);
+        const distance = Math.sqrt(Math.max(0, circle.r * circle.r - near * near));
+        if (length > 0) { x += (endX - x) * distance / length; y += (endY - y) * distance / length; }
+        record(x, y, x, y);
+      } else {
+        if (Math.max(da, db) < circle.r) {
+          x = da > db ? edge.ax : edge.bx;
+          y = da > db ? edge.ay : edge.by;
+        }
+        const distance = Math.hypot(x - circle.x, y - circle.y);
+        const ux = distance > 0 ? (x - circle.x) / distance : 1;
+        const uy = distance > 0 ? (y - circle.y) / distance : 0;
+        record(x, y, circle.x + ux * circle.r, circle.y + uy * circle.r);
       }
     }
     for (let d = c + 1; d < slice.circles.length; d++) {
       const other = slice.circles[d];
-      const gap =
-        Math.hypot(circle.x - other.x, circle.y - other.y) - circle.r - other.r;
+      const distance = Math.hypot(circle.x - other.x, circle.y - other.y);
+      const gap = Math.max(0, distance - circle.r - other.r, Math.abs(circle.r - other.r) - distance);
       if (gap < best) {
         best = gap;
         at = [(circle.x + other.x) / 2, (circle.y + other.y) / 2];
       }
     }
   }
-
   return { minGap: best, at, tooThin: at !== null };
 }

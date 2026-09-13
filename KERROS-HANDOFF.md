@@ -16,6 +16,8 @@ issues, recorded in `docs/KERROS-AUDIT.md`. Repairs are in progress. Project
 opening now clears imported mesh caches; cached slices carry ownership and
 freshness, and stale cut jobs cannot be exported. Model mode still retains its
 own last slice for fixture ghosts without paying for a reslice.
+The thin-feature check now measures whole cut segments and circles: the audit's
+0.7115 mm leg-to-rim bridge is warned about even after contour simplification.
 
 ## What Kerros is
 
