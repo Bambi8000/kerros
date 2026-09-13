@@ -45,6 +45,7 @@ const run=(features,overrides={})=>runSliceJob({...options,features:[base,...fea
 const errors=set=>set.assembly.issues.filter(i=>i.severity==='error');
 const linear=create('linear');
 const layout=linear.features[0], back=linear.features.find(f=>f.kind==='assembly:backplate');
+back.params.outline='rectangle'; // Preserve the original wall-joint fixtures.
 const led=assemblyMember('channel',layout,linear.features,linear.next++);
 linear.features.push(led);
 let set=run(linear.features);

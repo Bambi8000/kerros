@@ -145,6 +145,22 @@ function boundaryFits(points: number[], part: WorkPart, margin: number): boolean
 }
 function contourBox(contours: Contour[]): Box2 { return polyBox(contours.flatMap((c) => c.points)); }
 
+/** Two tabs in the longest continuous shoulder band, inset from its ends. */
+function followingTabs(rib: WorkPart, shoulder: number, padding: number, tabH: number, bridge: number): number[] {
+  const count = Math.max(1, Math.ceil((rib.box.maxY - rib.box.minY) / rib.step));
+  let start: number | undefined, best: [number, number] | undefined;
+  for (let i = 0; i <= count + 1; i++) {
+    const z = rib.box.minY + (rib.box.maxY - rib.box.minY) * i / count;
+    if (i <= count && rib.source(shoulder + bridge, z) <= -bridge / 2) start ??= z;
+    else if (start !== undefined) {
+      const end = z - (rib.box.maxY - rib.box.minY) / count;
+      if (!best || end - start > best[1] - best[0]) best = [start, end];
+      start = undefined;
+    }
+  }
+  return best && best[1] - best[0] >= 2 * padding + 2 * tabH ? [best[0] + padding, best[1] - padding] : [];
+}
+
 /** One active layout. Disabled layouts leave the legacy layer workflow intact. */
 export function activeAssembly(features: Feature[]): Feature | undefined {
   return features.find((f) => f.enabled && f.kind === 'assembly:layout');
@@ -210,7 +226,7 @@ export function buildAssembly(
   }
   for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:backplate')) {
     const w = num(f, 'width', radius * 2), h = num(f, 'height', height), z = num(f, 'pz');
-    if (!(w > 2 * minBridge && h > 2 * minBridge)) { say('error', [f.id], 'The backplate width and height must exceed two minimum bridges.'); continue; }
+    if (f.params.outline !== 'frame' && !(w > 2 * minBridge && h > 2 * minBridge)) { say('error', [f.id], 'The backplate width and height must exceed two minimum bridges.'); continue; }
     const t = f.params.ownMaterial === true ? Math.max(0.2, num(f, 'thickness', stockT)) : stockT;
     const back = makePart(f, 'backplate', [num(f, 'px'), num(f, 'py') - t / 2, z], [1, 0, 0], [0, 0, 1], { minX: -w / 2, maxX: w / 2, minY: -h / 2, maxY: h / 2 }, (x, y) => rectDistance(x, y, 0, 0, w, h, num(f, 'cornerRadius', 3)));
     back.meta.wallOffset = num(f, 'wallOffset');
@@ -260,29 +276,64 @@ export function buildAssembly(
   if (backs.length && supports.length) say('error', [...backs, ...supports].map((p) => p.meta.id), 'Wall tabs and ring slots require different insertion paths. Use one support system per assembly.');
   for (const back of backs) {
     const f = children.find((f) => f.id === back.meta.id)!;
+    const follows = f.params.outline === 'frame';
     const front = back.meta.origin[1] + back.meta.thickness / 2;
     const tabH = Math.max(2, num(f, 'tabHeight', 12));
     const tabGap = Math.max(tabH * 2, num(f, 'tabSpacing', height * 0.45));
-    for (const rib of ribs) {
+    const frameWidth = num(f, 'frameWidth', tabH + 6), inset = num(f, 'profileInset', 4);
+    if (follows && (frameWidth <= tabH + fit * 2 + minBridge * 2 || inset < 0)) {
+      say('error', [f.id], 'Frame width must leave material on both sides of a tab slot; increase it above tab height plus two clearances and two minimum bridges. Profile inset cannot be negative.');
+      parts.splice(parts.indexOf(back), 1); continue;
+    }
+    const plans = ribs.flatMap((rib) => {
       const uy = rib.meta.u[1];
-      if (uy < 0.25) { say('error', [rib.meta.id, back.meta.id], 'The rib must face away from the wall and cross it at 15 degrees or more. Flip or rotate this rib.'); continue; }
+      if (uy < 0.25) { say('error', [rib.meta.id, back.meta.id], 'The rib must face away from the wall and cross it at 15 degrees or more. Flip or rotate this rib.'); return []; }
       const faceU = (front - rib.meta.origin[1]) / uy;
-      // The shoulder clears the wall across the whole rib thickness.
+      // Both stock thicknesses contribute to the shoulder and projected slot.
       const shoulder = faceU + Math.abs(rib.meta.n[1]) * rib.meta.thickness / (2 * uy);
-      const before = rib.field;
-      rib.field = (x, y) => Math.max(before(x, y), shoulder - x);
       const protrusion = Math.max(0, num(f, 'tabProtrusion', 0));
       const backU = faceU - (back.meta.thickness + protrusion + Math.abs(rib.meta.n[1]) * rib.meta.thickness / 2) / uy;
-      const tabZ = [-tabGap / 2, tabGap / 2].map((z) => z + back.meta.origin[2] - rib.meta.origin[2]);
+      const tabZ = follows ? followingTabs(rib, shoulder, frameWidth / 2 + inset, tabH, minBridge)
+        : [-tabGap / 2, tabGap / 2].map((z) => z + back.meta.origin[2] - rib.meta.origin[2]);
+      if (!tabZ.length) say('error', [rib.meta.id, back.meta.id], 'No continuous shoulder band fits two frame tabs. Reduce frame width, profile inset or tab height, or change the rib profile.');
+      const openings = tabZ.map((z) => prismOpening(back.meta, sheetWorld(rib.meta, backU, z), sheetWorld(rib.meta, shoulder + minBridge, z), rib.meta.n, rib.meta.v, [-rib.meta.thickness / 2 - fit, -tabH / 2 - fit, rib.meta.thickness / 2 + fit, -tabH / 2 - fit, rib.meta.thickness / 2 + fit, tabH / 2 + fit, -rib.meta.thickness / 2 - fit, tabH / 2 + fit]));
+      return [{ rib, shoulder, backU, tabZ, openings }];
+    });
+    let upper: number[][] = [];
+    if (follows) {
+      const pairs = plans.filter((p) => p.openings.length === 2 && p.openings.every((o) => o.length)).map((p) => p.openings.map((o) => {
+        const box = polyBox(o);
+        // X/Z offset moves the outline; the mating cuts remain at the ribs.
+        return [(box.minX + box.maxX) / 2 + back.meta.origin[0], (box.minY + box.maxY) / 2 + back.meta.origin[2]];
+      })).sort((a, b) => a[0][0] - b[0][0]);
+      if (pairs.length < 2 || pairs.at(-1)![0][0] - pairs[0][0][0] <= frameWidth) {
+        say('error', [f.id], 'An open frame needs at least two usable ribs spread wider than its frame width. Separate the ribs or use a solid rectangle.');
+        parts.splice(parts.indexOf(back), 1); continue;
+      }
+      upper = pairs.map((p) => p[1]);
+      const loop = [...pairs.map((p) => p[0]), ...[...upper].reverse()].flat();
+      const distance = polygonDistance(loop, kernel, reach);
+      const source: Distance = (x, y) => Math.abs(distance(x, y)) - frameWidth / 2;
+      const box = polyBox(loop), pad = frameWidth / 2;
+      back.source = back.field = source;
+      back.box = { minX: box.minX - pad, maxX: box.maxX + pad, minY: box.minY - pad, maxY: box.maxY + pad };
+      back.step = Math.max(back.step, (back.box.maxX - back.box.minX) / 1400, (back.box.maxY - back.box.minY) / 1400);
+      if (!samples(box, Math.max(back.step, minBridge / 2), (x, y) => distance(x, y) < -pad - minBridge))
+        say('error', [f.id], 'The frame has no usable centre opening. Reduce frame width or profile inset, or separate the ribs.');
+    }
+    for (const { rib, shoulder, backU, tabZ, openings } of plans) {
+      const before = rib.field;
+      rib.field = (x, y) => Math.max(before(x, y), shoulder - x);
       let made = 0;
-      for (const z of tabZ) {
+      for (const [i, z] of tabZ.entries()) {
         const box = { minX: backU, maxX: shoulder + minBridge, minY: z - tabH / 2, maxY: z + tabH / 2 };
         if ([z - tabH / 2, z, z + tabH / 2].some((v) => rib.source(shoulder + minBridge, v) > -minBridge / 2)) {
           say('error', [rib.meta.id, back.meta.id], 'A tab has no shoulder material at its chosen height. Reduce tab spacing or change the rib profile.'); continue;
         }
-        const tab = rect(box.minX, box.minY, box.maxX, box.maxY);
-        const opening = prismOpening(back.meta, sheetWorld(rib.meta, backU, z), sheetWorld(rib.meta, shoulder + minBridge, z), rib.meta.n, rib.meta.v, [-rib.meta.thickness / 2 - fit, -tabH / 2 - fit, rib.meta.thickness / 2 + fit, -tabH / 2 - fit, rib.meta.thickness / 2 + fit, tabH / 2 + fit, -rib.meta.thickness / 2 - fit, tabH / 2 + fit]);
-        if (!opening.length || !boundaryFits(opening, back, minBridge)) { say('error', [rib.meta.id, back.meta.id], 'A tab slot reaches the backplate edge or another slot. Enlarge the backplate or separate the ribs.'); continue; }
+        const tab = rect(box.minX, box.minY, box.maxX, box.maxY), opening = openings[i];
+        if (!opening.length || !boundaryFits(opening, back, minBridge)) {
+          say('error', [rib.meta.id, back.meta.id], follows ? 'A tab slot reaches the frame edge or another slot. Increase frame width, reset frame offsets or separate the ribs.' : 'A tab slot reaches the backplate edge or another slot. Enlarge the backplate or separate the ribs.'); continue;
+        }
         unite(rib, tab); rib.box.minX = Math.min(rib.box.minX, backU);
         const cut = polygonDistance(opening, kernel, reach);
         subtract(back, cut);
@@ -295,15 +346,41 @@ export function buildAssembly(
       const spacing = Math.max(0, num(f, 'mountSpacing', (back.box.maxX - back.box.minX) * 0.65));
       const z = num(f, 'mountZ', (back.box.maxY - back.box.minY) * 0.3);
       const r = Math.max(0.5, num(f, 'screwDiameter', 4) / 2);
-      const headR = Math.max(r, num(f, 'headDiameter', 8) / 2);
-      for (const x of [-spacing / 2, spacing / 2]) {
-        const cut: Distance = mount === 'keyhole'
-          ? (u, v) => Math.min(Math.hypot(u - x, v - z + headR * 2) - headR, rectDistance(u, v, x, z - headR, 2 * r, 2 * headR + 2 * r), Math.hypot(u - x, v - z) - r)
-          : (u, v) => Math.hypot(u - x, v - z) - r;
-        const box = { minX: x - headR, maxX: x + headR, minY: z - headR * 3, maxY: z + headR };
-        const rings = kernel.trace(cut, box, Math.min(back.step, r / 5));
-        if (!rings.length || !rings.every((c) => boundaryFits(c.points, back, minBridge))) say('error', [back.meta.id], 'A mounting opening crosses a tab slot or the backplate edge. Adjust its spacing, height or dimensions.');
-        else { subtract(back, cut); back.zones.push({ field: cut, box }); }
+      const headR = !follows || mount === 'keyhole' ? Math.max(r, num(f, 'headDiameter', 8) / 2) : r;
+      const automatic = follows && f.params.mountPlacement !== 'manual';
+      const candidates = upper.slice(1).flatMap((p, i) => [0.25, 0.5, 0.75].map((t) => [upper[i][0] + (p[0] - upper[i][0]) * t, upper[i][1] + (p[1] - upper[i][1]) * t]));
+      for (const side of [-1, 1]) {
+        const targetX = upper.length ? upper[0][0] + (upper.at(-1)![0] - upper[0][0]) * (side < 0 ? 0.25 : 0.75) : side * spacing / 2;
+        const middleX = upper.length ? (upper[0][0] + upper.at(-1)![0]) / 2 : 0;
+        const choices = automatic ? candidates.filter((p) => side * (p[0] - middleX) > 0)
+          .sort((a, b) => Math.abs(a[0] - targetX) - Math.abs(b[0] - targetX))
+          .flatMap(([x, z]) => [[x, z], [x, z - tabH / 2 - headR - 2 * minBridge]]) : [[side * spacing / 2, z]];
+        let placed = false;
+        for (const [x, centreZ] of choices) {
+          const z = centreZ + (automatic && mount === 'keyhole' ? headR : 0);
+          const cut: Distance = mount === 'keyhole'
+            ? (u, v) => Math.min(Math.hypot(u - x, v - z + headR * 2) - headR, rectDistance(u, v, x, z - headR, 2 * r, 2 * headR + 2 * r), Math.hypot(u - x, v - z) - r)
+            : (u, v) => Math.hypot(u - x, v - z) - r;
+          const box = { minX: x - headR, maxX: x + headR, minY: !follows || mount === 'keyhole' ? z - headR * 3 : z - r, maxY: z + (follows ? r : headR) };
+          const rings = kernel.trace(cut, box, Math.min(back.step, r / 5));
+          let field = back.field, source = back.source;
+          if (automatic) {
+            const margin = Math.max(minBridge * 2, frameWidth / 4);
+            const pad: Distance = (u, v) => rectDistance(u, v, x, (box.minY + box.maxY) / 2, box.maxX - box.minX + 2 * margin, box.maxY - box.minY + 2 * margin, margin);
+            const original = source; source = (u, v) => Math.min(original(u, v), pad(u, v));
+            // Preserve every earlier slot when growing a small mounting pad.
+            const cuts = back.zones.map((zone) => zone.field), padded = source;
+            field = (u, v) => cuts.reduce((d, cut) => Math.max(d, -cut(u, v)), padded(u, v));
+          }
+          if (!rings.length || !rings.every((c) => boundaryFits(c.points, { ...back, field }, minBridge))) continue;
+          back.source = source; back.field = field;
+          if (automatic) {
+            const margin = Math.max(minBridge * 2, frameWidth / 4);
+            back.box = { minX: Math.min(back.box.minX, box.minX - margin), maxX: Math.max(back.box.maxX, box.maxX + margin), minY: Math.min(back.box.minY, box.minY - margin), maxY: Math.max(back.box.maxY, box.maxY + margin) };
+          }
+          subtract(back, cut); back.zones.push({ field: cut, box }); placed = true; break;
+        }
+        if (!placed) say('error', [back.meta.id], automatic ? 'No upper-rail position fits this mounting opening clear of the tab slots. Separate ribs, reduce the opening or use manual mounting placement.' : 'A mounting opening crosses a tab slot or the backplate edge. Adjust its spacing, height or dimensions.');
       }
     }
     if (num(f, 'wallOffset') < num(f, 'tabProtrusion')) say('error', [back.meta.id], 'Wall offset is smaller than the protruding tabs. Increase the offset or shorten the tabs.');
@@ -437,7 +514,7 @@ export function buildAssembly(
   // mean there is no sequential assembly order, even if the final pose fits.
   const before = new Map<string, Set<string>>(ribs.map((r) => [r.meta.id, new Set<string>()]));
   for (const rib of ribs) {
-    for (const fixed of [...supports, ...backs, ...ribs.filter((r) => r !== rib)]) {
+    for (const fixed of [...supports, ...backs.filter((p) => parts.includes(p)), ...ribs.filter((r) => r !== rib)]) {
       let blocked = false;
       for (let distance = Math.max(stockT, 1); distance <= reach; distance += Math.max(stockT, reach / 28)) {
         if (collision(rib, fixed, mul3(rib.meta.u, distance))) { blocked = true; break; }

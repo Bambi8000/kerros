@@ -7,9 +7,18 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.29.1.** The MVP as originally scoped is
+**State at the time of writing: version 0.30.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+New linear assemblies use a minimal, open wall frame. Its upper and lower rails
+follow each rib's usable shoulder profile and placement; two tabs per rib follow
+the same heights. Rail width and profile inset are editable. Two mounting holes
+follow the upper rail, with small inward pads where a dense rib row needs room.
+Old projects retain their rectangular backplate until `Outline` is changed to
+`Open frame`. The sphere validator uses 72.2% less backplate area
+than the old rectangle, with all nine joints and both screw holes. This is a
+geometry result, not a strength rating: the frame still needs a physical coupon.
 
 **Ribs & Supports** adds upright radial and linear assemblies. Each rib has a
 persistent feature ID, a source sampling plane and a separate editable placement.
@@ -445,6 +454,7 @@ about to happen when this handoff was written; ask before assuming.
 
 - **Upright assemblies.** Cut a two-rib/two-ring coupon and a two-rib wall
   coupon using the actual LED tube or profile. Measure kerf, slot and tab fit,
+  including the open frame's rails, mounting pads and two profile-following tabs,
   insertion sequence, remaining bridges and wall clearance. Glued oblique
   shoulders meet at an edge rather than a laser-cut bevel. No load rating or
   LED retention follows from the geometric checks.

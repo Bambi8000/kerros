@@ -3296,10 +3296,28 @@ insert each rib along negative U. Missing or disconnected overlap regions,
 collisions and blocked insertion paths name their parts. Different support
 heights or diameters do not silently preserve obsolete joints.
 
-Linear assemblies start with a wall backplate, editable in width, height,
-position, margin, rounded corners and stock. `Fit plate to current ribs` fits its
-outline around the current assembled rib extents. Each rib is trimmed to the
-front face and gains two glued tabs. Tab height, centre spacing, protrusion,
+Since 0.30.0, new linear assemblies start with `Open frame` as
+the wall mount's Outline. The upper and lower rails follow the longest
+continuous band of material at each rib's shoulder. Their centre heights sit
+half a frame width plus `Profile inset` inside the sampled band ends. The rails
+connect those stations in X order and close with rounded end rails, leaving an
+open centre. The same heights place two mating tabs per rib. Moving a rib or
+editing its source updates both the frame and its joints.
+
+`Frame width` controls the band around that closed path; `Profile inset` moves
+the rails inward. A frame needs at least two usable ribs and enough separation
+for an open centre. Too little shoulder material, narrow rails, crossing slots
+and a closed centre are named errors, not a fallback to a solid plate. X/Z
+frame offsets move the outline while mating slots remain at the ribs; zero
+offsets keep the outline aligned automatically. Front face Y still sets the
+wall plane. Width and height controls and the Fit button are hidden for frames
+because their dimensions are derived from the ribs.
+
+Saved projects without an Outline retain the original `Solid rectangle`,
+editable in width, height, position, margin, rounded corners and stock.
+`Fit plate to current ribs` fits that rectangle around the assembled rib extents.
+Switch Outline explicitly to adopt the frame. Each rib is trimmed to the
+front face and gains two glued tabs. Tab height, rectangle tab spacing, protrusion,
 wall offset, stock thickness, joint clearance per side and laser kerf are
 separate values. Both full sheet thicknesses determine oblique slot envelopes;
 a copied mating thickness would be wrong. Ribs must face away from the wall and
@@ -3307,7 +3325,12 @@ cross it at at least approximately 15 degrees (U dot front direction >= 0.25).
 The shoulder clears the wall across the complete rib thickness; at an oblique
 angle it contacts on an edge rather than requiring a bevel.
 
-Screw holes or keyholes use explicit shank/head dimensions, spacing and height.
+Screw holes or keyholes use explicit shank/head dimensions. A frame defaults to
+`Follow upper rail` mounting: one opening on each side, trying positions between
+tab slots near the quarter points. Dense rib rows can need a small pad toward
+the centre opening. Pads preserve all earlier slots; no hole is silently filled
+back in. Manual mounting uses explicit spacing and height and must fit the
+existing frame. Rectangles retain their original manual placement.
 Mount openings must clear edges and existing tab slots. A faint wall plane and
 the manifest show the offset behind the plate; hardware and stand-off spacers
 are not generated. Tabs protruding beyond the wall offset are refused. Use one
@@ -3418,7 +3441,12 @@ strip routes, roll, clearance versus kerf, finite ends, edge openings, joint
 conflicts, missing targets, legacy identity and exact in-plane kerf.
 `tools/validate-assembly-state.mjs` exercises the real store, linked angle deltas,
 count reductions and retained IDs, save/open, material-separated nesting, DXF,
-manifest/PDF and actual worker message handler. Both are in `npm run verify`.
+manifest/PDF and actual worker message handler. `tools/validate-wall-frame.mjs`
+covers the open centre and single connected part, all mating tabs and mounting
+holes, curved source profiles, individual rib movement, width and inset, keyholes,
+mixed stock, oblique joints, kerf direction, LED coexistence and explicit refusal
+cases. Its sphere fixture uses 72.2% less backplate area than the rectangle;
+this does not establish strength. All three validators are in `npm run verify`.
 Channel gizmo checks cover quaternion roundtrips, vertical poles, section roll,
 rotated layouts, a route anchor distinct from fitted midpoint, actual bore
 centres after a pose edit, atomic state writes and save/open. They do not replace

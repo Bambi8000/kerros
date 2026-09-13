@@ -26,6 +26,7 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
   const kind = feature.kind.slice('assembly:'.length);
   const members = state.features.filter((f) => f.params.groupId === layout?.id);
   const p = feature.params;
+  const follows = p.outline === 'frame';
   const patch = (key: string, value: number | string | boolean) => state.setParam(feature.id, key, value);
   const number = (key: string, label: string, fallback = 0, unit = 'mm', step = 1) => <NumberField key={key} label={label} value={num(feature, key, fallback)} unit={unit} step={step} onChange={(v) => patch(key, v)} />;
   const toggle = (key: string, label: string, fallback = false) => <label className="assembly-check"><input type="checkbox" checked={typeof p[key] === 'boolean' ? Boolean(p[key]) : fallback} onChange={(e) => patch(key, e.target.checked)} />{label}</label>;
@@ -92,6 +93,11 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
     </div>}
     {kind === 'backplate' && <>
       <div className="group"><div className="group-head">Backplate</div>
+        {choose('outline', 'Outline', [['frame', 'Open frame'], ['rectangle', 'Solid rectangle']], 'rectangle')}
+        {follows ? <>
+          {number('frameWidth', 'Frame width', num(feature, 'tabHeight', 12) + 6)}{number('profileInset', 'Profile inset', 4)}
+          <p className="hint">Upper and lower rails follow the usable shoulder band of each rib. Rounded ends join them into one open frame. Width sets the rail thickness in the drawing; inset moves it farther inside the profile. Tab heights follow automatically.</p>
+        </> : <>
         {number('width', 'Plate width')}{number('height', 'Plate height')}{number('cornerRadius', 'Corner radius')}{number('margin', 'Fit margin', 8)}
         <button className="btn" disabled={pending || !set?.assembly} onClick={() => {
           const points = set!.slices.filter((s) => s.part?.kind === 'rib').flatMap((s) => s.contours.flatMap((c) => c.points.reduce<number[][]>((out, x, i) => { if (i % 2 === 0) out.push(sheetWorld(s.part!, x, c.points[i + 1])); return out; }, [])));
@@ -102,16 +108,23 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
           patch('width', 2 * Math.max(...xs.map(Math.abs)) + 2 * num(feature, 'margin', 8));
           patch('height', 2 * Math.max(...zs.map(Math.abs)) + 2 * num(feature, 'margin', 8));
         }}>Fit plate to current ribs</button>
-        {number('px', 'Centre X')}{number('py', 'Front face Y')}{number('pz', 'Centre Z')}{number('wallOffset', 'Space behind plate')}
+        </>}
+        {number('px', follows ? 'Frame offset X' : 'Centre X')}{number('py', 'Front face Y')}{number('pz', follows ? 'Frame offset Z' : 'Centre Z')}{number('wallOffset', 'Space behind plate')}
+        {follows && <p className="hint">Keep frame offsets at zero to follow the ribs. Offsets move the outline; mating slots stay aligned with the ribs.</p>}
         <p className="hint">The faint plane shows the wall. Mounting spacers and hardware are not generated.</p>
       </div>
       <div className="group"><div className="group-head">Glued tabs</div>
-        {number('tabHeight', 'Tab height')}{number('tabSpacing', 'Tab centre spacing')}{number('tabProtrusion', 'Protrusion behind plate')}
+        {number('tabHeight', 'Tab height')}{!follows && number('tabSpacing', 'Tab centre spacing')}{number('tabProtrusion', 'Protrusion behind plate')}
         <p className="hint">Two tabs per rib. Shoulders set insertion depth; oblique slots include both stock thicknesses. Glue choice and strength require a physical test.</p>
       </div>
       <details className="group" open><summary>Wall mounting openings</summary>
         {choose('mount', 'Opening', [['none', 'None'], ['screw', 'Screw holes'], ['keyhole', 'Keyholes']], 'screw')}
-        {p.mount !== 'none' && <>{number('mountSpacing', 'Opening spacing')}{number('mountZ', 'Opening height')}{number('screwDiameter', 'Screw shank diameter')}{p.mount === 'keyhole' && number('headDiameter', 'Screw head diameter')}</>}
+        {p.mount !== 'none' && <>
+          {follows && choose('mountPlacement', 'Placement', [['auto', 'Follow upper rail'], ['manual', 'Manual coordinates']], 'auto')}
+          {(!follows || p.mountPlacement === 'manual') && <>{number('mountSpacing', 'Opening spacing')}{number('mountZ', 'Opening height')}</>}
+          {number('screwDiameter', 'Screw shank diameter')}{p.mount === 'keyhole' && number('headDiameter', 'Screw head diameter')}
+          {follows && p.mountPlacement !== 'manual' && <p className="hint">Two openings are placed between tab slots along the upper rail, with small local pads where needed. If no clear position fits, the assembly checks say so.</p>}
+        </>}
       </details>
     </>}
     {kind === 'channel' && <>
