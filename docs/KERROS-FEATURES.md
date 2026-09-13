@@ -3262,7 +3262,7 @@ and patterns are listed as excluded while an upright assembly is enabled.
 ### Persistent parts and source profiles
 
 `assembly:layout`, `assembly:rib`, `assembly:support`, `assembly:backplate` and
-`assembly:channel` are SLICE-stage feature records. Their params and group IDs
+`assembly:channel`, plus `assembly:joint` since 0.31.0, are SLICE-stage feature records. Their params and group IDs
 travel through the existing project format and worker transport. `assembly.ts`
 and `assemblyFeatures.ts` have no value imports. `pipeline.ts` supplies the real
 sheet tracer, indexed polygon distance and thin-feature checker.
@@ -3279,7 +3279,7 @@ stations, placement offsets and angles of retained members. New radial ribs fill
 the largest angular gap; new linear ribs extend the row. Count reduction removes
 the last-created members and names them. Deleted IDs are not reused, including after save/open: the project stores the
 allocation watermark. Explicit
-channel targets referring to deleted parts require correction. `Distribute
+channel targets and rib joints referring to deleted parts require correction. `Distribute
 source stations evenly` is a separate, visible regeneration action. Ribs are
 limited to 64 and horizontal supports to 12 per assembly to bound interactive
 work. Switching `Selected` / `All follow` does not change any feature parameters;
@@ -3365,6 +3365,63 @@ backplate. Ring supports and wall tabs cannot be combined because their straight
 insertion paths differ. These are glued joints, with no mechanical lock or load
 rating, and remain physically untested.
 
+### Rib intersections — **shipped** (0.31.0)
+
+Each current rib/rib collision in the inspector offers `Create cross joint`
+and `Create clearance cut`, with a `Cut rib` selector for the latter. These
+actions create an `assembly:joint` in the tree. A repeated action selects the
+existing operation for that unordered pair, including a disabled one; it does
+not silently switch its mode or create duplicates. The inspector edits Action,
+the two rib references, slot direction, split and relief. `Inspect R…` opens
+the selected rib in Part. Removing or disabling an operation restores the cuts;
+missing/disabled rib references remain visible and block export. Operations
+follow current placements and materials rather than storing stale cut outlines.
+
+Cross joints need one continuous shared vertical band, a crossing angle with
+absolute sine at least 0.25 (about 15 degrees), and real material around the
+slot ends. One slot opens upward and the other downward. `Automatic` gives the
+lower persistent rib ID the upward opening; either rib can be chosen explicitly.
+`Joint split` is a percentage of the shared band, default 50. Both closed ends
+extend by the shared joint clearance across that split. `Tip relief radius`
+adds circles at the closed corners, default 0.5 mm; zero leaves square corners.
+It must not exceed half the narrower slot width.
+
+For stock thicknesses ta and tb at angle theta, the full slot width in A is
+`(tb + 2 * clearance + abs(cos(theta)) * ta) / abs(sin(theta))`.
+This clears the complete slab sweep rather than only the other mid-plane.
+Cross-joint cuts are applied atomically to both ribs only when both remain
+connected and clear existing wall tabs, support slots and earlier rib cuts by
+the configured bridge threshold. Closely spaced crossings or a crossing near
+an edge can therefore be refused, with the affected IDs and reason shown.
+
+Clearance cut removes the other rib's full-thickness projection from `Cut rib`;
+`Keep rib` retains its profile. It creates no rib-to-rib attachment. The cutter
+samples the mating profile over the slab-clipped target thickness, with
+Lipschitz slack covering gaps between samples. It can make a closed opening in
+a larger rib around a shorter rib, or an edge opening if the part stays
+connected. A disconnected result or damaged joint is refused without applying
+the operation. All operations use rib profiles after wall/ring joints but
+before any rib operations, so a preceding cut cannot silently shrink the next
+cutter. LED channels run afterwards and respect the new protected joint zones.
+
+Successful cross joints switch insertion planning to **ribs first, wall last**.
+The solver searches straight disassembly upward, downward and along each rib's
+positive U direction, removes a clear rib, and reverses that sequence for
+assembly. The wall must separately clear the finished rib network when sliding
+on from behind along assembly +Y. A cyclic or blocked sequence names the ribs
+and blocks export. Directions refer to the assembly frame. These sweeps use
+24–96 steps over the projected extents and the existing slab collision sampler;
+they are resolution-dependent, not a continuous motion proof. Moving groups
+together, tilting ribs and combining cross joints with horizontal rings are
+not supported. With no successful cross joints, the existing negative-U
+insertion workflow is preserved.
+
+Joint instructions and the complete order appear in the manifest and assembly
+PDF; actual cut contours feed Part, Assembly, nesting and DXF. Kerf is applied
+only after the finished nominal profile is redistanced. Physical acceptance
+still requires a coupon in the chosen stock; corner relief and geometric fit
+do not establish strength or a load rating.
+
 ### LED channel and manufacturing meaning
 
 Add `LED channel` from the assembly inspector. Its straight, flat-ended route is
@@ -3430,9 +3487,10 @@ existing imported profiles. The bridge threshold includes the configured
 minimum feature and twice the largest enabled stock kerf.
 
 Collision checks sample a 3-by-3 family of slab-plane intersection lines, rather
-than only the mid-planes. Straight rib insertion is sampled from outside along
-negative U; rib-to-rib obstructions form a dependency graph, and cycles are
-refused. These are resolution-dependent checks, not an exhaustive continuous
+than only the mid-planes. Without rib cross joints, straight rib insertion is
+sampled from outside along negative U; rib-to-rib obstructions form a dependency
+graph, and cycles are refused. Cross joints use the wall-last sequence described
+above. These are resolution-dependent checks, not an exhaustive continuous
 motion proof. The inspector and assembly document explicitly require a physical
 dry-fit coupon. Narrow contacts between samples and material flex remain limits.
 
@@ -3481,7 +3539,15 @@ rib movement and mixed stock; they also check reversible switching, kerf and
 manual holes in the filled centre. The state/export validator carries Minimal
 solid through save/open, nesting, DXF, manifest/PDF and the real worker.
 The open sphere fixture uses 72.2% less backplate area than the rectangle;
-this does not establish strength. All three validators are in `npm run verify`.
+this does not establish strength.
+`tools/validate-rib-joints.mjs` covers multiple oblique crossings, unchanged wall
+attachments, actual full-thickness fit and slot width, mixed stock, split,
+opening directions, relief, kerf, reversible operations, a trapped three-rib
+cycle and its repair, invalid/missing/duplicate references, near-parallel and
+ring-support refusals, connected clearance cuts, unchanged mating ribs and LED
+conflicts. The state/export validator also carries rib operations through real
+store actions, save/open, dangling references, nesting, DXF, vector PDF
+instructions and the worker. All four assembly validators are in `npm run verify`.
 Channel gizmo checks cover quaternion roundtrips, vertical poles, section roll,
 rotated layouts, a route anchor distinct from fitted midpoint, actual bore
 centres after a pose edit, atomic state writes and save/open. They do not replace

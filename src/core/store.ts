@@ -45,8 +45,8 @@ import {
   windowFrameFor,
 } from './pipeline';
 import { localiseFixture } from './fixture';
-import { assemblyFeatures, assemblyMember } from './assemblyFeatures';
-import type { AssemblyMember } from './assemblyFeatures';
+import { assemblyFeatures, assemblyMember, ribOperation } from './assemblyFeatures';
+import type { AssemblyMember, RibOperation } from './assemblyFeatures';
 
 export type ViewName = 'persp' | 'top' | 'front' | 'side';
 
@@ -189,6 +189,7 @@ interface KerrosState {
   addShape: (moduleKey: string) => void;
   addAssembly: (kind: 'radial' | 'linear') => void;
   addAssemblyMember: (id: string, kind: AssemblyMember) => void;
+  addRibOperation: (a: string, b: string, operation: RibOperation) => void;
   setAssemblyCount: (id: string, kind: 'rib' | 'support', count: number) => void;
   setAssemblyAngle: (id: string, angle: number, all: boolean) => void;
   setAssemblyChannelPose: (id: string, patch: Partial<Record<'px' | 'py' | 'pz' | 'yaw' | 'elevation' | 'roll', number>>) => void;
@@ -445,6 +446,16 @@ export const useKerros = create<KerrosState>((set, get) => ({
     const layout = s.features.find((f) => f.id === id && f.kind === 'assembly:layout');
     if (!layout) return s;
     const feature = assemblyMember(kind, layout, s.features, s.nextFeatureNumber);
+    return { features: [...s.features, feature], nextFeatureNumber: s.nextFeatureNumber + 1, selectedId: feature.id, panel: 'inspector' };
+  }),
+  addRibOperation: (a, b, operation) => set((s) => {
+    const first = s.features.find((f) => f.id === a && f.kind === 'assembly:rib' && f.enabled);
+    const second = s.features.find((f) => f.id === b && f.kind === 'assembly:rib' && f.enabled);
+    if (!first || !second || a === b || !first.params.groupId || first.params.groupId !== second.params.groupId) return s;
+    const existing = s.features.find((f) => f.kind === 'assembly:joint' && f.params.groupId === first.params.groupId
+      && [f.params.ribA, f.params.ribB].includes(a) && [f.params.ribA, f.params.ribB].includes(b));
+    if (existing) return { selectedId: existing.id, panel: 'inspector' };
+    const feature = ribOperation(first, second, operation, s.nextFeatureNumber);
     return { features: [...s.features, feature], nextFeatureNumber: s.nextFeatureNumber + 1, selectedId: feature.id, panel: 'inspector' };
   }),
   setAssemblyCount: (id, kind, requested) => set((s) => {

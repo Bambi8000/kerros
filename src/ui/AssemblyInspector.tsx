@@ -5,6 +5,21 @@ import { assemblyNumber as num, sheetWorld } from '../core/assembly';
 import { useKerros } from '../core/store';
 import { NumberField } from './NumberField';
 
+function RibCollisionActions({ pair }: { pair: [string, string] }) {
+  const state = useKerros();
+  const [choice, setChoice] = useState(state.selectedId ?? pair[0]);
+  const cutId = pair.includes(choice) ? choice : pair[0];
+  const otherId = pair.find((id) => id !== cutId)!;
+  const existing = state.features.find((f) => f.kind === 'assembly:joint' && pair.every((id) => [f.params.ribA, f.params.ribB].includes(id)));
+  return <div>
+    {existing ? <button className="btn" onClick={() => state.selectFeature(existing.id)}>Edit rib operation</button> : <>
+      <button className="btn" onClick={() => state.addRibOperation(pair[0], pair[1], 'cross')}>Create cross joint</button>
+      <label className="field"><span className="field-label">Cut rib</span><select value={cutId} onChange={(e) => setChoice(e.target.value)}>{pair.map((id) => <option key={id} value={id}>R{id.slice(1)}</option>)}</select></label>
+      <button className="btn" onClick={() => state.addRibOperation(cutId, otherId, 'clearance')}>Create clearance cut</button>
+    </>}
+  </div>;
+}
+
 export function AssemblyStatus({ set, pending }: { set: SliceSet | null; pending: boolean }) {
   const select = useKerros((s) => s.selectFeature);
   const report = set?.assembly;
@@ -15,6 +30,7 @@ export function AssemblyStatus({ set, pending }: { set: SliceSet | null; pending
       {report.issues.map((issue, i) => <div key={i} className={`assembly-issue ${issue.severity}`}>
         <span>{issue.message}</span>
         <div>{issue.ids.map((id) => <button className="part-link" key={id} onClick={() => select(id)}>{set.slices.find((s) => s.part?.id === id)?.part?.label ?? id}</button>)}</div>
+        {issue.ribCollision && <RibCollisionActions key={issue.ribCollision.join(':')} pair={issue.ribCollision} />}
       </div>)}
     </>}
   </div>;
@@ -41,7 +57,7 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
   const part = set?.slices.find((s) => s.part?.id === feature.id)?.part;
   return <div className="inspector assembly-inspector">
     <div className="group">
-      <div className="group-head">{part?.label ?? feature.id} · {kind === 'layout' ? 'Ribs & Supports' : kind === 'backplate' ? 'Wall mount' : kind === 'channel' ? 'LED channel' : kind}</div>
+      <div className="group-head">{part?.label ?? feature.id} · {kind === 'layout' ? 'Ribs & Supports' : kind === 'backplate' ? 'Wall mount' : kind === 'channel' ? 'LED channel' : kind === 'joint' ? 'Rib intersection' : kind}</div>
       <label className="field"><span className="field-label">Name</span><input value={feature.name} onChange={(e) => state.renameFeature(feature.id, e.target.value)} /></label>
       {layout && kind !== 'layout' && <button className="btn" onClick={() => state.selectFeature(layout.id)}>Assembly settings</button>}
       {!feature.enabled && <p className="warn">This feature is disabled. Enable it in the feature tree to include it.</p>}
@@ -88,6 +104,21 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
         <p className="hint">These controls regenerate the unjointed outline from the source model. Placement controls above do not.</p>
       </details>
     </>}
+    {kind === 'joint' && <div className="group"><div className="group-head">Rib intersection</div>
+      {choose('operation', 'Action', [['cross', 'Cross joint'], ['clearance', 'Clearance cut']], 'cross')}
+      {(['ribA', 'ribB'] as const).map((key) => {
+        const choices = members.filter((f) => f.kind === 'assembly:rib').map((f): [string, string] => [f.id, `R${f.id.slice(1)} · ${f.name}${f.enabled ? '' : ' (disabled)'}`]);
+        if (!choices.some(([id]) => id === p[key])) choices.unshift([String(p[key] ?? ''), `${p[key] || 'Unset'} (missing)`]);
+        return <div key={key}>{choose(key, p.operation === 'clearance' ? key === 'ribA' ? 'Cut rib' : 'Keep rib' : key === 'ribA' ? 'Rib A' : 'Rib B', choices, '')}
+          <button className="btn" disabled={!members.some((f) => f.id === p[key])} onClick={() => { state.selectFeature(String(p[key])); state.setMode('slice'); }}>Inspect R{String(p[key]).slice(1)}</button></div>;
+      })}
+      {p.operation !== 'clearance' ? <>
+        {choose('upper', 'Upward-opening slot', [['auto', 'Automatic'], ['a', 'Rib A'], ['b', 'Rib B']], 'auto')}
+        {number('split', 'Joint split', 50, '%', 5)}{number('reliefRadius', 'Tip relief radius', 0.5, 'mm', 0.1)}
+        <p className="hint">The other slot opens downward. Split is a percentage of the shared crossing height; 50% meets in the middle. Tip relief adds small circular clearances at the closed corners. Assemble the ribs first, then fit the wall plate from behind. Read the checked insertion order below.</p>
+      </> : <p className="hint">Removes the other rib’s full-thickness crossing from Cut rib. Keep rib retains its profile. This is a clearance opening, not an attachment. A cut that splits the rib or damages an existing joint is refused.</p>}
+      <p className="hint">Uses the assembly’s joint clearance per side: {layout ? num(layout, 'jointClearance', 0.1) : 0.1} mm. Actual angles and both stock thicknesses determine cut width; kerf is applied afterwards. Test the fit in the chosen stock.</p>
+    </div>}
     {kind === 'support' && <div className="group"><div className="group-head">Horizontal support</div>
       {number('outerDiameter', 'Outer diameter')}{number('innerDiameter', 'Inner diameter')}{number('pz', 'Height from centre')}{number('px', 'Centre X')}{number('py', 'Centre Y')}
       <p className="hint">Inner diameter 0 makes a disc. Complementary slots open along each rib’s insertion direction.</p>

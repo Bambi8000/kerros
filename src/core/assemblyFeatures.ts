@@ -4,6 +4,12 @@ import type { Bounds } from './slice.ts';
 
 type Params = Feature['params'];
 export type AssemblyMember = 'rib' | 'support' | 'backplate' | 'channel';
+export type RibOperation = 'cross' | 'clearance';
+export function ribOperation(a: Feature, b: Feature, operation: RibOperation, next: number): Feature {
+  return { id: `f${next}`, kind: 'assembly:joint', stage: 'SLICE', enabled: true,
+    name: `Rib intersection R${a.id.slice(1)} / R${b.id.slice(1)}`,
+    params: { groupId: a.params.groupId, ribA: a.id, ribB: b.id, operation, upper: 'auto', split: 50, reliefRadius: 0.5 } };
+}
 export function assemblyFeatures(kind: 'radial' | 'linear', next: number, bounds: Bounds): { features: Feature[]; next: number; id: string } {
   const features: Feature[] = [];
   const create = (kind: string, name: string, params: Params): Feature => {

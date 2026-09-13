@@ -88,7 +88,7 @@ export interface SliceSet {
   assembly?: {
     id: string;
     cuttable: boolean;
-    issues: { severity: 'error' | 'warning' | 'info'; ids: string[]; message: string }[];
+    issues: { severity: 'error' | 'warning' | 'info'; ids: string[]; message: string; ribCollision?: [string, string] }[];
     joints: { id: string; parts: string[]; instruction: string }[];
     channels: {
       id: string; hits: string[]; status: string;

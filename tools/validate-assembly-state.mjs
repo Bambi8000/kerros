@@ -113,9 +113,45 @@ try {
   }
   console.log('  ok    material separation, persistent labels, nesting, DXF, manifest and assembly PDF');
 
+  // Collision actions create durable operations, and every output sees them.
+  state().removeFeature(group.id);state().removeFeature(source.id);state().addShape('sphere');
+  state().setParam(state().features.at(-1).id,'r',60);state().addAssembly('linear');
+  const jointGroup=state().features.find(f=>f.kind==='assembly:layout');
+  const turned=state().features.find(f=>f.kind==='assembly:rib'&&f.params.ordinal===3);
+  state().setAssemblyAngle(turned.id,-50,false);
+  const jointJob={...job,features:state().features};
+  const collisions=runSliceJob(jointJob,new Map()).set.assembly.issues.filter(i=>i.ribCollision);
+  for(const issue of collisions)state().addRibOperation(...issue.ribCollision,'cross');
+  const operations=state().features.filter(f=>f.kind==='assembly:joint');assert.ok(operations.length>=3);
+  const first=operations[0],count=state().features.length;
+  state().addRibOperation(first.params.ribB,first.params.ribA,'clearance');
+  assert.equal(state().features.length,count);assert.equal(state().selectedId,first.id,'repeated action selects the existing operation');
+  const jointProject=parseProject(serializeProject(state().projectData(),'0.31.0','2026-09-14T00:00:00Z'));
+  state().applyProject(jointProject.data,jointProject.nextFeatureNumber);
+  assert.deepEqual(state().features.filter(f=>f.kind==='assembly:joint'),operations);
+  jointJob.features=state().features;
+  const jointOutput=runSliceJob(jointJob,new Map());assert.equal(jointOutput.set.assembly.cuttable,true,JSON.stringify(jointOutput.set.assembly.issues));
+  const jointParts=buildParts(jointOutput.set,[]),jointNest=rehydrateNest(runNestJob({parts:jointParts,options}),jointParts);
+  assert.equal(jointNest.unplaced.length,0);
+  for(const sheet of jointNest.sheets)assert.ok(!/NaN|Infinity/.test(writeDxfR12(sheetToDxf(sheet))));
+  const jointInput={...input,set:jointOutput.set,sheets:jointNest.sheets,version:'0.31.0'};
+  const jointManifest=manifestText(jointInput),jointPdf=writePdf(assemblyDocument(jointInput));
+  for(const op of operations)assert.ok(jointManifest.includes(op.id));
+  assert.ok(jointManifest.includes('wall plate off')&&jointManifest.includes('opens upward'));
+  // PDF lettering is vector strokes, not embedded text. A changed instruction
+  // must change those strokes even while every part and cut remains identical.
+  const editedInstruction=structuredClone(jointInput);
+  editedInstruction.set.assembly.joints.find(j=>j.id===first.id).instruction='Changed joint assembly instruction';
+  assert.notEqual(writePdf(assemblyDocument(editedInstruction)),jointPdf,'the PDF consumes the actual joint instruction');
+  state().removeFeature(first.params.ribB);
+  assert.ok(state().features.some(f=>f.id===first.id),'a deleted rib leaves its joint reference visible');
+  assert.ok(runSliceJob({...jointJob,features:state().features},new Map()).set.assembly.issues.some(i=>i.ids.includes(first.id)&&i.message.includes('missing')));
+  state().removeFeature(jointGroup.id);assert.ok(!state().features.some(f=>f.kind==='assembly:joint'));
+  console.log('  ok    collision actions, duplicate selection, joint persistence, dangling references, real cut exports and assembly instructions');
+
   const previous=globalThis.self, replies=[];
   globalThis.self={postMessage(message){replies.push(structuredClone(message));}};
-  try { await server.ssrLoadModule('/src/ui/kerros.worker.ts');globalThis.self.onmessage({data:{kind:'slice',token:47,job}});const reply=replies.at(-1);assert.equal(reply.kind,'sliced');assert.equal(reply.token,47);assert.deepEqual(reply.output.set,output.set); }
+  try { await server.ssrLoadModule('/src/ui/kerros.worker.ts');for(const [request,expected] of [[job,output],[jointJob,jointOutput]]){globalThis.self.onmessage({data:{kind:'slice',token:47,job:request}});const reply=replies.at(-1);assert.equal(reply.kind,'sliced');assert.equal(reply.token,47);assert.deepEqual(reply.output.set,expected.set);} }
   finally {globalThis.self=previous;}
   console.log('  ok    real worker transport returns the same complete assembly');
   console.log('OK    assembly state and exports');

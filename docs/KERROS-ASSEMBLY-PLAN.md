@@ -1,6 +1,6 @@
 # Kerros assembly features — implementation plan
 
-Status: implemented for upright sheets in 0.29.0.
+Status: implemented for upright sheets in 0.29.0, with rib intersections in 0.31.0.
 This document preserves the approved design and acceptance goals. Read the
 Assembly expansion section of KERROS-FEATURES.md for the shipped implementation
 and its limits. Insertion and collision checks are sampled; physical fit, glue
@@ -19,6 +19,8 @@ strength and complete assembly feasibility still require material tests.
 - A tubular hole tool for linear assemblies, accommodating an LED tube or an
   LED strip. The proposed tool name is `LED channel`.
 - Improvements to direct manipulation, readability and the assembly workspace.
+- Intentional rib collisions: the user approved complementary cross slots or
+  a clearance cut in one selected rib, with fit and assembly-order checks.
 
 The following sections specify the proposed implementation behaviour. Physical
 fit and assembly feasibility remain to be tested in the actual material.
@@ -138,6 +140,24 @@ renaming the cable inspector would leave those requirements unwired.
 Do not assume restricting a 3D distance field to an oblique plane leaves an
 exact 2D distance field. Validate final in-plane kerf and opening dimensions,
 including thick sheets and shallow crossing angles.
+
+## Rib-to-rib intersections
+
+The 0.31.0 extension uses editable joint records for persistent rib pairs.
+Current collision reports lead directly to `Create cross joint` or `Create
+clearance cut`. Cross slots open on opposite vertical edges, with editable
+split and closed-corner relief. Width includes both stock thicknesses at the
+actual angle and the shared joint clearance. A clearance cut changes only its
+selected rib and must leave that rib connected. Both operations preserve
+existing joints or report a refusal; they never silently remove a tab.
+
+Cross-jointed ribs assemble first and the wall plate slides on from behind
+last. A deterministic, sampled disassembly search is reversed into the assembly
+order. Refuse trapped individual-part sequences; group motion, arbitrary tilt
+and cross joints combined with horizontal ring supports are deferred. Keep the
+original insertion workflow when no cross joint is applied. Save/open, worker,
+cut drawings, DXF, manifest and PDF must all carry the same operations and cuts.
+Verify with material coupons before treating the fit or order as established.
 
 ## UI and output
 

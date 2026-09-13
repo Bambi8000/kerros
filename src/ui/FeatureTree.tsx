@@ -8,6 +8,7 @@ import type { Feature } from '../core/types';
 
 /** One line under a feature's name, saying what it does at a glance. */
 function subtitleFor(f: Feature, index: number, op: Op): string {
+  if (f.kind === 'assembly:joint') return `${f.id} · ${f.params.operation === 'clearance' ? 'clearance cut' : 'cross joint'} · ${f.params.ribA} / ${f.params.ribB}`;
   if (f.kind.startsWith('assembly:')) return `${f.id} · ${f.kind.slice(9)}${f.kind === 'assembly:layout' ? ` · ${f.params.layout}` : ''}`;
   if (f.kind === 'holePunch') return `hole · Ø${f.params.diameter} mm · z ${Number(f.params.pz).toFixed(2)} mm`;
   if (f.kind === 'profile') {

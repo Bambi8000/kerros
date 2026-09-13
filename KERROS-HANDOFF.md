@@ -7,9 +7,23 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.30.2.** The MVP as originally scoped is
+**State at the time of writing: version 0.31.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+Rib collisions now offer `Create cross joint` and `Create clearance cut`.
+Both create an editable `assembly:joint` feature referencing persistent rib IDs.
+Cross joints cut complementary upward/downward slots, with an editable split
+and circular tip relief. Clearance cuts modify one selected rib and must leave
+it connected. Both include the actual crossing angle, both sheet thicknesses
+and shared joint clearance; kerf follows the finished nominal profile.
+Existing wall/support joints and earlier rib cuts are protected. Cross-jointed
+networks assemble before the wall plate: a sampled disassembly search supplies
+the reversed assembly order, and the wall must slide on from behind. Trapped
+networks block export. Horizontal rings, nearly parallel crossings, group
+motions and arbitrary tilt remain outside this rib-joint workflow. The cuts,
+references and instructions reach project files, worker, Part, Sheet, DXF and
+PDF. These joints still need physical coupons, including their relief corners.
 
 `Minimal solid` is a third wall-mount Outline option, alongside `Open frame`
 and `Solid rectangle`. It fills the profile-following frame's centre before
@@ -436,8 +450,10 @@ way `FixtureInspector` was.
   a number nothing reads — the pattern gizmo's failure exactly. The inspector
   replaces the field with a sentence instead.
 - **Upright cross-slicing only.** Radial and linear ribs with ring supports or a
-  wall backplate are available. Arbitrary plate tilt and unrestricted eggcrate
-  networks remain deferred. Ring and wall support systems cannot be combined
+  wall backplate are available. Rib-to-rib cross joints support upright wall
+  and loose-rib networks with a checked straight individual-part order.
+  Arbitrary tilt, group motions and cross-jointed networks with horizontal
+  rings remain deferred. Ring and wall support systems cannot be combined
   because their insertion paths differ.
 - **The bundle is unsigned.** It runs on the machine that built it; another Mac
   quarantines it. Proper notarising needs a paid Apple Developer account.
@@ -472,6 +488,10 @@ about to happen when this handoff was written; ask before assuming.
   insertion sequence, remaining bridges and wall clearance. Glued oblique
   shoulders meet at an edge rather than a laser-cut bevel. No load rating or
   LED retention follows from the geometric checks.
+- **Rib intersections.** Test complementary slots at the intended angle in
+  both stock thicknesses, including relief radius, split, remaining bridges
+  and wall-last insertion. Clearance cuts need the same fit test and do not
+  attach the ribs. Sampled collision/order checks do not prove joint strength.
 - **Hole punch.** The exact circle, single-layer assignment, kerf, save/open
   and DXF path are validated; its finished diameter still needs a cut in the
   chosen stock with a measured kerf.
@@ -497,8 +517,10 @@ about to happen when this handoff was written; ask before assuming.
    appendix. All at one scale, because fitting each to its own box makes a 40 mm
    ring and a 200 mm ring identical on the page.
 2. **Cross-slicing (fin / eggcrate mode)**: the upright subset of phases A-C
-   shipped in 0.29.0. General tilt and unrestricted crossing networks remain
-   future work. The original phase breakdown below records the rationale.
+   shipped in 0.29.0; upright rib cross joints and one-rib clearance cuts
+   shipped in 0.31.0. General tilt, group assembly motions and crossing networks
+   with horizontal rings remain future work. The original phase breakdown
+   below records the rationale.
    The current design is recorded in
    [the assembly implementation plan](docs/KERROS-ASSEMBLY-PLAN.md): upright
    radial and linear ribs, adjustable supports, a wall backplate with approved

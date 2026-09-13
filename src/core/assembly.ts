@@ -182,7 +182,7 @@ export function buildAssembly(
   const children = features.filter((f) => f.params.groupId === layout.id);
   const issues: Issue[] = [], joints: NonNullable<SliceSet['assembly']>['joints'] = [];
   const channels: NonNullable<SliceSet['assembly']>['channels'] = [];
-  const say = (severity: Issue['severity'], ids: string[], message: string) => issues.push({ severity, ids, message });
+  const say = (severity: Issue['severity'], ids: string[], message: string, ribCollision?: [string, string]) => issues.push({ severity, ids: [...new Set(ids)], message, ...(ribCollision ? { ribCollision } : {}) });
   const radial = layout.params.layout !== 'linear';
   const centre: Vec3 = bounds.min.map((v, i) => (v + bounds.max[i]) / 2) as Vec3;
   const radius = Math.max(bounds.max[0] - centre[0], bounds.max[1] - centre[1]);
@@ -413,6 +413,108 @@ export function buildAssembly(
     say(missing.length ? 'error' : 'info', [f.id, ...missing.map((r) => r.id)], `Wall attachment: ${expected.length - missing.length} of ${expected.length} enabled ribs have complete tab joints.${missing.length ? ' The named ribs are unattached; resolve their checks before export.' : ''}`);
   }
 
+  // Plan every rib operation from the same profiles, after wall/ring joints
+  // but before rib cuts. A previous cut must not shrink the next cutter.
+  const ribBases = new Map(ribs.map((r) => [r.meta.id, { ...r, box: { ...r.box }, zones: [...r.zones] }]));
+  const ribOperations = children.filter((f) => f.enabled && f.kind === 'assembly:joint');
+  const usedPairs = new Set<string>();
+  let crossJoints = 0;
+  const strip = (a: WorkPart, b: WorkPart) => {
+    const sine = dot3(a.meta.u, b.meta.n), cosine = dot3(a.meta.n, b.meta.n);
+    const delta = add3(a.meta.origin, mul3(b.meta.origin, -1));
+    return { x: -dot3(delta, b.meta.n) / sine,
+      half: (b.meta.thickness / 2 + fit + Math.abs(cosine) * a.meta.thickness / 2) / Math.abs(sine), sine, cosine };
+  };
+  for (const f of ribOperations) {
+    const a = ribs.find((r) => r.meta.id === f.params.ribA), b = ribs.find((r) => r.meta.id === f.params.ribB);
+    const ids = [f.id, String(f.params.ribA || ''), String(f.params.ribB || '')].filter(Boolean);
+    if (a && a === b) { say('error', ids, 'Both references select the same rib. Choose two different ribs for an intersection.'); continue; }
+    if (!a || !b) { say('error', ids, 'A referenced rib is missing, disabled or has no source profile. Choose two enabled ribs in this assembly.'); continue; }
+    const key = [a.meta.id, b.meta.id].sort().join(':');
+    if (usedPairs.has(key)) { say('error', ids, 'This rib pair has more than one enabled operation. Keep one cross joint or clearance cut.'); continue; }
+    usedPairs.add(key);
+    const aa = ribBases.get(a.meta.id)!, bb = ribBases.get(b.meta.id)!;
+    const sa = strip(aa, bb), sb = strip(bb, aa);
+    if (Math.abs(sa.sine) < 0.25) { say('error', ids, 'Rib operations need a crossing angle of at least about 15 degrees. Separate nearly parallel ribs or change their angles.'); continue; }
+    const operation = String(f.params.operation || 'cross');
+    if (!['cross', 'clearance'].includes(operation)) { say('error', ids, 'Unknown rib operation. Choose Cross joint or Clearance cut.'); continue; }
+    if (operation === 'cross' && supports.length) { say('error', ids, 'Rib cross joints require a wall-mounted or loose-rib layout in this version. Horizontal ring supports use a different insertion path.'); continue; }
+    const cuts: { part: WorkPart; cut: Distance; box: Box2 }[] = [];
+    let instruction = '';
+    if (operation === 'cross') {
+      const lo = Math.max(aa.box.minY + aa.meta.origin[2], bb.box.minY + bb.meta.origin[2]);
+      const hi = Math.min(aa.box.maxY + aa.meta.origin[2], bb.box.maxY + bb.meta.origin[2]);
+      const step = Math.max(aa.step, bb.step), count = Math.max(1, Math.ceil((hi - lo) / step));
+      const bands: [number, number][] = [];
+      let start: number | undefined;
+      for (let i = 0; i <= count + 1; i++) {
+        const z = lo + (hi - lo) * i / count;
+        const inside = hi > lo && i <= count && aa.field(sa.x, z - aa.meta.origin[2]) < -minBridge / 2 && bb.field(sb.x, z - bb.meta.origin[2]) < -minBridge / 2;
+        if (inside) start ??= z;
+        else if (start !== undefined) { bands.push([start, z - (hi - lo) / count]); start = undefined; }
+      }
+      if (bands.length !== 1 || bands[0][1] - bands[0][0] < 2 * minBridge) { say('error', ids, 'A cross joint needs one continuous shared band of rib material. These ribs miss, cross separate regions or have too little overlap.'); continue; }
+      const split = num(f, 'split', 50), relief = num(f, 'reliefRadius', 0.5);
+      if (!(split > 0 && split < 100) || relief < 0 || relief > Math.min(sa.half, sb.half)) { say('error', ids, 'Joint split must be between 0 and 100 percent; tip relief must be nonnegative and no larger than half the slot width.'); continue; }
+      const z = bands[0][0] + (bands[0][1] - bands[0][0]) * split / 100;
+      const upper = f.params.upper === 'a' ? a : f.params.upper === 'b' ? b : Number(a.meta.id.slice(1)) < Number(b.meta.id.slice(1)) ? a : b;
+      let supported = true;
+      for (const [part, base, s] of [[a, aa, sa], [b, bb, sb]] as const) {
+        const localZ = z - part.meta.origin[2];
+        // The closed end and both side bridges must sit in real material.
+        if ([s.x - s.half - relief, s.x, s.x + s.half + relief].some((x) => [localZ - fit - relief, localZ + fit + relief].some((y) => base.field(x, y) > -minBridge))) supported = false;
+        const opensUp = part === upper, tip = localZ + (opensUp ? -fit : fit);
+        const box = { minX: s.x - s.half - relief, maxX: s.x + s.half + relief,
+          minY: opensUp ? tip - relief : part.box.minY - step, maxY: opensUp ? part.box.maxY + step : tip + relief };
+        const slot = rect(s.x - s.half, opensUp ? tip : box.minY, s.x + s.half, opensUp ? box.maxY : tip);
+        const cut: Distance = relief > 0 ? (x, y) => Math.min(slot(x, y), Math.hypot(x - s.x - s.half, y - tip) - relief, Math.hypot(x - s.x + s.half, y - tip) - relief) : slot;
+        cuts.push({ part, cut, box });
+      }
+      if (!supported) { say('error', ids, 'The slot ends would leave too little shoulder or side material. Change the split, reduce tip relief, or move the crossing away from the rib edge.'); continue; }
+      const lower = upper === a ? b : a;
+      instruction = `${upper.meta.label} opens upward and ${lower.meta.label} downward at assembly Z ${z.toFixed(2)} mm. Fit the complementary full-thickness slots using the checked assembly order. Dry-fit before gluing.`;
+    } else {
+      const delta = add3(aa.meta.origin, mul3(bb.meta.origin, -1));
+      const u0 = dot3(delta, bb.meta.u), ux = dot3(aa.meta.u, bb.meta.u), un = dot3(aa.meta.n, bb.meta.u);
+      const n0 = dot3(delta, bb.meta.n), halfA = aa.meta.thickness / 2, halfB = bb.meta.thickness / 2 + fit;
+      const slack = Math.max(aa.step, bb.step, Math.abs(un) * aa.meta.thickness / 64);
+      const box = { minX: sa.x - sa.half, maxX: sa.x + sa.half, minY: bb.box.minY + bb.meta.origin[2] - aa.meta.origin[2] - fit - slack, maxY: bb.box.maxY + bb.meta.origin[2] - aa.meta.origin[2] + fit + slack };
+      const cut: Distance = (x, y) => {
+        const band = Math.abs(x - sa.x) - sa.half;
+        if (band > 0 || y < box.minY || y > box.maxY) return Math.max(band, box.minY - y, y - box.maxY);
+        let low = -halfA, high = halfA;
+        if (Math.abs(sa.cosine) > 1e-8) {
+          const s0 = (-halfB - n0 - sa.sine * x) / sa.cosine, s1 = (halfB - n0 - sa.sine * x) / sa.cosine;
+          low = Math.max(low, Math.min(s0, s1)); high = Math.min(high, Math.max(s0, s1));
+        }
+        if (low > high) return Math.max(band, 1e-9);
+        const first = u0 + ux * x + un * low, last = u0 + ux * x + un * high;
+        const count = Math.max(1, Math.min(64, Math.ceil(Math.abs(last - first) / Math.max(aa.step, bb.step))));
+        let d = Infinity;
+        for (let i = 0; i <= count; i++) d = Math.min(d, bb.field(first + (last - first) * i / count, y + aa.meta.origin[2] - bb.meta.origin[2]));
+        // A 1-Lipschitz sheet field bounds what lies between thickness samples.
+        // This conservative slack avoids leaving material in the other slab.
+        return Math.max(band, d - fit - Math.abs(last - first) / (2 * count));
+      };
+      if (!overlaps(aa, cut, box)) { say('error', ids, 'The clearance cut misses the selected rib. Move the ribs or disable this operation.'); continue; }
+      cuts.push({ part: a, cut, box });
+    }
+    let valid = true;
+    for (const { part, cut, box } of cuts) {
+      if (part.zones.some((zone) => samples(zone.box, Math.max(part.step, 0.5), (x, y) => zone.field(x, y) < minBridge && cut(x, y) < minBridge))) {
+        say('error', [f.id, part.meta.id], 'This rib cut conflicts with an existing wall tab, support slot or rib joint. Move the crossing or revise the joint.'); valid = false; continue;
+      }
+      const candidate: Distance = (x, y) => Math.max(part.field(x, y), -cut(x, y));
+      const contours = kernel.trace(candidate, part.box, part.step, 0, Math.min(options.tolerance, part.step / 12));
+      if (contours.filter((c) => !c.isHole).length !== 1) { say('error', [f.id, part.meta.id], 'The rib would not remain one connected piece after this cut. Change the crossing, choose the other rib, or use a cross joint. No cuts from this operation were applied.'); valid = false; }
+      if (!overlaps(part, cut, box)) { say('error', [f.id, part.meta.id], 'This rib operation has no remaining material to cut. Disable the redundant operation.'); valid = false; }
+    }
+    if (!valid) continue;
+    for (const { part, cut, box } of cuts) { subtract(part, cut); part.zones.push({ field: cut, box: { minX: Math.max(box.minX, part.box.minX), maxX: Math.min(box.maxX, part.box.maxX), minY: Math.max(box.minY, part.box.minY), maxY: Math.min(box.maxY, part.box.maxY) } }); }
+    if (operation === 'cross') { crossJoints++; joints.push({ id: f.id, parts: [a.meta.id, b.meta.id], instruction }); say('info', ids, instruction); }
+    else say('info', ids, `Clearance cut applied to ${a.meta.label} around ${b.meta.label}. No rib-to-rib attachment was created.`);
+  }
+
   for (const f of children.filter((f) => f.kind === 'assembly:channel')) {
     const position: Vec3 = [num(f, 'px'), num(f, 'py', radius * 0.35), num(f, 'pz')];
     const { direction, u: a, v: b } = channelFrame(num(f, 'yaw'), num(f, 'elevation'), num(f, 'roll'));
@@ -533,33 +635,75 @@ export function buildAssembly(
     }
     return false;
   };
+  let remainingRibCollision = false;
   for (let a = 0; a < parts.length; a++) for (let b = a + 1; b < parts.length; b++) {
-    if (collision(parts[a], parts[b])) say('error', [parts[a].meta.id, parts[b].meta.id], 'Finished sheets intersect outside their clearances. Move the parts or revise their joints.');
+    if (!collision(parts[a], parts[b])) continue;
+    const pair: [string, string] = [parts[a].meta.id, parts[b].meta.id];
+    const ribPair = parts[a].meta.kind === 'rib' && parts[b].meta.kind === 'rib';
+    remainingRibCollision ||= ribPair;
+    say('error', pair, 'Finished sheets intersect outside their clearances. Move the parts or revise their joints.', ribPair ? pair : undefined);
   }
-  // Every rib moves on its own U axis from outside the assembly. A swept
-  // collision against another rib determines an insertion dependency. Cycles
-  // mean there is no sequential assembly order, even if the final pose fits.
-  const before = new Map<string, Set<string>>(ribs.map((r) => [r.meta.id, new Set<string>()]));
-  for (const rib of ribs) {
-    for (const fixed of [...supports, ...backs.filter((p) => parts.includes(p)), ...ribs.filter((r) => r !== rib)]) {
-      let blocked = false;
-      for (let distance = Math.max(stockT, 1); distance <= reach; distance += Math.max(stockT, reach / 28)) {
-        if (collision(rib, fixed, mul3(rib.meta.u, distance))) { blocked = true; break; }
-      }
-      if (!blocked) continue;
-      if (fixed.meta.kind === 'rib') before.get(fixed.meta.id)!.add(rib.meta.id);
-      else say('error', [rib.meta.id, fixed.meta.id], 'The straight insertion sweep is blocked by this support. Move the rib or revise the support opening.');
+  if (crossJoints) {
+    // Crossed ribs form a network before the wall plate is installed. Search
+    // a deterministic disassembly sequence, then reverse it for assembly.
+    const extent = (p: WorkPart, d: Vec3) => [p.box.minX, p.box.maxX].flatMap((x) => [p.box.minY, p.box.maxY].flatMap((y) => [-p.meta.thickness / 2, p.meta.thickness / 2].map((n) => dot3(sheetWorld(p.meta, x, y, n), d))));
+    const blocked = (a: WorkPart, b: WorkPart, d: Vec3) => {
+      const length = Math.max(0, Math.max(...extent(b, d)) - Math.min(...extent(a, d))) + Math.max(a.meta.thickness, b.meta.thickness);
+      const count = Math.max(24, Math.min(96, Math.ceil(length / Math.max(minBridge, Math.min(a.meta.thickness, b.meta.thickness)))));
+      for (let i = 1; i <= count; i++) if (collision(a, b, mul3(d, length * i / count))) return true;
+      return false;
+    };
+    const walls = backs.filter((b) => parts.includes(b));
+    for (const back of walls) {
+      const blockedBy = ribs.filter((rib) => blocked(back, rib, [0, -1, 0]));
+      if (blockedBy.length) say('error', [back.meta.id, ...blockedBy.map((r) => r.meta.id)], 'The wall plate cannot slide onto the assembled rib network from behind. Shorten protruding tabs or revise the wall plane, rib angles or joints.');
+      else say('info', [back.meta.id], `After assembling the ribs, fit ${back.meta.label} from behind along assembly +Y until the shoulders meet. Keep the wall plate off during rib assembly.`);
+      for (const joint of joints.filter((j) => j.parts.includes(back.meta.id))) joint.instruction = `After assembling the rib network, fit ${back.meta.label} from behind along assembly +Y onto this rib's tabs. Dry-fit all shoulders before gluing.`;
     }
+    if (remainingRibCollision) say('error', [layout.id], 'Resolve the remaining rib collisions before checking the rib-network assembly order.');
+    else {
+      const remaining = [...ribs], removal: { part: WorkPart; direction: string }[] = [];
+      while (remaining.length) {
+        let found: { part: WorkPart; direction: string } | undefined;
+        for (const axis of ['above', 'below', 'front'] as const) {
+          for (const part of remaining) {
+            const direction: Vec3 = axis === 'above' ? [0, 0, 1] : axis === 'below' ? [0, 0, -1] : part.meta.u;
+            if (remaining.every((fixed) => fixed === part || !blocked(part, fixed, direction))) { found = { part, direction: axis }; break; }
+          }
+          if (found) break;
+        }
+        if (!found) break;
+        removal.push(found); remaining.splice(remaining.indexOf(found.part), 1);
+      }
+      if (remaining.length) say('error', remaining.map((r) => r.meta.id), 'No straight individual-rib assembly sequence was found. Swap slot opening directions, change the split or revise the crossing layout. Moving groups together is not checked.');
+      else say('info', [layout.id, ...removal.map((r) => r.part.meta.id)], `Rib-network assembly order (wall plate off): ${removal.reverse().map((r, i) => `${i + 1}. ${r.part.meta.label} from ${r.direction === 'front' ? 'its positive U side' : r.direction}`).join('; ')}. Directions are in the assembly frame. Sweeps are sampled; verify this sequence with a physical coupon.`);
+    }
+  } else {
+    // Every rib moves on its own U axis from outside the assembly. A swept
+    // collision against another rib determines an insertion dependency. Cycles
+    // mean there is no sequential assembly order, even if the final pose fits.
+    const before = new Map<string, Set<string>>(ribs.map((r) => [r.meta.id, new Set<string>()]));
+    for (const rib of ribs) {
+      for (const fixed of [...supports, ...backs.filter((p) => parts.includes(p)), ...ribs.filter((r) => r !== rib)]) {
+        let blocked = false;
+        for (let distance = Math.max(stockT, 1); distance <= reach; distance += Math.max(stockT, reach / 28)) {
+          if (collision(rib, fixed, mul3(rib.meta.u, distance))) { blocked = true; break; }
+        }
+        if (!blocked) continue;
+        if (fixed.meta.kind === 'rib') before.get(fixed.meta.id)!.add(rib.meta.id);
+        else say('error', [rib.meta.id, fixed.meta.id], 'The straight insertion sweep is blocked by this support. Move the rib or revise the support opening.');
+      }
+    }
+    const order: string[] = [];
+    while (order.length < ribs.length) {
+      const next = ribs.find((r) => !order.includes(r.meta.id) && [...before.get(r.meta.id)!].every((id) => order.includes(id)));
+      if (!next) break;
+      order.push(next.meta.id);
+    }
+    if (order.length !== ribs.length) say('error', ribs.filter((r) => !order.includes(r.meta.id)).map((r) => r.meta.id), 'Rib insertion paths depend on each other in a cycle. Change placement or angles to allow sequential assembly.');
+    else if (order.length && joints.length) say('info', order, `Dry-fit insertion order: ${order.map((id) => parts.find((p) => p.meta.id === id)!.meta.label).join(', ')}. Clearance and path checks are sampled; confirm the sequence with a small physical coupon.`);
   }
-  const order: string[] = [];
-  while (order.length < ribs.length) {
-    const next = ribs.find((r) => !order.includes(r.meta.id) && [...before.get(r.meta.id)!].every((id) => order.includes(id)));
-    if (!next) break;
-    order.push(next.meta.id);
-  }
-  if (order.length !== ribs.length) say('error', ribs.filter((r) => !order.includes(r.meta.id)).map((r) => r.meta.id), 'Rib insertion paths depend on each other in a cycle. Change placement or angles to allow sequential assembly.');
-  else if (order.length && joints.length) say('info', order, `Dry-fit insertion order: ${order.map((id) => parts.find((p) => p.meta.id === id)!.meta.label).join(', ')}. Clearance and path checks are sampled; confirm the sequence with a small physical coupon.`);
-  if (!supports.length && !backs.length) say('warning', ribs.map((p) => p.meta.id), 'No supports are enabled. These are loose ribs with no generated attachment.');
+  if (!supports.length && !backs.length) say('warning', ribs.map((p) => p.meta.id), crossJoints ? 'No wall plate or horizontal supports are enabled. Rib cross joints do not establish a mounting or load rating.' : 'No supports are enabled. These are loose ribs with no generated attachment.');
 
   const globalAngle = num(layout, 'angle') * Math.PI / 180;
   const translation: Vec3 = [centre[0] + num(layout, 'px'), centre[1] + num(layout, 'py'), centre[2] + num(layout, 'pz')];
