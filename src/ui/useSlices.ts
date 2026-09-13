@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useKerros } from '../core/store';
 import { EMPTY_OUTPUT } from '../core/pipeline';
 import type { SliceJob, SliceOutput } from '../core/pipeline';
+import type { Feature } from '../core/types';
 import { requestSlice } from './workerBridge';
 
 /** Editing settles before a re-slice, which is far heavier than a preview. */
@@ -12,17 +13,19 @@ export interface SliceResult extends SliceOutput {
   pending: boolean;
   /** The output belongs to the current project and slice inputs. */
   fresh: boolean;
+  /** Source tree of the retained output; never crosses a project/import change. */
+  sourceFeatures: Feature[] | null;
 }
 
-const IDLE: SliceResult = { ...EMPTY_OUTPUT, pending: false, fresh: false };
+const IDLE: SliceResult = { ...EMPTY_OUTPUT, pending: false, fresh: false, sourceFeatures: null };
 
 /**
  * Slice the current feature tree, off the main thread.
  *
  * Only runs while `enabled`, so nobody pays for slicing while modelling. Each job
  * is tagged with a generation, and anything that comes back stale is dropped:
- * during a drag several are in flight and only the last one asked for is worth
- * showing.
+ * the shared queue keeps only the newest waiting job. An obsolete active job
+ * may finish, but cannot become current or reach export.
  */
 export function useSlices(enabled: boolean): SliceResult {
   const features = useKerros((s) => s.features);
@@ -60,15 +63,17 @@ export function useSlices(enabled: boolean): SliceResult {
   useEffect(() => {
     const mine = ++generation.current;
     if (!enabled) return;
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      void requestSlice(job, importRevision).then((output) => {
-        if (mine !== generation.current) return;
+      void requestSlice(job, importRevision, controller.signal).then((output) => {
+        if (!output || mine !== generation.current) return;
         setDone({ output, job, importRevision, projectRevision });
       });
     }, SLICE_DEBOUNCE_MS);
 
     return () => {
       window.clearTimeout(timer);
+      controller.abort();
       // Invalidate immediately, including the next job's debounce interval.
       generation.current++;
     };
@@ -78,5 +83,7 @@ export function useSlices(enabled: boolean): SliceResult {
   // and freshness are checked during render, before effects can dispatch work.
   if (!done || done.projectRevision !== projectRevision) return { ...IDLE, pending: enabled };
   const fresh = done.job === job && done.importRevision === importRevision;
-  return { ...done.output, fresh, pending: enabled && !fresh };
+  const sameSettings = (Object.keys(job) as (keyof SliceJob)[]).every((key) => key === 'features' || done.job[key] === job[key]);
+  return { ...done.output, fresh, pending: enabled && !fresh,
+    sourceFeatures: sameSettings && done.importRevision === importRevision ? done.job.features : null };
 }

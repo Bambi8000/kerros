@@ -2871,8 +2871,14 @@ composition at all.
 ### Stale replies are dropped
 
 Every job carries a token, and a reply whose token is not the newest is discarded.
-During a drag several jobs are in flight and only the last one asked for is worth
-showing — without that, a slow job finishing late would overwrite a newer result.
+Since 0.32.1, `workerBridge` dispatches through `createLatestQueue`: one active
+job across slicing, surface preview and nesting, with at most one waiting job
+of each kind. Replacing a waiting request settles it without running it. The
+three hooks abort obsolete requests as soon as their inputs change, including
+the debounce interval and project/mode changes. An active synchronous job can
+finish once; its canceled reply is discarded before a waiting job starts.
+This avoids computing a backlog of angles nobody is looking at. Tokens and
+generation checks remain necessary even with the bounded queue.
 
 Invalidation starts when the inputs change, including the debounce interval.
 Slice and preview replies also belong to a project revision. Opening another
@@ -3332,6 +3338,27 @@ frames before joints and LED cuts, so every preview, collision check and
 export uses the combined angles. Changing angles can require revising joints;
 existing manufacturing refusals remain in force.
 
+**Immediate angle feedback (0.32.1).** `ribAnglePreview` derives current rib
+frames from the retained cut result and its original feature tree, using the
+same `ribPlacementAngles` as manufacturing. It only accepts individual/group/
+fan angle edits. Source changes, membership, tree order, other parameters,
+stock/settings changes, imports and project changes invalidate this shortcut.
+The 3D view reuses existing meshes at these absolute frames; it does not trace,
+extrude or run collision sweeps on a numeric edit. Selection changes only
+recolour existing meshes. Repeated edits rebase on the retained result, so
+rotations cannot accumulate drift or apply twice when a final result arrives.
+
+The viewport says `Angle preview · checking cuts…` and fades old supports.
+It is showing the last cut outlines at the new angles: shoulders, slots, LED
+openings and the support outline remain provisional until the full job returns.
+Rib rotation handles remain usable during these angle-only checks. Meshes are
+held stable during a drag even if the worker finishes, then refreshed on release;
+a drag cannot commit into a different project. Other pending edits keep the
+previous handle lock. Source profiles and final manufacturing calculations are
+unchanged, and preview frames never enter Part, nesting, DXF or PDF.
+Existing freshness gates keep exports disabled until final cuts and packing
+are current. The first assembly still needs its initial full calculation.
+
 ### Ring supports and wall mount
 
 Radial assemblies start with two horizontal rings. Set each height, centre,
@@ -3599,7 +3626,15 @@ individual-angle geometry, including actual wall cuts and reports. It covers
 legacy identity, parity independent of IDs/names, hidden and reordered ribs,
 odd/even counts, inward/outward fans, placement reorder, radial groups,
 atomic scope edits, preserved manual angles, new members, save/open, nesting,
-DXF/PDF and the real worker. All five assembly validators are in `npm run verify`.
+DXF/PDF and the real worker.
+`tools/validate-assembly-preview.mjs` compares fast frames against full linear
+and radial results with rotated/translated layouts, exercises rebase/reset and
+invalidation, and verifies retained cuts are not mutated. It drives the actual
+bridge and worker with delayed transport to prove that superseded work is never
+dispatched, aborts settle, mixed job kinds progress, import revisions sync and
+the final reply contains full manufacturing geometry. Timings are reported for
+the fixture, not asserted as a hardware-independent limit. All six assembly
+validators are in `npm run verify`.
 Channel gizmo checks cover quaternion roundtrips, vertical poles, section roll,
 rotated layouts, a route anchor distinct from fitted midpoint, actual bore
 centres after a pose edit, atomic state writes and save/open. They do not replace

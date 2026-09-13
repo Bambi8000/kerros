@@ -56,6 +56,7 @@ export function usePreview(enabled: boolean): PreviewResult {
     }
 
     setResult((prev) => ({ ...prev, pending: true }));
+    const controller = new AbortController();
 
     const timer = window.setTimeout(() => {
       const job: PreviewJob = {
@@ -69,14 +70,15 @@ export function usePreview(enabled: boolean): PreviewResult {
         spacerThickness,
       };
 
-      void requestPreview(job, importRevision).then((output) => {
-        if (mine !== generation.current) return;
+      void requestPreview(job, importRevision, controller.signal).then((output) => {
+        if (!output || mine !== generation.current) return;
         setResult({ ...output, pending: false, projectRevision });
       });
     }, PREVIEW_DEBOUNCE_MS);
 
     return () => {
       window.clearTimeout(timer);
+      controller.abort();
       generation.current++;
     };
   }, [

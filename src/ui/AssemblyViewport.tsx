@@ -1,10 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { SliceSet } from '../core/slice';
+import type { Feature } from '../core/types';
 import { groupContours } from '../core/slice';
-import { channelAngles, ribAngleTargets, ribAngleValue } from '../core/assembly';
+import { channelAngles, ribAnglePreview, ribAngleTargets, ribAngleValue } from '../core/assembly';
 import type { RibAngleScope } from '../core/assembly';
 import type { GizmoMode } from '../core/store';
 import { useKerros, SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM } from '../core/store';
@@ -24,15 +25,25 @@ const disposeGroup = (group: THREE.Group) => {
   });
   group.clear();
 };
-export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pending: boolean }) {
+export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { set: SliceSet | null; sourceFeatures: Feature[] | null; pending: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const engine = useRef<SceneState | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const features = useKerros((s) => s.features);
+  const projectRevision = useKerros((s) => s.projectRevision);
+  // A finished worker reply must not replace the meshes under a held handle.
+  const shown = useRef({ set: incoming, sourceFeatures, projectRevision });
+  if (!dragging || shown.current.projectRevision !== projectRevision) shown.current = { set: incoming, sourceFeatures, projectRevision };
+  const set = shown.current.set, sources = shown.current.sourceFeatures;
+  const frames = useMemo(() => ribAnglePreview(set, sources, features), [set, sources, features]);
+  const frameRef = useRef(frames); frameRef.current = frames;
   const current = useRef(set); current.current = set;
   const selectedId = useKerros((s) => s.selectedId);
   const view = useKerros((s) => s.view);
   const gizmoMode = useKerros((s) => s.gizmoMode);
   const snap = useKerros((s) => s.snapEnabled);
   const angleScope = useKerros((s) => s.assemblyAngleScope);
+  const anglePreview = (dragging && gizmoMode === 'rotate' && features.some((f) => f.id === selectedId && f.kind === 'assembly:rib')) || (pending && frames !== null);
   const report = set?.assembly;
 
   useEffect(() => {
@@ -64,14 +75,17 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
     const state: SceneState = { scene, camera, renderer, orbit, transform, parts, channels, proxy, fit, dragging: false };
     engine.current = state;
     let dragStart = new THREE.Vector3(), dragId = '', angleStart = 0;
+    let dragProject = -1;
     let dragMode: GizmoMode = 'translate', dragScope: RibAngleScope = 'selected';
     let dragChannel: NonNullable<SliceSet['assembly']>['channels'][number] | undefined;
     let originals: { object: THREE.Object3D; matrix: THREE.Matrix4; pivot: THREE.Vector3 }[] = [];
     transform.addEventListener('dragging-changed', (event) => {
       const dragging = event.value === true;
       state.dragging = dragging; orbit.enabled = !dragging;
+      setDragging(dragging);
       const store = useKerros.getState();
       if (dragging) {
+        dragProject = store.projectRevision;
         dragStart = proxy.position.clone(); dragId = store.selectedId || '';
         dragMode = store.gizmoMode;
         dragChannel = current.current?.assembly?.channels.find((c) => c.id === dragId);
@@ -85,7 +99,7 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
             object.updateMatrix();
             return [{ object, matrix: object.matrix.clone(), pivot: dragStart.clone() }];
           }
-          const part = current.current?.slices.find((s) => s.part?.id === object.userData.featureId)?.part;
+          const part = frameRef.current?.get(object.userData.featureId) ?? current.current?.slices.find((s) => s.part?.id === object.userData.featureId)?.part;
           if (!part || !(dragMode === 'rotate' && !dragChannel ? targets.has(part.id) : part.id === dragId)) return [];
           object.updateMatrix();
           return [{ object, matrix: object.matrix.clone(), pivot: new THREE.Vector3(...part.origin) }];
@@ -93,7 +107,7 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
       } else if (dragId) {
         const feature = store.features.find((f) => f.id === dragId);
         const layout = store.features.find((f) => f.id === feature?.params.groupId);
-        if (feature && layout) {
+        if (feature && layout && store.projectRevision === dragProject) {
           if (dragMode === 'rotate' && dragChannel) {
             const u = new THREE.Vector3(...dragChannel.u).applyQuaternion(proxy.quaternion);
             const v = new THREE.Vector3(...dragChannel.v).applyQuaternion(proxy.quaternion);
@@ -212,7 +226,19 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
       e.channels.add(component);
     }
     if (fitted.current !== set?.assembly?.id && set?.slices.length) { e.fit(); fitted.current = set.assembly?.id; }
-  }, [set, selectedId]);
+  }, [set]);
+  useEffect(() => {
+    const e = engine.current; if (!e || e.dragging || !frames) return;
+    // Numeric edits and repeated drags use absolute frames derived from the
+    // retained result, never cumulative rotations of already moved meshes.
+    for (const object of e.parts.children) {
+      const part = frames.get(object.userData.featureId);
+      if (!part) continue;
+      const matrix = new THREE.Matrix4().makeBasis(new THREE.Vector3(...part.u), new THREE.Vector3(...part.v), new THREE.Vector3(...part.n));
+      matrix.setPosition(new THREE.Vector3(...part.origin).addScaledVector(new THREE.Vector3(...part.n), -part.thickness / 2));
+      matrix.decompose(object.position, object.quaternion, object.scale);
+    }
+  }, [set, frames, dragging]);
   useEffect(() => {
     const e = engine.current; if (!e || e.dragging) return;
     const targets = new Set(ribAngleTargets(useKerros.getState().features, selectedId ?? '', angleScope));
@@ -220,10 +246,18 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
       const part = set?.slices.find((s) => s.part?.id === object.userData.featureId)?.part;
       if (!part) continue;
       const selected = part.id === selectedId, grouped = targets.has(part.id) && angleScope !== 'selected';
-      if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) object.material.color.set(selected ? '#e89155' : grouped ? '#d5a36a' : part.kind === 'rib' ? '#d9c9ac' : '#778c91');
+      if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) {
+        object.material.color.set(selected ? '#e89155' : grouped ? '#d5a36a' : part.kind === 'rib' ? '#d9c9ac' : '#778c91');
+        const waitingSupport = anglePreview && part.kind !== 'rib';
+        object.material.transparent = waitingSupport; object.material.opacity = waitingSupport ? 0.3 : 1;
+        object.material.depthWrite = !waitingSupport;
+      }
       if (object instanceof THREE.LineSegments && object.material instanceof THREE.LineBasicMaterial) object.material.color.set(selected || grouped ? '#ffc389' : '#403831');
     }
-  }, [set, selectedId, angleScope]);
+    for (const object of e.channels.children) {
+      if (object.userData.featureId && object instanceof THREE.Mesh && object.material instanceof THREE.MeshBasicMaterial) object.material.opacity = object.userData.featureId === selectedId ? 0.3 : 0.14;
+    }
+  }, [set, selectedId, angleScope, anglePreview, dragging]);
   useEffect(() => {
     const e = engine.current; if (!e || e.dragging) return;
     let part = set?.slices.find((s) => s.part?.id === selectedId)?.part;
@@ -235,18 +269,19 @@ export function AssemblyViewport({ set, pending }: { set: SliceSet | null; pendi
     }
     const channel = set?.assembly?.channels.find((c) => c.id === selectedId);
     const enabledChannel = channel && useKerros.getState().features.some((f) => f.id === channel.id && f.enabled) && channel.width > 0 && channel.height > 0;
-    if ((!part && !enabledChannel) || pending || (gizmoMode === 'rotate' && !enabledChannel && part?.kind !== 'rib')) { e.transform.detach(); return; }
+    const liveRibRotation = gizmoMode === 'rotate' && part?.kind === 'rib' && frames?.has(part.id);
+    if ((!part && !enabledChannel) || (pending && !liveRibRotation) || (gizmoMode === 'rotate' && !enabledChannel && part?.kind !== 'rib')) { e.transform.detach(); return; }
     e.proxy.position.set(...(enabledChannel ? channel.origin : part!.origin)); e.proxy.rotation.set(0, 0, 0);
     e.transform.setMode(gizmoMode); e.transform.setSpace('world');
     e.transform.showX = gizmoMode === 'translate' || Boolean(enabledChannel); e.transform.showY = e.transform.showX; e.transform.showZ = true;
     e.transform.setTranslationSnap(snap ? SNAP_TRANSLATE_MM : null);
     e.transform.setRotationSnap(snap ? SNAP_ROTATE_DEG * Math.PI / 180 : null);
     e.transform.attach(e.proxy);
-  }, [set, selectedId, gizmoMode, snap, pending, angleScope]);
+  }, [set, selectedId, gizmoMode, snap, pending, angleScope, frames, dragging]);
   useEffect(() => { engine.current?.fit(); }, [view]);
   return <section className="assembly-canvas">
     <div ref={host} className="assembly-three" />
-    <div className="assembly-overlay"><strong>Assembly</strong><span>{pending ? 'Rebuilding…' : `${set?.slices.length ?? 0} parts`}</span><button className="btn" onClick={() => engine.current?.fit()}>Fit view</button></div>
-    <div className="assembly-caption">{!set?.slices.length ? 'Add a source shape, then create Radial ribs or Linear ribs.' : report?.channels.some((c) => c.id === selectedId) ? 'LED channel · M to move · R to rotate · drag a handle · cuts update on release' : 'Click a part or LED channel to select · drag to orbit · scroll to zoom'}<br />{report && !pending && !report.cuttable && 'Some parts need attention. Read the assembly checks in the inspector.'}</div>
+    <div className="assembly-overlay"><strong>Assembly</strong><span>{anglePreview ? dragging ? 'Angle preview' : 'Angle preview · checking cuts…' : pending ? 'Rebuilding…' : `${set?.slices.length ?? 0} parts`}</span><button className="btn" onClick={() => engine.current?.fit()}>Fit view</button></div>
+    <div className="assembly-caption">{anglePreview ? 'Live placement using the last cut outlines. Joints, supports and cut checks update after editing.' : !set?.slices.length ? pending ? 'Building the first assembly preview…' : 'Add a source shape, then create Radial ribs or Linear ribs.' : report?.channels.some((c) => c.id === selectedId) ? 'LED channel · M to move · R to rotate · drag a handle · cuts update on release' : 'Click a part or LED channel to select · drag to orbit · scroll to zoom'}<br />{report && !pending && !dragging && !report.cuttable && 'Some parts need attention. Read the assembly checks in the inspector.'}</div>
   </section>;
 }

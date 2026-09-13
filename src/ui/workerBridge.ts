@@ -28,6 +28,9 @@ import type {
 } from '../core/pipeline';
 import { sampleMeshGrid } from '../core/voxelise';
 import type { WorkerReply, WorkerRequest } from './kerros.worker';
+import { createLatestQueue } from './latestJob';
+
+const jobs = createLatestQueue();
 
 let worker: Worker | null = null;
 let broken = false;
@@ -118,7 +121,10 @@ export function workerAvailable(): boolean {
   return ensureWorker() !== null;
 }
 
-export async function requestSlice(job: SliceJob, revision: number): Promise<SliceOutput> {
+export function requestSlice(job: SliceJob, revision: number, signal?: AbortSignal): Promise<SliceOutput | undefined> {
+  return jobs.enqueue('slice', () => executeSlice(job, revision), signal);
+}
+async function executeSlice(job: SliceJob, revision: number): Promise<SliceOutput> {
   const active = ensureWorker();
   if (!active) return runSliceJob(job, localVolumes());
 
@@ -136,7 +142,10 @@ export async function requestSlice(job: SliceJob, revision: number): Promise<Sli
   return EMPTY_OUTPUT;
 }
 
-export async function requestPreview(
+export function requestPreview(job: PreviewJob, revision: number, signal?: AbortSignal): Promise<PreviewOutput | undefined> {
+  return jobs.enqueue('preview', () => executePreview(job, revision), signal);
+}
+async function executePreview(
   job: PreviewJob,
   revision: number,
 ): Promise<PreviewOutput> {
@@ -164,7 +173,10 @@ export async function requestPreview(
  * finished parts and never asks the field anything, so the megabytes of
  * Float32 an import carries are of no use to it.
  */
-export async function requestNest(job: NestJob): Promise<NestOutput> {
+export function requestNest(job: NestJob, signal?: AbortSignal): Promise<NestOutput | undefined> {
+  return jobs.enqueue('nest', () => executeNest(job), signal);
+}
+async function executeNest(job: NestJob): Promise<NestOutput> {
   const active = ensureWorker();
   if (!active) return runNestJob(job);
 

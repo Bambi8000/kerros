@@ -179,13 +179,13 @@ export function useSheets(
 
     const mine = ++token.current;
     setBusy(true);
+    const controller = new AbortController();
 
     const timer = setTimeout(() => {
-      requestNest({ parts: built.parts, options: built.options })
+      requestNest({ parts: built.parts, options: built.options }, controller.signal)
         .then((output) => {
-          // During a drag several packs are in flight and only the last one
-          // asked for is worth showing.
-          if (mine !== token.current) return;
+          // Even the active job may have become obsolete while it ran.
+          if (!output || mine !== token.current) return;
           setDone({ output, job: built, projectRevision });
           setBusy(false);
         })
@@ -198,6 +198,7 @@ export function useSheets(
 
     return () => {
       clearTimeout(timer);
+      controller.abort();
       token.current++;
     };
   }, [built, projectRevision]);

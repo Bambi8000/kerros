@@ -7,9 +7,19 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.32.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.32.1.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+Angle edits now reorient the last cut outlines immediately in Assembly,
+including Selected/Odd/Even/All and Fan. The viewport labels this as a placement
+preview and fades the old supports while final cuts and checks are pending.
+Repeated rib rotations remain available; a completed job cannot replace meshes
+under a held handle. Source, stock and membership edits still need a rebuild.
+The shared worker queue runs one job and retains only the latest waiting job
+of each kind; input changes cancel superseded waiting work even during debounce.
+Active synchronous work may finish once. Generation, project/import ownership
+and export freshness checks remain in place; preview frames never supply cuts.
 
 Rib angles now have `Selected`, `Odd`, `Even` and `All` scopes. Odd/Even use
 the rib sequence (1/3/5 and 2/4/6), not feature IDs; hiding or renaming a rib

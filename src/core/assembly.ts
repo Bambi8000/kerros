@@ -48,6 +48,36 @@ export function ribPlacementAngles(features: Feature[], layout: Feature): Map<st
   return new Map(ribs.map((rib, i) => [rib.id, num(rib, 'angle') + num(layout, 'ribAngle')
     + num(layout, ribAngleKey(ribAngleGroup(rib))) + (ribs.length > 1 ? fan * (1 - 2 * i / (ribs.length - 1)) : 0)]));
 }
+/** Repose the last cut outlines while angle-only edits await manufacturing checks.
+ * Returns null for any source, membership, joint or non-angle parameter change.
+ * Callers must also enforce project/import ownership. This never supplies cuts.
+ */
+export function ribAnglePreview(set: SliceSet | null, before: Feature[] | null, after: Feature[]): Map<string, Part> | null {
+  const layout = activeAssembly(after);
+  if (!set?.assembly || !before || !layout || set.assembly.id !== layout.id || before.length !== after.length) return null;
+  for (let i = 0; i < after.length; i++) {
+    const a = before[i], b = after[i];
+    if (a === b) continue;
+    const allowed = b.id === layout.id ? ['ribAngle', 'oddAngle', 'evenAngle', 'fanAngle']
+      : b.kind === 'assembly:rib' && b.params.groupId === layout.id ? ['angle'] : [];
+    if (!allowed.length) return null;
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      if (key !== 'params' && a[key as keyof Feature] !== b[key as keyof Feature]) return null;
+    }
+    for (const key of new Set([...Object.keys(a.params), ...Object.keys(b.params)])) {
+      if (!allowed.includes(key) && a.params[key] !== b.params[key]) return null;
+    }
+  }
+  const oldLayout = activeAssembly(before);
+  if (!oldLayout || oldLayout.id !== layout.id) return null;
+  const oldAngles = ribPlacementAngles(before, oldLayout), angles = ribPlacementAngles(after, layout);
+  return new Map(set.slices.flatMap((slice) => {
+    const part = slice.part;
+    if (part?.kind !== 'rib' || !angles.has(part.id) || !oldAngles.has(part.id)) return [];
+    const delta = (angles.get(part.id)! - oldAngles.get(part.id)!) * Math.PI / 180;
+    return [[part.id, { ...part, u: rotateZ(part.u, delta), n: rotateZ(part.n, delta) }]];
+  }));
+}
 export const add3 = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 export const mul3 = (a: Vec3, s: number): Vec3 => [a[0] * s, a[1] * s, a[2] * s];
 export const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];

@@ -92,6 +92,7 @@ export function Layout() {
     ms: sliceMs,
     pending: slicePending,
     fresh: sliceFresh,
+    sourceFeatures: sliceSourceFeatures,
   } = useSlices(mode !== 'model');
   const sheets = useSheets(sliceFresh ? slices : null, sliceWindows);
   const layerCount = slices?.slices.length ?? 0;
@@ -261,7 +262,7 @@ export function Layout() {
           }
         >
           {assembly && mode === 'stack' ? (
-            <AssemblyViewport set={slices} pending={slicePending} />
+            <AssemblyViewport set={slices} pending={slicePending} sourceFeatures={sliceSourceFeatures} />
           ) : assembly && mode === 'slice' ? (
             <AssemblyPartView set={slices} pending={slicePending} />
           ) : mode === 'slice' ? (
