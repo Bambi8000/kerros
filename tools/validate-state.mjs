@@ -32,7 +32,35 @@ try {
   const reloaded = useKerros.getState();
   reloaded.applyProject(reloaded.projectData(), 2);
   assert.equal(importEntry(id), undefined, 'opening even the same project starts with no baked meshes');
-  console.log('OK  project state: imported meshes and cache revisions belong to the opened project');
+  // Run the real worker message handler with the platform's structured-clone
+  // transport, including buffer detachment. No geometry or algorithm is mocked.
+  const previousSelf = globalThis.self;
+  const replies = [];
+  globalThis.self = {
+    postMessage(message, transfer = []) {
+      replies.push(structuredClone(message, { transfer }));
+    },
+  };
+  try {
+    await server.ssrLoadModule('/src/ui/kerros.worker.ts');
+    const empty = { features: [], resolution: 32, thickness: 3, kerf: 0.2, spacerHeight: 6, seed: 7 };
+    for (let token = 1; token <= 3; token++) {
+      globalThis.self.onmessage({ data: { kind: 'preview', token, job: empty } });
+      const reply = replies.at(-1);
+      assert.equal(reply.kind, 'previewed', `empty preview ${token}: ${reply.message ?? ''}`);
+      assert.equal(reply.output.triangles, 0);
+      assert.equal(reply.token, token);
+    }
+    globalThis.self.onmessage({ data: { kind: 'preview', token: 4, job: {
+      ...empty, features: [{ id: 'body', kind: 'sphere', stage: 'SHAPE', enabled: true, params: { r: 10, op: 'union' } }],
+    } } });
+    assert.equal(replies.at(-1).kind, 'previewed');
+    assert.ok(replies.at(-1).output.triangles > 0, 'normal mesh buffers still transfer');
+  } finally {
+    if (previousSelf === undefined) delete globalThis.self;
+    else globalThis.self = previousSelf;
+  }
+  console.log('OK  project state: project-owned mesh caches and repeatable worker preview transfers');
 } finally {
   await server.close();
 }

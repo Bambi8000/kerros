@@ -1,30 +1,30 @@
 KERROS INVENTORY  2026-09-13  version 0.27.0
 
 --- source, lines each
-   33914 total
-    2806 src/ui/Inspector.tsx
+   34013 total
+    2821 src/ui/Inspector.tsx
     2162 src/core/store.ts
     1704 src/core/sdf.ts
-    1542 src/core/pipeline.ts
+    1545 src/core/pipeline.ts
     1484 tools/validate-nest.mjs
     1463 src/ui/Viewport.tsx
     1271 src/core/nest.ts
-    1197 tools/validate-pipeline.mjs
+    1221 tools/validate-pipeline.mjs
     1158 src/ui/SliceInspector.tsx
+    1071 src/ui/ProfilePanel.tsx
     1067 src/core/profile2d.ts
-    1067 src/ui/ProfilePanel.tsx
-    1014 src/core/slice.ts
+    1019 src/core/slice.ts
      805 tools/validate-sdf.mjs
      787 src/index.css
-     768 tools/validate-window.mjs
+     772 tools/validate-window.mjs
      736 tools/validate-profile.mjs
      687 tools/validate-slice.mjs
      644 src/ui/SheetView.tsx
      529 src/core/job.ts
-     526 src/core/window.ts
+     527 src/core/window.ts
      489 src/core/project.ts
+     471 tools/validate-rig-export.mjs
      470 tools/validate-project.mjs
-     468 tools/validate-rig-export.mjs
      448 src/core/rig.ts
      410 src/core/voxelise.ts
      392 tools/validate-pattern.mjs
@@ -35,7 +35,7 @@ KERROS INVENTORY  2026-09-13  version 0.27.0
      334 src/core/fixture.ts
      330 src/core/legs.ts
      309 src/ui/Layout.tsx
-     302 src/ui/FeatureTree.tsx
+     307 src/ui/FeatureTree.tsx
      283 src/core/meshImport.ts
      283 src/ui/download.ts
      275 tools/validate-boss.mjs
@@ -57,18 +57,18 @@ KERROS INVENTORY  2026-09-13  version 0.27.0
      137 tools/validate-pdf.mjs
      131 src/ui/PartInspector.tsx
      113 tools/validate-twist.mjs
-      94 src/ui/usePreview.ts
-      88 src/ui/kerros.worker.ts
+      97 src/ui/usePreview.ts
+      92 src/ui/kerros.worker.ts
       81 src/ui/useSlices.ts
       78 src-tauri/src/lib.rs
       68 tools/make-icon.py
+      66 tools/validate-state.mjs
       52 src/assets/hero.png
       51 tools/check-version.mjs
       50 tools/check-docs.mjs
       45 src/ui/ErrorBoundary.tsx
       43 src/ui/NumberField.tsx
       38 src/core/profiles.ts
-      38 tools/validate-state.mjs
       18 src/core/mesh.ts
       10 src/App.tsx
       10 src/main.tsx
@@ -87,6 +87,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+f513c89 Explain three-gap rounding, zero spacers and multi-turn repetition accurately
 fba9260 Report actual support state and share layer assignments with inspectors
 ce14d7e Measure thin bridges between complete cut edges and circles
 51408af Keep imported meshes and cut jobs within their project and reject stale exports
@@ -126,4 +127,3 @@ d160f68 Keep the last slice while modelling, so a fixture's ghost can find its l
 09c8b05 Drag per-slice holes in the slice view; docs and inventory at 0.19.0
 6d50d64 One layer selector for fixtures and perforation; per-slice holes remember which feature cut them
 f7d90c9 Docs and inventory at 0.18.0: the layer plan, gaps that grade, and rings as their own material
-ac2ef94 Gradient controls in the panel; spacer rings nest as their own material; fix a composeField call the 3b core missed

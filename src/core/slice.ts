@@ -982,12 +982,17 @@ export function minFeatureGap(slice: Slice, threshold: number): GapReport {
       const da = Math.hypot(edge.ax - circle.x, edge.ay - circle.y);
       const db = Math.hypot(edge.bx - circle.x, edge.by - circle.y);
       if (near <= circle.r && Math.max(da, db) >= circle.r) {
-        // The line crosses the circumference. Walk from its nearest point
-        // towards the farther endpoint by the remaining radius along the line.
+        // The segment crosses the circumference. The nearest point can be an
+        // endpoint, so include its projection along the line in the root.
         const endX = da > db ? edge.ax : edge.bx, endY = da > db ? edge.ay : edge.by;
         const length = Math.hypot(endX - x, endY - y);
-        const distance = Math.sqrt(Math.max(0, circle.r * circle.r - near * near));
-        if (length > 0) { x += (endX - x) * distance / length; y += (endY - y) * distance / length; }
+        if (length > 0) {
+          const ux = (endX - x) / length, uy = (endY - y) / length;
+          const along = (x - circle.x) * ux + (y - circle.y) * uy;
+          const distance = -along + Math.sqrt(Math.max(0, along * along + circle.r * circle.r - near * near));
+          x += ux * distance;
+          y += uy * distance;
+        }
         record(x, y, x, y);
       } else {
         if (Math.max(da, db) < circle.r) {

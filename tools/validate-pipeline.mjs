@@ -20,6 +20,8 @@ import {
   selectorForFixture,
   selectorForLegs,
   paintPlaneIndex,
+  deepestShellWall,
+  profileVolume,
   EMPTY_OUTPUT,
   EMPTY_PREVIEW,
   EMPTY_NEST,
@@ -122,6 +124,28 @@ console.log('pipeline: inspector layer assignments');
   const chosen = resolveLayers(selectorForLegs(leg.params), sparse.planes.map((p) => ({ index: p.index + 1, z: p.z })));
   check('legs select the fourth plane even with only two real sheets', sparse.slices.length === 2 && chosen.join() === '4');
   check('that selection cuts the upper sheet', sparse.slices[1].contours.filter((c) => c.isHole).length === 3);
+}
+
+console.log('pipeline: the reach reported by the actual profile volume');
+{
+  const circle = (radius) => Array.from({ length: 128 }, (_, i) => {
+    const angle = i * Math.PI * 2 / 128;
+    return [radius * Math.cos(angle), radius * Math.sin(angle)];
+  }).flat();
+  const outline = feature('profile', 'profile', 'SHAPE', { height: 200, k: 20, fill: 'outline' }, { rings: [circle(40)] });
+  const walls = [feature('deep', 'shell', 'CARVE', { t: 20 }), feature('last', 'shell', 'CARVE', { t: 6 }),
+    feature('off', 'shell', 'CARVE', { t: 100 }, { enabled: false })];
+  check('reach uses the deepest enabled shell, not the last one', deepestShellWall(walls) === 20);
+  for (const needed of [0, deepestShellWall(walls) * 1.6, 100]) {
+    const volume = profileVolume(outline, needed);
+    check(`reach metadata matches the clamped field at requested depth ${needed}`, Math.abs(volume.sample(500, 0, 0) - volume.reach) < 1e-9);
+  }
+  check('a 20 mm blend grows the actual reach', profileVolume(outline).reach === 20);
+  check('a 20 mm shell grows the actual reach to 32 mm', profileVolume(outline, deepestShellWall(walls) * 1.6).reach === 32);
+  const morph = { ...outline, keys: [{ z: 0, rings: [circle(20)] }, { z: 30, rings: [circle(40)] }] };
+  const volume = profileVolume(morph, 32);
+  check('a morph reports its tightest actual key reach', Math.abs(volume.reach - volume.sample(500, 0, 0)) < 1e-9);
+  check('the smaller key caps that reach at 60 percent of its span', volume.reach === 24);
 }
 
 console.log('pipeline: an empty tree');

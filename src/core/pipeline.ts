@@ -996,6 +996,12 @@ export function usableProfileKeys(feature: Feature): ProfileKey[] {
   );
 }
 
+/** Deepest enabled shell, independent of tree order; reach must cover them all. */
+export function deepestShellWall(features: Feature[]): number {
+  return features.reduce((deepest, f) =>
+    f.kind === 'shell' && f.enabled ? Math.max(deepest, Number(f.params.t) || 0) : deepest, 0);
+}
+
 /**
  * A profile's rings as an extruded volume, or nothing when the file is gone.
  *
@@ -1052,6 +1058,7 @@ export function profileVolume(feature: Feature, needed = 0) {
     });
 
     return {
+      reach: Math.min(...entries.map((entry) => entry.index.reach)),
       // The union of the keys' boxes bounds the mix (a convex combination
       // cannot leave it), and `round` only shrinks — so this is the outer box.
       sample: (x: number, y: number, z: number) => extrudeMorph(entries, easing, round, x, y, z),
@@ -1069,6 +1076,7 @@ export function profileVolume(feature: Feature, needed = 0) {
 
   const index = indexProfile({ rings, fill: featureFill }, 1, 0.06, reach);
   return {
+    reach: index.reach,
     sample: (x: number, y: number, z: number) => extrudeProfile(index, height, round, x, y, z),
     min: [box.minX, box.minY, -height / 2] as [number, number, number],
     max: [box.maxX, box.maxY, height / 2] as [number, number, number],
@@ -1283,12 +1291,7 @@ export function composeField(
    * the shell is the thing that reads deepest. Working it out here rather than
    * defaulting high means a lamp with no shell pays nothing for one.
    */
-  const wallNeeded =
-    features.reduce(
-      (deepest, f) =>
-        f.kind === 'shell' && f.enabled ? Math.max(deepest, Number(f.params.t) || 0) : deepest,
-      0,
-    ) * 1.6;
+  const wallNeeded = deepestShellWall(features) * 1.6;
 
   const fieldFeatures = features.filter(isFieldFeature).map((f) => {
     if (f.kind === 'import') return { ...f, volume: volumes.get(f.id) };

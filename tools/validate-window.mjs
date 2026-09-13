@@ -12,6 +12,8 @@
 
 import {
   MAX_WINDOWS_PER_LAYER,
+  MAX_WINDOW_WIDTH,
+  windowCountRange,
   sectorDistance,
   windowHalfAngle,
   windowSpansZ,
@@ -648,6 +650,8 @@ console.log('window: per-layer rolls');
 
 console.log('window: the ceilings the bench put there');
 {
+  check('the inspector count range matches capped rolls', windowCountRange({ minCount: 12, maxCount: 8 }).join() === '2,2');
+  check('the inspector width ceiling matches the wedge', near(windowHalfAngle({ count: 1, width: 150 }) * 2 / DEG, MAX_WINDOW_WIDTH, 1e-9));
   /*
    * Both of these came from a cut lamp rather than from the mathematics, and
    * both only bite when the wedges are left as openings instead of being filled

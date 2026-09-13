@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   BRUSH_OPS,
   attachableShapes,
@@ -11,9 +12,10 @@ import {
   useKerros,
 } from '../core/store';
 import { openBinary, openText } from './download';
-import { fixturesFromFeatures, paintPlaneIndex, selectorForFixture, selectorForLegs } from '../core/pipeline';
+import { deepestShellWall, fixturesFromFeatures, paintPlaneIndex, profileVolume, selectorForFixture, selectorForLegs } from '../core/pipeline';
 import { strokesByPlane } from '../core/paint';
 import { MAX_REPEAT_STEPS, twistPeriod } from '../core/twist';
+import { MAX_WINDOWS_PER_LAYER, MAX_WINDOW_WIDTH, windowCountRange, windowHalfAngle } from '../core/window';
 import type { BrushOp } from '../core/store';
 import {
   BLEND_PARAM,
@@ -31,7 +33,6 @@ import { ROD_CLEARANCE, ROD_SIZES } from '../core/rig';
 import { LEG_COUNTS, MAX_TILT, legSpacing } from '../core/legs';
 import { defaultStagger } from '../core/rig';
 import { spokesStickOut } from '../core/boss';
-import { indexProfile } from '../core/profile2d';
 import { PATTERN_KINDS, PATTERN_LABELS } from '../core/pattern';
 import { FIXTURE_LABELS, SOCKET_PRESETS, fixtureExtent } from '../core/fixture';
 import type { FixtureKind } from '../core/fixture';
@@ -349,7 +350,7 @@ function ImportInspector({ feature }: { feature: Feature }) {
   const fitImportSize = useKerros((s) => s.fitImportSize);
   // Read so the panel refreshes when a bake finishes; the grids live elsewhere.
   const revision = useKerros((s) => s.importRevision);
-  const wall = useKerros((s) => shellWallOf(s.features));
+  const wall = useKerros((s) => deepestShellWall(s.features));
 
   const entry = importEntry(feature.id);
   void revision;
@@ -494,9 +495,10 @@ function ImportInspector({ feature }: { feature: Feature }) {
         {entry && wall > 0 && wall > scaledReach - 1 ? (
           <div className="warn">
             The shell wall is {wall} mm but the imported field is only exact{' '}
-            {scaledReach.toFixed(1)} mm in. Raise the resolution, scale the mesh
-            up, or thin the wall — otherwise the cavity sits where the field was
-            clamped rather than where it belongs.
+            {scaledReach.toFixed(1)} mm in. Scale the mesh up or thin the wall.
+            Resolution improves detail but does not materially deepen the reach,
+            which is about 15% of the mesh size. Otherwise the cavity sits where
+            the field was clamped rather than where it belongs.
           </div>
         ) : null}
       </div>
@@ -723,8 +725,14 @@ function WindowInspector({ feature }: { feature: Feature }) {
   const width = num(feature.params, 'width', 40);
   const fit = num(feature.params, 'fit', 0.4);
   const windowKerf = num(feature.params, 'windowKerf', stockKerf);
-  const share = 360 / Math.max(Math.round(count), 1);
-  const clamped = Math.min(width, share * 0.9, 178);
+  const clamped = windowHalfAngle({ count, width }) * 360 / Math.PI;
+  const minCount = num(feature.params, 'minCount', 1);
+  const maxCount = num(feature.params, 'maxCount', 2);
+  const minWidth = num(feature.params, 'minWidth', 20);
+  const maxWidth = num(feature.params, 'maxWidth', 60);
+  const [countLow, countHigh] = windowCountRange({ minCount, maxCount });
+  const widthLow = windowHalfAngle({ count: countHigh, width: Math.min(minWidth, maxWidth) }) * 360 / Math.PI;
+  const widthHigh = windowHalfAngle({ count: countLow, width: Math.max(minWidth, maxWidth) }) * 360 / Math.PI;
   const chance = num(feature.params, 'chance', 0.3);
   const attachTo = text(feature.params, 'attachTo', '');
   const hosts = attachableShapes(features);
@@ -806,40 +814,43 @@ function WindowInspector({ feature }: { feature: Feature }) {
           />
           <NumberField
             label="Count from"
-            value={num(feature.params, 'minCount', 1)}
+            value={minCount}
             step={1}
             min={1}
-            max={12}
+            max={MAX_WINDOWS_PER_LAYER}
             onChange={(v) => setParam(feature.id, 'minCount', Math.max(Math.round(v), 1))}
           />
           <NumberField
             label="Count to"
-            value={num(feature.params, 'maxCount', 2)}
+            value={maxCount}
             step={1}
             min={1}
-            max={12}
+            max={MAX_WINDOWS_PER_LAYER}
             onChange={(v) => setParam(feature.id, 'maxCount', Math.max(Math.round(v), 1))}
           />
           <NumberField
             label="Width from"
-            value={num(feature.params, 'minWidth', 20)}
+            value={minWidth}
             unit="°"
             step={5}
             min={0}
-            max={180}
+            max={MAX_WINDOW_WIDTH}
             onChange={(v) => setParam(feature.id, 'minWidth', v)}
           />
           <NumberField
             label="Width to"
-            value={num(feature.params, 'maxWidth', 60)}
+            value={maxWidth}
             unit="°"
             step={5}
             min={0}
-            max={180}
+            max={MAX_WINDOW_WIDTH}
             onChange={(v) => setParam(feature.id, 'maxWidth', v)}
           />
           <div className="derived">
-            Every layer inside the band rolls for itself: at {(chance * 100).toFixed(0)}%
+            Effective roll: {countLow}–{countHigh} openings, {widthLow.toFixed(1)}–{widthHigh.toFixed(1)}° across.
+            {' '}At most {MAX_WINDOWS_PER_LAYER} openings and {MAX_WINDOW_WIDTH}° per opening,
+            so the remaining arcs can be held while glue sets.
+            {' '}Every layer inside the band rolls for itself: at {(chance * 100).toFixed(0)}%
             about {(chance * 100).toFixed(0)} layers in a hundred get windows, the rest
             stay whole. Seeded from the global seed and this feature&rsquo;s id, so the
             same lamp comes out the same, and changing one setting does not
@@ -893,14 +904,15 @@ function WindowInspector({ feature }: { feature: Feature }) {
         )}
         {!perLayer && clamped < width - 1e-9 ? (
           <div className="warn">
-            {width}° will not fit {count} times round; using {clamped.toFixed(1)}°.
-            Wider windows would meet and the ring would fall into loose arcs.
+            Requested {width}°; using {clamped.toFixed(1)}°. Each opening is limited
+            to {MAX_WINDOW_WIDTH}° for gluing and 90% of its share of the circle
+            to keep neighbouring openings apart.
           </div>
         ) : null}
         <div className="derived">
           {perLayer
             ? 'Angle offsets where each layer starts placing its windows. Each layer jitters them within their own share of the circle, so two never merge into one wide opening.'
-            : 'Twist turns the set as it goes up, so the windows spiral through the stack and no two layers line up.'}
+            : 'Twist rotates the set with height; zero keeps the same angles throughout the band.'}
         </div>
       </div>
 
@@ -1123,6 +1135,7 @@ interface ProfileProps {
 }
 
 function ProfileInspector({ feature }: ProfileProps) {
+  const wall = useKerros((s) => deepestShellWall(s.features));
   const setParam = useKerros((s) => s.setParam);
   const renameFeature = useKerros((s) => s.renameFeature);
   const setProfileSize = useKerros((s) => s.setProfileSize);
@@ -1158,17 +1171,7 @@ function ProfileInspector({ feature }: ProfileProps) {
    * The reach the index will use, so the panel can say when a blend outruns
    * it. For a morph the tightest key binds, since every key has its own index.
    */
-  const reach = morphing
-    ? Math.min(
-        ...usable.map(
-          (k) =>
-            indexProfile({ rings: k.rings ?? [], fill: k.fill === 'outline' ? 'outline' : 'holes' })
-              .reach,
-        ),
-      )
-    : rings.length > 0
-      ? indexProfile({ rings, fill: fill as 'outline' | 'holes' }).reach
-      : 0;
+  const reach = useMemo(() => profileVolume(feature, wall * 1.6)?.reach ?? 0, [feature, wall]);
 
   return (
     <>
@@ -1260,7 +1263,7 @@ function ProfileInspector({ feature }: ProfileProps) {
           <div className="derived">
             {fill === 'holes'
               ? 'A path inside another is a hole, and one inside that is solid again.'
-              : 'Only the outermost paths count, so a letter O comes out a disc.'}
+              : 'Paths are unioned into a filled outline, so a letter O comes out a disc and overlapping paths join.'}
           </div>
           <NumberField
             label="Longest axis"
@@ -1422,6 +1425,12 @@ function ProfileInspector({ feature }: ProfileProps) {
           profile's distance is exact out to a reach and clamped beyond it, so a
           blend wider than that reads a clamped number and comes out wrong.
         */}
+        {morphing || rings.length > 0 ? (
+          <div className="derived">
+            {morphing ? 'The tightest key is' : 'This outline is'} exact to {reach.toFixed(1)} mm,
+            using the current blend and deepest enabled shell.
+          </div>
+        ) : null}
         {(morphing || rings.length > 0) && blend > reach ? (
           <div className="warn">
             The blend is {blend} mm and {morphing ? 'the tightest key' : 'this outline'} is exact
@@ -2378,6 +2387,8 @@ function PatternInspector({ feature, placed, slices, sliced }: PatternProps) {
   const minBridge = num(feature.params, 'minBridge', 1.5);
   const perLayer = num(feature.params, 'rotatePerLayer', 0) > 0;
   const wallNeeded = 2 * radius + 2 * minBridge;
+  const density = num(feature.params, 'density', 0);
+  const selected = resolveLayers(selectorFromParams(feature.params), slices?.slices ?? []).length;
 
   return (
     <>
@@ -2408,24 +2419,27 @@ function PatternInspector({ feature, placed, slices, sliced }: PatternProps) {
             </select>
           </span>
         </label>
-        {!sliced ? (
+        {!feature.enabled ? (
+          <div className="derived">This pattern is switched off, so it places no holes.</div>
+        ) : density <= 0 ? (
+          <div className="derived">Density is zero, so no holes are requested. Increase Density to place holes.</div>
+        ) : !sliced ? (
           <div className="warn">
             Cut per slice, so perforation never appears in the Model preview —
             not as holes, and not as ghosts either, since a few hundred of them
             would bury the form. Open Slice, Stack or Sheet to see it.
           </div>
+        ) : selected === 0 ? (
+          <div className="warn">No layers are selected. Adjust the layer selector below.</div>
         ) : placed === 0 ? (
           <div className="warn">
-            No holes placed. This pattern needs {wallNeeded.toFixed(1)} mm of
-            wall and{' '}
-            {wall > 0
-              ? `the shell gives ${wall.toFixed(1)} mm`
-              : 'there is no shell in the tree, so there is no wall to perforate'}
-            . Make the holes smaller, the bridge narrower, or the wall thicker.
+            No holes placed on the selected layers. Check the hole size, bridge,
+            edge band and spacing against the available material. A solid slice
+            can be perforated without a shell; its actual outline decides what fits.
           </div>
         ) : (
           <div className="derived derived-strong">
-            {placed} holes
+            {placed ?? 0} holes
             <span className="derived-sub">
               across the stack · visible in Slice, Stack and Sheet, never in the
               Model preview
@@ -2433,7 +2447,8 @@ function PatternInspector({ feature, placed, slices, sliced }: PatternProps) {
           </div>
         )}
         <div className="derived">
-          Perforates each slice as a flat part, not the solid. A hole carved
+          Visible in Slice, Stack and Sheet, never in the Model preview.
+          {' '}Perforates each slice as a flat part, not the solid. A hole carved
           through the form becomes a different shape on every layer it crosses,
           and the layer where it is half a millimetre wide is the one that falls
           apart on the bed. Clearance is measured in the plane of the slice,
@@ -2463,7 +2478,7 @@ function PatternInspector({ feature, placed, slices, sliced }: PatternProps) {
         />
         <NumberField
           label="Density"
-          value={num(feature.params, 'density', 1)}
+          value={density}
           step={0.05}
           min={0}
           max={1}

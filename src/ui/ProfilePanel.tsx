@@ -114,7 +114,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
   const report = layerIndex > 0 ? reports[layerIndex - 1] : null;
   const flaggedLayers = reports.filter((r) => r.tooThin).length;
 
-  /** Every sheet any pins feature left half-fastened, named once. */
+  /** Every sheet missing a required pin connection, named once. */
   const looseSheets = Array.from(new Set(Object.values(pinLoose).flat())).sort((a, b) => a - b);
 
   const sheetCount = sheets.sheets.length;
@@ -618,7 +618,9 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
           </div>
         ) : (
           <div className="derived">
-            Open Slice, Stack or Sheet to calculate kerf-compensated contours.
+            {sliceFresh
+              ? 'The current model produces no cut layers.'
+              : 'Open Slice, Stack or Sheet to calculate kerf-compensated contours.'}
           </div>
         )}
       </div>
@@ -853,7 +855,9 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
             Packing finished in {sheets.ms} ms: no parts were placed on a sheet.
           </div>
         ) : (
-          <div className="derived">Open Slice, Stack or Sheet to calculate the job.</div>
+          <div className="derived">
+            {sliceFresh ? 'No cut layers to nest.' : 'Open Slice, Stack or Sheet to calculate the job.'}
+          </div>
         )}
         {makeSpacers && rodCount === 0 ? (
           <div className="derived">

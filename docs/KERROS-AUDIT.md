@@ -182,16 +182,30 @@ passed every named check; it did not detect these UI and integration failures.
 | B7 | Paint inspector disagreed with the pipeline's nearest-plane assignment | Fixed: inspector uses the actual state and shared pipeline selectors |
 | B8 | Gradient rounding text ignored the middle gap | Fixed: three-gap rounding, current spacer states and bounded multi-turn repetition |
 | B9 | Spacer messages confused pending results, zero gaps and short rods | Fixed: three-gap rounding, current spacer states and bounded multi-turn repetition |
-| B10 | Import reach warning used the last shell and recommended resolution | Pending |
-| B11 | Profile reach warning measured a different index from the pipeline | Pending |
+| B10 | Import reach warning used the last shell and recommended resolution | Fixed: current reach metadata, physical window limits and truthful feature diagnostics |
+| B11 | Profile reach warning measured a different index from the pipeline | Fixed: current reach metadata, physical window limits and truthful feature diagnostics |
 | B12 | Twist and pin repetition messages missed multi-turn repeats | Fixed: three-gap rounding, current spacer states and bounded multi-turn repetition |
 | B13 | Legs selected planned planes but the inspector counted nonempty sheets | Fixed: inspector uses the actual state and shared pipeline selectors |
-| B14 | Every zero-hole pattern was blamed on wall thickness | Pending |
-| B15 | Window clamp notice still used the superseded mathematical limit | Pending |
-| B16 | Known import/profile/sculpt features were labelled unknown | Pending |
+| B14 | Every zero-hole pattern was blamed on wall thickness | Fixed: current reach metadata, physical window limits and truthful feature diagnostics |
+| B15 | Window clamp notice still used the superseded mathematical limit | Fixed: current reach metadata, physical window limits and truthful feature diagnostics |
+| B16 | Known import/profile/sculpt features were labelled unknown | Fixed: recognised kinds; actual loaded-state subtitles and live morph key/span readings |
 | B17 | Unsliced kerf text and all-unplaced nesting status were obsolete | Fixed: current kerf description and explicit completed-pack status |
 
 Project-state validation loads the actual store through Vite's module loader,
 with no HTTP or WebSocket listener. It bakes an OBJ, opens another project with
 the same feature id, checks both cache invalidation signals, and locates the
 new mesh again. It is part of `npm run verify`.
+The final browser-log review caught and fixed a transient redraw loop introduced
+by the project-ownership guard: the empty preview result must keep its identity
+until the new project reply arrives. Repeated project openings were checked
+again with the browser error log as well as the visible output.
+That repetition also exposed a worker transport bug: transferring the shared
+empty preview buffers detached them, so a second empty reply failed to clone.
+Empty buffers now stay attached, and the real-handler transport regression
+failed before the repair and passed after it.
+
+All B1–B17 repairs were checked in the browser with the triggering projects,
+then verified through the complete named check chain and `tsc -b` production
+build. Geometry, selector, reach and repetition regressions use the real core
+modules. The existing Vite bundle-size advisory remains; there were no new
+build warnings. Physical test cuts listed in HANDOFF remain unproven.

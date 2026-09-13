@@ -267,6 +267,9 @@ console.log('checks: thin features');
     near(minFeatureGap({ contours: [rectangle(0, 0, 80, 0.6)], circles: [] }, 1).minGap, 0.6, 1e-9));
   check('a circular cut crossing a long edge has zero clearance',
     minFeatureGap({ contours: [outer], circles: [{ x: 39, y: 0, r: 2 }] }, 1).minGap === 0);
+  const crossing = minFeatureGap({ contours: [rectangle(0.25, 0.25, 10, 10)], circles: [{ x: 0, y: 0, r: 1 }] }, 1);
+  check('a crossing marker lies on the cut circle even when the nearest point is an endpoint',
+    crossing.minGap === 0 && crossing.at !== null && near(Math.hypot(...crossing.at), 1, 1e-9));
   check('an ordinary four-vertex box has no narrow neck', !minFeatureGap({ contours: [outer], circles: [] }, 1).tooThin);
   check('densifying a smooth ring does not create a narrow neck',
     !minFeatureGap({ contours: [contour(ringPoints(0, 0, 50, 4000))], circles: [] }, 1).tooThin);

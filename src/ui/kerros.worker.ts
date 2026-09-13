@@ -3,8 +3,8 @@
  *
  * Deliberately thin: it holds the imported grids and forwards jobs to the
  * pipeline. All of the thinking is in `src/core/pipeline.ts`, which is pure and
- * therefore testable in Node — which matters, because a worker is the one place
- * in this program that cannot be validated from a script.
+ * therefore testable in Node. The state validator also runs this message
+ * handler with structured-clone transfers; browser tests cover the live worker.
  *
  * Import grids arrive once, after a bake, and stay. They are megabytes of
  * Float32 and re-sending them with every job would cost more than the work does.
@@ -57,9 +57,13 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
       // The mesh buffers are handed over rather than copied: nothing here needs
       // them once they are drawn. A worker's postMessage takes the transfer list
       // as its second argument, unlike a window's.
+      // Empty output is shared by the pipeline. Transferring even a zero-byte
+      // buffer detaches it and makes the next empty reply impossible to clone.
+      const transfer = [output.positions.buffer, output.indices.buffer]
+        .filter((buffer) => buffer.byteLength > 0);
       (self as unknown as {
         postMessage: (message: unknown, transfer?: Transferable[]) => void;
-      }).postMessage(reply, [output.positions.buffer, output.indices.buffer]);
+      }).postMessage(reply, transfer);
       return;
     }
 

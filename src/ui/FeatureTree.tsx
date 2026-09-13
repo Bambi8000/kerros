@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useKerros } from '../core/store';
+import { importEntry, usableProfileKeys, useKerros } from '../core/store';
 import { OP_LABELS, SHAPE_MODULES, findModule, text } from '../core/sdf';
 import type { Op } from '../core/sdf';
 import { STAGES, STAGE_NOTES } from '../core/types';
@@ -9,12 +9,17 @@ import type { Feature } from '../core/types';
 /** One line under a feature's name, saying what it does at a glance. */
 function subtitleFor(f: Feature, index: number, op: Op): string {
   if (f.kind === 'profile') {
-    const rings = Number(f.params.ringCount) || 0;
+    const keys = usableProfileKeys(f);
+    if (keys.length >= 2) {
+      const span = Math.max(...keys.map((k) => k.z)) - Math.min(...keys.map((k) => k.z));
+      return `morph · ${keys.length} keys · ${span.toFixed(1)} mm tall`;
+    }
+    const rings = f.rings?.length ?? 0;
     if (rings === 0) return 'outline · not loaded';
     return `outline · ${rings} path${rings === 1 ? '' : 's'} · ${Number(f.params.height) || 0} mm tall`;
   }
   if (f.kind === 'import') {
-    const triangles = Number(f.params.triangles) || 0;
+    const triangles = importEntry(f.id)?.soup.triangleCount ?? 0;
     return triangles > 0 ? `mesh · ${triangles.toLocaleString('en-US')} triangles` : 'mesh · not loaded';
   }
   if (f.kind === 'paint') {
@@ -141,7 +146,7 @@ export function FeatureTree() {
         <ul className="tree-rows">
           {features.map((f, i) => {
             const op = text(f.params, 'op', 'union') as Op;
-            const known = findModule(f.kind) !== undefined;
+            const known = findModule(f.kind) !== undefined || ['import', 'profile', 'sculpt', 'paint'].includes(f.kind);
             return (
               <li
                 key={f.id}

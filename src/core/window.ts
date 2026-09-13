@@ -137,7 +137,8 @@ const MAX_SHARE = 0.9;
  * there is not enough ring left to hold while it sets. Measured on a cut lamp,
  * not reasoned about.
  */
-const MAX_HALF_ANGLE = 50 * DEG;
+export const MAX_WINDOW_WIDTH = 100;
+const MAX_HALF_ANGLE = (MAX_WINDOW_WIDTH / 2) * DEG;
 
 /**
  * Most windows a **rolled** layer may get.
@@ -153,6 +154,13 @@ const MAX_HALF_ANGLE = 50 * DEG;
  * itself and leaves the one you typed alone. Band mode warns instead.
  */
 export const MAX_WINDOWS_PER_LAYER = 2;
+
+/** Ordered, physically capped count range, shared with the inspector. */
+export function windowCountRange(spec: Pick<WindowSpec, 'minCount' | 'maxCount'>): [number, number] {
+  const lo = Math.min(Math.max(Math.round(Math.min(spec.minCount, spec.maxCount)), 1), MAX_WINDOWS_PER_LAYER);
+  const hi = Math.min(Math.max(Math.round(Math.max(spec.minCount, spec.maxCount)), lo), MAX_WINDOWS_PER_LAYER);
+  return [lo, hi];
+}
 
 /* ------------------------------------------------------------------ *
  * Attachment
@@ -328,14 +336,7 @@ export function wedgesForLayer(spec: WindowSpec, layer: number): Wedge[] {
 
   if (random() > Math.min(Math.max(spec.chance, 0), 1)) return [];
 
-  const lo = Math.min(
-    Math.max(Math.round(Math.min(spec.minCount, spec.maxCount)), 1),
-    MAX_WINDOWS_PER_LAYER,
-  );
-  const hi = Math.min(
-    Math.max(Math.round(Math.max(spec.minCount, spec.maxCount)), lo),
-    MAX_WINDOWS_PER_LAYER,
-  );
+  const [lo, hi] = windowCountRange(spec);
   const count = lo + Math.floor(random() * (hi - lo + 1));
 
   const widthLo = Math.max(Math.min(spec.minWidth, spec.maxWidth), 0);
@@ -364,7 +365,7 @@ export function wedgesForLayer(spec: WindowSpec, layer: number): Wedge[] {
 }
 
 /** Half-angle actually used, after the ceilings. */
-export function windowHalfAngle(spec: WindowSpec): number {
+export function windowHalfAngle(spec: Pick<WindowSpec, 'count' | 'width'>): number {
   const count = Math.max(Math.round(spec.count), 1);
   const share = (Math.PI * 2) / count;
   const asked = (Math.max(spec.width, 0) / 2) * DEG;

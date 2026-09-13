@@ -609,8 +609,11 @@ what happened on the first run.
 Windows that met would merge into one opening and the ring would fall into
 loose arcs, so the half-angle is capped at 90% of each window's share of the
 circle, and never past a right angle — beyond which the two-half-plane form the
-wedge is built from stops being exact. The inspector says when it has clamped
-and why.
+wedge is built from stops being exact. The tighter physical ceiling is 100°
+across. The inspector reads the actual `windowHalfAngle` result and explains
+both limits. Per-layer count fields stop at two and width fields at 100°;
+loaded requests outside those limits show the effective count and width range.
+The count range is shared with the roll generator, preserving its seeded rolls.
 
 ### Materials never share a sheet
 
@@ -1237,6 +1240,8 @@ count. Dense smooth curves therefore do not become warnings, while a simplified
 four-vertex neck can still be checked. A regression slices an 80 mm box with
 three 12 mm leg holes at 33.5 mm spread: its eight-vertex rim has a measured
 0.7115 mm bridge, which the old vertex-only check missed at a 1 mm threshold.
+Circle/segment crossings report zero clearance and place the marker on their
+actual intersection, including a segment whose nearest point is an endpoint.
 
 The threshold is whichever is larger: the maker's `minFeature` setting or two
 kerfs, below which material burns through however good the geometry is.
@@ -1749,7 +1754,11 @@ Two fixes, and the second matters more:
   last enabled shell in the tree. Across walls from 3 mm to 20 mm the derived
   hole, bridge and pitch always fit with room to spare.
 - The pattern inspector reports **how many holes were actually placed**. Zero
-  is called out with the wall it needs and the wall it has. And because
+  distinguishes a disabled feature, zero requested density, an unavailable
+  calculation and an empty layer selection. If nothing fits after that, the
+  panel asks to check hole size, bridge, band and spacing against actual local
+  material. A solid part needs no shell to be perforated; nominal shell
+  thickness alone cannot diagnose every zero result. And because
   patterns are per-slice and never appear in the Model preview, the inspector
   says that too rather than leaving someone rotating a solid looking for holes.
 
@@ -2306,6 +2315,11 @@ deep enough for any wall anyone would cut from sheet, on a trinket and on a shad
 alike. The inspector reports it in millimetres and warns when a shell in the tree
 is thicker.
 
+The comparison uses the deepest **enabled** shell, not the last shell in the
+tree. Increasing resolution preserves approximately the same physical reach;
+it improves detail, so the warning recommends scaling the mesh or thinning the
+wall instead of promising deeper distances from a finer grid.
+
 ### Uniform scale, and only for imports
 
 No primitive has a scale, and the reason is written into `TRANSFORM_PARAMS`:
@@ -2440,6 +2454,13 @@ composition**, so the pipeline works out what this lamp actually needs — the
 deepest shell in the tree, half again — and pays for exactly that. A lamp with
 no shell pays nothing for one.
 
+The profile volume exposes the reach of the index it actually built, taking
+the current blend, 1.6 times the deepest enabled shell and the 60%-of-span cap
+into account. The inspector memoizes that volume metadata instead of building a
+default index with different settings. A morph reports its tightest usable key.
+For an 80 mm circular outline, a 20 mm blend gives 20 mm reach; a 20 mm shell
+gives 32 mm. Those values are checked against the actual clamped field.
+
 ### A profile is a volume
 
 `sdf.ts` may not import values, so it cannot call the extrusion. It does not
@@ -2470,6 +2491,11 @@ They are still not saved. `project.ts` copies `params`, `strokes` and a morph's
 profile has its path and no geometry and the SVG has to be located again. The
 trade mesh import already made, made deliberately a second time, and a third
 time per key.
+
+The feature tree recognises imports, profiles and sculpt features alongside
+registered primitives. Loaded-state subtitles read actual mesh entries or
+outline rings, not saved counts; a live morph names its usable keys and their
+height span instead of claiming its unused base outline is missing.
 
 ## Morphing between key profiles — **shipped**
 
@@ -2772,6 +2798,13 @@ showing — without that, a slow job finishing late would overwrite a newer resu
 Invalidation starts when the inputs change, including the debounce interval.
 Slice and preview replies also belong to a project revision. Opening another
 project hides old results immediately, before the next effect or worker reply.
+The preview's empty waiting result has stable identity: its consumer redraws
+and sets statistics when that object changes, so allocating it on every render
+would create a redraw loop while a newly opened project's preview is pending.
+Empty preview buffers are cloned without transfer. They belong to a shared
+empty result, and transferring even a zero-byte buffer would detach it and
+break the next empty reply. The state validator exercises the actual worker
+handler with structured-clone transfers for repeated empty and normal previews.
 Model mode retains its own project's last slice for fixture ghosts without
 reslicing, but that cache carries explicit freshness: changed slice inputs
 disable cut-job exports until Slice, Stack or Sheet has recalculated them.
@@ -2779,6 +2812,8 @@ Nesting only consumes current slices, and exports require a completed pack for
 the current inputs. A completed pack with every part unplaced says so; it does
 not ask the user to start the pack again. The kerf test is independent and
 remains available.
+An empty model with a completed calculation says it produced no cut layers,
+rather than asking for that same calculation again.
 
 ### If the worker will not start
 

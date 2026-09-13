@@ -16,6 +16,9 @@ export interface PreviewResult extends PreviewOutput {
 }
 
 const IDLE: PreviewResult = { ...EMPTY_PREVIEW, pending: false };
+// Viewport draws when this object's identity changes, then sets its stats.
+// A fresh empty object per render would loop while a new project is pending.
+const PENDING_IDLE: PreviewResult = { ...IDLE, pending: true };
 
 /**
  * Build the preview surface off the main thread.
@@ -90,5 +93,5 @@ export function usePreview(enabled: boolean): PreviewResult {
     projectRevision,
   ]);
 
-  return result.projectRevision === projectRevision ? result : { ...IDLE, pending: enabled };
+  return result.projectRevision === projectRevision ? result : enabled ? PENDING_IDLE : IDLE;
 }

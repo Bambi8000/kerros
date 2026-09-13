@@ -12,7 +12,7 @@ complete, plus five feature families that were not in the plan at all. Kerros ha
 cut real lamps.
 
 The 2026-09-13 audit completed the layer-3 claim cross-check and found seventeen
-issues, recorded in `docs/KERROS-AUDIT.md`. Repairs are in progress. Project
+issues, recorded and repaired in `docs/KERROS-AUDIT.md`. Project
 opening now clears imported mesh caches; cached slices carry ownership and
 freshness, and stale cut jobs cannot be exported. Model mode still retains its
 own last slice for fixture ghosts without paying for a reslice.
@@ -24,6 +24,10 @@ unfastened sheets without guessing why pins are absent; bosses name disabled rod
 Gap-rounding messages include the middle request, and zero spacer counts wait
 for current results and distinguish touching layers from short rods. Twist and
 pin repetition readings now include multi-turn repeats with a stated search limit.
+Import/profile reach warnings now read the same shell depth and index settings
+as the pipeline. Window messages use the physical ceilings, zero perforation
+results name the known cause, and imported/profile/sculpt features are recognised
+in the tree.
 
 ## What Kerros is
 
@@ -239,16 +243,14 @@ out of the store for exactly this reason and are re-exported from there.
   moment its value round-trips. `eulerFromMatrix` is its exact inverse, also
   pinned, because grouping depends on the round trip.
 - **`npm run verify`, never `npx tsc --noEmit`.** See the table above. `verify` is
-  the full validator chain plus a real type check — count them in
-  `package.json`'s `check` script rather than here, where the number has
-  gone stale twice.
-- **Layer pitch is derived in one place**, `layerPitch()` in `types.ts`.
+  the full validator chain plus a real type check. Compare each named OK line
+  with `package.json`'s `check` script; do not substitute a count.
 - **Bed size and kerf come from profiles**, never hardcoded in geometry code.
 - **All randomness seeded**, and seeded so that adjusting a setting does not reroll
   a choice. Per-layer window rolls key on the layer number; scatter keys on part
   index; changing a count must not change which layers were chosen.
 - **Every geometry module gets a validator** in `tools/validate-<name>.mjs`,
-  importing the real module. Thirteen checks, run by `npm run check`.
+  importing the real module. The current check list lives in `package.json`.
 - **Version lives in one place.** `src/version.ts` and `package.json` must agree;
   `tauri.conf.json` reads `"../package.json"` by reference. `check-version.mjs`
   asserts the reference is still there.
@@ -266,8 +268,8 @@ out of the store for exactly this reason and are re-exported from there.
   the tree, because a field is closures and closures do not cross a boundary.
   Nesting is handed parts and returns a placement table, because neither packer
   touches geometry — and a reply that carried it back would invite one to.
-- **Docs batch immediately after every push**, never deferred: this file plus
-  `docs/KERROS-FEATURES.md`.
+- **Docs change in the same batch as the code**, never deferred: this file plus
+  `docs/KERROS-FEATURES.md`, patched in place, and a regenerated inventory.
 - **Command blocks copy-paste ready**, zsh-safe, expected output stated, no `#`
   comments in interactive commands.
 - **Design before code**: plan the feature completely, then implement.
