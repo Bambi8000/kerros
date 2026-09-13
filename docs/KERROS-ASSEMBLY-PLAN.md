@@ -1,6 +1,7 @@
 # Kerros assembly features — implementation plan
 
 Status: implemented for upright sheets in 0.29.0, with rib intersections in 0.31.0.
+Odd/Even angle groups and the linear fan extension shipped in 0.32.0.
 This document preserves the approved design and acceptance goals. Read the
 Assembly expansion section of KERROS-FEATURES.md for the shipped implementation
 and its limits. Insertion and collision checks are sampled; physical fit, glue
@@ -21,6 +22,7 @@ strength and complete assembly feasibility still require material tests.
 - Improvements to direct manipulation, readability and the assembly workspace.
 - Intentional rib collisions: the user approved complementary cross slots or
   a clearance cut in one selected rib, with fit and assembly-order checks.
+- Odd/Even rib angle groups, an All scope and a symmetric fan gradient.
 
 The following sections specify the proposed implementation behaviour. Physical
 fit and assembly feasibility remain to be tested in the actual material.
@@ -35,8 +37,13 @@ must then be resolved again from the current geometry.
 
 `Radial` creates a distribution around a centre; `Linear` creates a parallel
 distribution with an adjustable spacing. Individual ribs can then be moved and
-rotated. `All follow` applies the same angle delta around each rib's own pivot,
-preserving individual differences. Rotating the entire layout is a different
+rotated. `Selected` edits one rib; `Odd`, `Even` and `All` apply shared additive
+offsets around each rib's own pivot, preserving individual differences. Odd/Even
+membership follows stable rib sequence numbers rather than feature IDs or names.
+The linear `Fan edge angle` adds equal steps in left-to-right placement order,
+with opposite edge angles and a zero centre (or mirrored middle pair).
+Hidden ribs retain their fan slots; count changes and placement reorder
+redistribute the fan. Rotating the entire layout is a different
 operation, with a shared assembly pivot. Switching the editing scope alone must
 not change geometry. Keep existing horizontal-layer twist semantics unchanged.
 
@@ -163,7 +170,7 @@ Verify with material coupons before treating the fit or order as established.
 
 Select ribs and supports directly in the 3D assembly, with the same IDs in the
 inspector, part view, sheet view and assembly document. Show only controls for
-the selected operation. Use an explicit `Selected` / `All follow` scope. A
+the selected operation. Use an explicit `Selected` / `Odd` / `Even` / `All` scope. A
 channel displays its route, cross-section and affected parts while being placed.
 
 `Assembly` replaces the `Stack` view name. Keep the existing

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Feature } from '../core/types';
 import type { SliceSet } from '../core/slice';
-import { assemblyNumber as num, sheetWorld } from '../core/assembly';
+import { assemblyNumber as num, sheetWorld, ribAngleGroup, ribAngleTargets, ribAngleValue, ribPlacementAngles } from '../core/assembly';
 import { useKerros } from '../core/store';
 import { NumberField } from './NumberField';
 
@@ -55,6 +55,13 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
     setNotice(removed.length ? `Removed ${removed.map((f) => f.id).join(', ')}. Retained parts keep their IDs and edits. Explicit channel targets remain visible for correction.` : 'Existing parts keep their placement. New ribs fill the largest radial gap or extend the linear row.');
   }} />;
   const part = set?.slices.find((s) => s.part?.id === feature.id)?.part;
+  const scope = state.assemblyAngleScope;
+  const angleTargets = ribAngleTargets(state.features, feature.id, scope);
+  const fanControl = layout?.params.layout === 'linear' && <div className="group"><div className="group-head">Symmetric fan</div>
+    <NumberField label="Fan edge angle" value={num(layout, 'fanAngle')} unit="°" onChange={(v) => state.setParam(layout.id, 'fanAngle', v)} />
+    <p className="hint">Positive opens outward; negative turns inward. Equal angle steps run left to right. The fan contribution is 0° at an odd-count centre, or a mirrored pair for even counts. Individual and group angles are added; Fan 0 removes only the fan.</p>
+    <p className="hint">Placement order includes hidden ribs. Moving a rib past another or changing the count redistributes the fan.</p>
+  </div>;
   return <div className="inspector assembly-inspector">
     <div className="group">
       <div className="group-head">{part?.label ?? feature.id} · {kind === 'layout' ? 'Ribs & Supports' : kind === 'backplate' ? 'Wall mount' : kind === 'channel' ? 'LED channel' : kind === 'joint' ? 'Rib intersection' : kind}</div>
@@ -67,7 +74,8 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
         {count('rib', 'Ribs')}{count('support', 'Horizontal supports')}
         {p.layout === 'linear' ? number('spacing', 'Rib spacing') : <>{number('ribDepth', 'Rib depth')}{number('innerRadius', 'Clear centre radius')}{number('pivotRadius', 'Pivot radius')}</>}
         {number('ribAngle', 'All rib angles', 0, '°')}
-        <p className="hint">Shared angle adjustment turns each rib around its own pivot and keeps individual differences.</p>
+        {number('oddAngle', 'Odd rib angles', 0, '°')}{number('evenAngle', 'Even rib angles', 0, '°')}
+        <p className="hint">All, Odd and Even are added to each rib’s individual angle. Odd uses rib sequence 1, 3, 5…; Even uses 2, 4, 6…. Renaming, tree order and hiding ribs do not change membership.</p>
         <button className="btn" onClick={() => {
           const ribs = members.filter((f) => f.kind === 'assembly:rib').sort((a, b) => num(a, 'ordinal') - num(b, 'ordinal'));
           ribs.forEach((f, i) => {
@@ -78,6 +86,7 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
         }}>Distribute source stations evenly</button>
         <p className="hint">Redistribution regenerates source profiles. Moving an individual rib preserves its source profile.</p>
       </div>
+      {fanControl}
       <div className="group"><div className="group-head">Whole assembly</div>
         {number('px', 'Move X')}{number('py', 'Move Y')}{number('pz', 'Move Z')}{number('angle', 'Layout rotation', 0, '°')}
         {number('jointClearance', 'Joint clearance per side', 0.1, 'mm', 0.05)}
@@ -91,14 +100,18 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
     </>}
     {kind === 'rib' && <>
       <div className="group"><div className="group-head">Placement</div>
-        <div className="assembly-scope" aria-label="Angle scope">
-          <button className={`btn${!state.assemblyAllFollow ? ' is-active' : ''}`} onClick={() => state.setAssemblyAllFollow(false)}>Selected</button>
-          <button className={`btn${state.assemblyAllFollow ? ' is-active' : ''}`} onClick={() => state.setAssemblyAllFollow(true)}>All follow</button>
+        <div className="assembly-scope assembly-angle-scope" aria-label="Angle scope">
+          {(['selected', 'odd', 'even', 'all'] as const).map((value) => <button key={value} aria-pressed={scope === value} className={`btn${scope === value ? ' is-active' : ''}`} onClick={() => state.setAssemblyAngleScope(value)}>{value === 'selected' ? 'Selected' : value === 'odd' ? 'Odd' : value === 'even' ? 'Even' : 'All'}</button>)}
         </div>
-        <NumberField label="Rib angle" value={num(feature, 'angle')} unit="°" onChange={(v) => state.setAssemblyAngle(feature.id, v, state.assemblyAllFollow)} />
+        {layout && <>
+          <NumberField label={scope === 'selected' ? 'Rib angle' : scope === 'all' ? 'All rib angles' : scope === 'odd' ? 'Odd rib angles' : 'Even rib angles'} value={ribAngleValue(feature, layout, scope)} unit="°" onChange={(v) => state.setAssemblyAngle(feature.id, v, scope)} />
+          <p className="derived">Rib sequence {num(feature, 'ordinal') + 1} · {ribAngleGroup(feature) === 'odd' ? 'Odd' : 'Even'}. Final rib angle: {(ribPlacementAngles(state.features, layout).get(feature.id) ?? 0).toFixed(1)}°.</p>
+        </>}
+        <p className="hint">{angleTargets.length ? `Angle group: ${angleTargets.length} enabled ${angleTargets.length === 1 ? 'rib' : 'ribs'}: ${angleTargets.map((id) => `R${id.slice(1)}`).join(', ')}.` : 'No enabled ribs in this angle group. Enable a matching rib to use Rotate.'} Group adjustments also apply when hidden ribs are enabled again. Selecting a scope changes no angles.</p>
         {number('px', 'Offset X')}{number('py', 'Offset Y')}{number('pz', 'Offset Z')}
-        <p className="hint">Drag the selected part with Move or Rotate. Ribs remain upright. All follow affects angles only.</p>
+        <p className="hint">Move affects only the selected part. Rotate turns the angle group about each rib’s own pivot. Ribs remain upright; individual angle corrections are preserved.</p>
       </div>
+      {fanControl}
       <details className="group"><summary>Source plane</summary>
         {layout?.params.layout === 'linear' ? <>{number('sourceX', 'Source X')}{number('station', 'Layout station', 0, '', 0.5)}</> : number('sourceAngle', 'Source angle', 0, '°')}
         <p className="hint">These controls regenerate the unjointed outline from the source model. Placement controls above do not.</p>
@@ -171,7 +184,7 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
           <button className={`btn${state.mode === 'stack' && state.gizmoMode === 'translate' ? ' is-active' : ''}`} disabled={!feature.enabled || !layout?.enabled} onClick={() => { state.setMode('stack'); state.setGizmoMode('translate'); }}>Move channel</button>
           <button className={`btn${state.mode === 'stack' && state.gizmoMode === 'rotate' ? ' is-active' : ''}`} disabled={!feature.enabled || !layout?.enabled} onClick={() => { state.setMode('stack'); state.setGizmoMode('rotate'); }}>Rotate channel</button>
         </div>
-        <p className="hint">In Assembly, drag the channel’s arrows to move or rings to rotate in 3D. M / R switches tools. Rotation pivots around Route X/Y/Z; fitted ends adjust after release. Snap uses 5 mm / 15° steps. All follow applies to ribs only.</p>
+        <p className="hint">In Assembly, drag the channel’s arrows to move or rings to rotate in 3D. M / R switches tools. Rotation pivots around Route X/Y/Z; fitted ends adjust after release. Snap uses 5 mm / 15° steps. Angle groups apply to ribs only.</p>
         {number('px', 'Route X')}{number('py', 'Route Y')}{number('pz', 'Route Z')}{number('yaw', 'Direction in plan', 0, '°')}{number('elevation', 'Elevation', 0, '°')}
         {toggle('through', 'Fit through targeted parts', true)}
         {!p.through && number('length', 'Flat-ended length', 200)}

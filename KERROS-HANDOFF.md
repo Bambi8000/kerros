@@ -7,9 +7,20 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.31.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.32.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+Rib angles now have `Selected`, `Odd`, `Even` and `All` scopes. Odd/Even use
+the rib sequence (1/3/5 and 2/4/6), not feature IDs; hiding or renaming a rib
+does not change membership. Shared offsets are additive and preserve each
+rib's manual angle. The rotation gizmo previews and commits that same scope;
+translation and LED handles remain individual. Linear layouts also have
+`Fan edge angle`: equal angle steps in left-to-right placement order, positive
+outward and negative inward, added to the other angles. Hidden ribs retain
+their fan position; changing count or moving ribs past one another recomputes
+the distribution. Missing new fields are zero, preserving old projects.
+All angles regenerate real joints, LED openings and export geometry.
 
 Rib collisions now offer `Create cross joint` and `Create clearance cut`.
 Both create an editable `assembly:joint` feature referencing persistent rib IDs.
@@ -61,7 +72,7 @@ LED channels have their own XYZ move and full 3D rotation gizmo, selected in
 the tree or by clicking the channel. The pivot is the route anchor, independent
 of fitted endpoints. A drag commits one pose on release and regenerates cuts;
 world-space edits are converted back through the assembly frame, including
-section roll at vertical directions. All follow remains rib-only.
+section roll at vertical directions. Angle groups remain rib-only.
 The original horizontal pipeline is unchanged when the assembly is disabled;
 horizontal-only fixtures, paint and punches are explicitly reported as excluded
 while it is enabled. Joint geometry and sampled insertion/collision checks are

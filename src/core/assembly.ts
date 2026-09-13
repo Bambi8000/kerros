@@ -27,6 +27,27 @@ export const assemblyNumber = (f: Feature, key: string, fallback = 0): number =>
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 };
 const num = assemblyNumber;
+export type RibAngleScope = 'selected' | 'odd' | 'even' | 'all';
+/** Sequence numbers are independent of persistent feature IDs and tree order. */
+export const ribAngleGroup = (rib: Feature): 'odd' | 'even' => Math.max(0, Math.floor(num(rib, 'ordinal'))) % 2 === 0 ? 'odd' : 'even';
+export const ribAngleKey = (scope: Exclude<RibAngleScope, 'selected'>) => scope === 'all' ? 'ribAngle' : scope === 'odd' ? 'oddAngle' : 'evenAngle';
+export const ribAngleValue = (rib: Feature, layout: Feature, scope: RibAngleScope) => scope === 'selected' ? num(rib, 'angle') : num(layout, ribAngleKey(scope));
+/** Used by both the gizmo preview and its target highlighting. */
+export function ribAngleTargets(features: Feature[], id: string, scope: RibAngleScope): string[] {
+  const selected = features.find((f) => f.id === id && f.kind === 'assembly:rib');
+  if (!selected) return [];
+  return features.filter((f) => f.enabled && f.kind === 'assembly:rib' && f.params.groupId === selected.params.groupId
+    && (scope === 'all' || (scope === 'selected' ? f.id === id : ribAngleGroup(f) === scope))).map((f) => f.id);
+}
+/** Fan is an additive linear-layout component. Hidden ribs retain their slots. */
+export function ribPlacementAngles(features: Feature[], layout: Feature): Map<string, number> {
+  const ribs = features.filter((f) => f.kind === 'assembly:rib' && f.params.groupId === layout.id);
+  const x = (f: Feature) => num(f, 'station') * num(layout, 'spacing', 12) + num(f, 'px');
+  ribs.sort((a, b) => x(a) - x(b) || num(a, 'ordinal') - num(b, 'ordinal') || a.id.localeCompare(b.id));
+  const fan = layout.params.layout === 'linear' ? num(layout, 'fanAngle') : 0;
+  return new Map(ribs.map((rib, i) => [rib.id, num(rib, 'angle') + num(layout, 'ribAngle')
+    + num(layout, ribAngleKey(ribAngleGroup(rib))) + (ribs.length > 1 ? fan * (1 - 2 * i / (ribs.length - 1)) : 0)]));
+}
 export const add3 = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 export const mul3 = (a: Vec3, s: number): Vec3 => [a[0] * s, a[1] * s, a[2] * s];
 export const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -206,13 +227,14 @@ export function buildAssembly(
   if (features.filter((f) => f.kind === 'assembly:layout' && f.enabled).length > 1) say('error', [layout.id], 'Only one assembly layout can be active. Disable the other layout.');
   const incompatible = features.filter((f) => f.enabled && !f.kind.startsWith('assembly:') && f.stage !== 'SHAPE' && f.stage !== 'CARVE');
   if (incompatible.length) say('warning', incompatible.map((f) => f.id), 'Horizontal-layer tools are not applied to upright parts. Disable the assembly to edit their original layers.');
+  const placementAngles = ribPlacementAngles(features, layout);
   for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:rib')) {
     const sourceAngle = num(f, 'sourceAngle') * Math.PI / 180;
     const baseU: Vec3 = radial ? [Math.cos(sourceAngle), Math.sin(sourceAngle), 0] : [0, 1, 0];
     const pivot = radial ? num(layout, 'pivotRadius', radius * 0.7) : 0;
     const station = num(f, 'station');
     const src: Vec3 = radial ? add3(centre, mul3(baseU, pivot)) : add3(centre, [num(f, 'sourceX'), 0, 0]);
-    const angle = (num(layout, 'ribAngle') + num(f, 'angle')) * Math.PI / 180;
+    const angle = placementAngles.get(f.id)! * Math.PI / 180;
     const origin: Vec3 = radial ? mul3(baseU, pivot) : [station * num(layout, 'spacing', 12), 0, 0];
     origin[0] += num(f, 'px'); origin[1] += num(f, 'py'); origin[2] = num(f, 'pz');
     const box: Box2 = { minX: radial ? -pivot : -radius, maxX: radial ? radius * 1.45 - pivot : radius, minY: -height / 2, maxY: height / 2 };

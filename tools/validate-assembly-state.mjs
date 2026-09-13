@@ -19,13 +19,14 @@ try {
   const layout=state().features.find(f=>f.kind==='assembly:layout');
   assert.equal(state().mode,'stack');assert.equal(state().selectedId,layout.id);
   const ribs=state().features.filter(f=>f.kind==='assembly:rib');
-  state().setAssemblyAngle(ribs[0].id,12,false);
-  state().setAssemblyAngle(ribs[1].id,-7,false);
-  state().setAssemblyAllFollow(true);
+  state().setAssemblyAngle(ribs[0].id,12,'selected');
+  state().setAssemblyAngle(ribs[1].id,-7,'selected');
+  state().setAssemblyAngleScope('all');
   const unchanged=structuredClone(state().features);
-  state().setAssemblyAllFollow(false);assert.deepEqual(state().features,unchanged,'scope changes no geometry');
-  state().setAssemblyAngle(ribs[0].id,20,true);
-  assert.equal(state().features.find(f=>f.id===ribs[1].id).params.angle,1,'all follow preserves differences');
+  state().setAssemblyAngleScope('selected');assert.deepEqual(state().features,unchanged,'scope changes no geometry');
+  state().setAssemblyAngle(ribs[0].id,8,'all');
+  assert.equal(state().features.find(f=>f.id===ribs[1].id).params.angle,-7,'All preserves individual corrections');
+  assert.equal(state().features.find(f=>f.id===layout.id).params.ribAngle,8,'All is a shared additive offset');
   state().setTransform(ribs[0].id,{px:3,py:2,pz:1});
   const kept=structuredClone(state().features.filter(f=>ribs.slice(0,5).some(r=>r.id===f.id)));
   state().setAssemblyCount(layout.id,'rib',5);
@@ -43,14 +44,14 @@ try {
   let poseNotifications=0;
   const unsubscribe=useKerros.subscribe(()=>poseNotifications++);
   const pose={px:7,py:24,pz:-3,yaw:21,elevation:17,roll:63};
-  state().setAssemblyAllFollow(true);
+  state().setAssemblyAngleScope('all');
   poseNotifications=0;
   state().setAssemblyChannelPose(channel.id,pose);
   assert.equal(poseNotifications,1,'a channel drag commits one complete pose');
   unsubscribe();
   for (const feature of state().features) {
     if (feature.id===channel.id) for (const [key,value] of Object.entries(pose)) assert.equal(feature.params[key],value);
-    else assert.deepEqual(feature,beforePose.find(f=>f.id===feature.id),'channel edits never move ribs, even with All follow');
+    else assert.deepEqual(feature,beforePose.find(f=>f.id===feature.id),'channel edits never move ribs, even with All');
   }
   const validPose=state().features;
   state().setAssemblyChannelPose(channel.id,{yaw:NaN});assert.deepEqual(state().features,validPose);
@@ -118,7 +119,7 @@ try {
   state().setParam(state().features.at(-1).id,'r',60);state().addAssembly('linear');
   const jointGroup=state().features.find(f=>f.kind==='assembly:layout');
   const turned=state().features.find(f=>f.kind==='assembly:rib'&&f.params.ordinal===3);
-  state().setAssemblyAngle(turned.id,-50,false);
+  state().setAssemblyAngle(turned.id,-50,'selected');
   const jointJob={...job,features:state().features};
   const collisions=runSliceJob(jointJob,new Map()).set.assembly.issues.filter(i=>i.ribCollision);
   for(const issue of collisions)state().addRibOperation(...issue.ribCollision,'cross');

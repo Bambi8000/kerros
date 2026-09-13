@@ -3282,9 +3282,55 @@ allocation watermark. Explicit
 channel targets and rib joints referring to deleted parts require correction. `Distribute
 source stations evenly` is a separate, visible regeneration action. Ribs are
 limited to 64 and horizontal supports to 12 per assembly to bound interactive
-work. Switching `Selected` / `All follow` does not change any feature parameters;
-turning with All follow applies an equal delta about each rib's own pivot.
+work. Switching the angle scope does not change any feature parameters;
+group rotation applies an equal delta about each affected rib's own pivot.
 Whole-layout rotation uses the common assembly pivot instead.
+
+### Angle groups and symmetric fan — **shipped** (0.32.0)
+
+The rib inspector offers `Selected`, `Odd`, `Even` and `All`. Selected edits
+the rib's individual `angle`. The other scopes edit additive layout offsets:
+`oddAngle`, `evenAngle` and the existing `ribAngle` for All. Individual values
+are preserved when a group is changed or reset. The assembly inspector also
+shows all three shared controls together. Missing fields read as zero, so
+projects made with the previous Selected/All follow controls keep their exact
+geometry. Scope is transient UI state and resets to Selected when opening a
+project; angle values are persistent project parameters.
+
+Odd means zero-based `ordinal` 0, 2, 4… (rib sequence 1, 3, 5…); Even means
+ordinal 1, 3, 5…. This is independent of persistent R/f IDs, editable names,
+tree order, placement and enabled state. The tree shows Odd/Even and the
+inspector shows the selected rib's sequence and final angle, including all
+offsets. New ribs inherit their group's current offset. Deleted ribs do not
+renumber surviving membership.
+
+The 3D view highlights the angle group. Rotate previews every visible target
+around its own pivot and commits one group offset on release. If the inspected
+rib is outside the chosen Odd/Even group, the handle sits on a visible member
+that will move. The inspector names the target IDs and reports an empty group;
+no rotation handle is attached when there is no visible target. Hidden ribs
+inherit the changed group offset when enabled again. Move always affects only
+the inspected part, and LED channel handles never inherit a rib group.
+`ribAngleTargets` and `ribAngleValue` are shared by preview, inspector and
+the commit path; the event handler snapshots the scope at drag start.
+
+For a linear layout, `Fan edge angle` (`fanAngle`) adds a symmetric gradient.
+Ribs are ordered by assembly-local X (`station * spacing + px`), with ordinal
+and ID breaking ties. For N ribs and zero-based position i, its contribution
+is `fanAngle * (1 - 2*i/(N-1))`. A single rib gets zero; an odd count has a
+zero centre and an even count has opposite middle angles. Positive values
+open the row outward (left +angle, right -angle); negative values converge
+inward. Fan 0 removes only this contribution. The final result is symmetric
+when the other individual/group offsets are symmetric too.
+
+Disabled ribs remain in this ordering so hiding one does not rearrange the
+others. Deleting/adding ribs or moving one past another redistributes the
+fan. Uneven physical gaps still use equal angle steps by position in the row.
+The fan is absent from radial controls and contributes zero to radial geometry;
+Odd/Even/All work in both layouts. `ribPlacementAngles` feeds the actual rib
+frames before joints and LED cuts, so every preview, collision check and
+export uses the combined angles. Changing angles can require revising joints;
+existing manufacturing refusals remain in force.
 
 ### Ring supports and wall mount
 
@@ -3438,7 +3484,7 @@ channel` in Straight route also open Assembly and choose the tool. The toolbar
 and M/R shortcuts work too. Move exposes XYZ arrows; Rotate exposes all three
 axes plus the screen/free rotation handles. Snap uses the shared 5 mm / 15 degree
 increments. Rotation pivots about Route X/Y/Z, not the midpoint of automatically
-fitted endpoints. Only the selected channel moves; rib All follow never applies.
+fitted endpoints. Only the selected channel moves; rib angle groups never apply.
 The envelope previews the drag and a single atomic pose update on release
 rebuilds the cut paths. Fitted endpoints can then adjust to the new direction.
 
@@ -3499,7 +3545,7 @@ dry-fit coupon. Narrow contacts between samples and material flex remain limits.
 `Assembly` replaces the old Stack tab label. Upright assemblies additionally use
 `Part` for the local 2D cut drawing. Click a 3D part to select it; Move/Rotate,
 snapping and M/R shortcuts operate on its placement. The inspector provides
-numeric controls and Selected/All follow angle scope. The component and larger
+numeric controls and Selected/Odd/Even/All angle scope. The component and larger
 LED clearance envelope appear in the assembly preview. Source modelling tools
 remain in a collapsible tree section, and small UI text has higher contrast.
 
@@ -3547,7 +3593,13 @@ cycle and its repair, invalid/missing/duplicate references, near-parallel and
 ring-support refusals, connected clearance cuts, unchanged mating ribs and LED
 conflicts. The state/export validator also carries rib operations through real
 store actions, save/open, dangling references, nesting, DXF, vector PDF
-instructions and the worker. All four assembly validators are in `npm run verify`.
+instructions and the worker.
+`tools/validate-rib-angles.mjs` compares combined groups/fan against flattened
+individual-angle geometry, including actual wall cuts and reports. It covers
+legacy identity, parity independent of IDs/names, hidden and reordered ribs,
+odd/even counts, inward/outward fans, placement reorder, radial groups,
+atomic scope edits, preserved manual angles, new members, save/open, nesting,
+DXF/PDF and the real worker. All five assembly validators are in `npm run verify`.
 Channel gizmo checks cover quaternion roundtrips, vertical poles, section roll,
 rotated layouts, a route anchor distinct from fitted midpoint, actual bore
 centres after a pose edit, atomic state writes and save/open. They do not replace

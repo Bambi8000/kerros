@@ -47,6 +47,8 @@ import {
 import { localiseFixture } from './fixture';
 import { assemblyFeatures, assemblyMember, ribOperation } from './assemblyFeatures';
 import type { AssemblyMember, RibOperation } from './assemblyFeatures';
+import { ribAngleKey } from './assembly';
+import type { RibAngleScope } from './assembly';
 
 export type ViewName = 'persp' | 'top' | 'front' | 'side';
 
@@ -93,8 +95,8 @@ interface KerrosState {
   /** Ordered feature tree. Order is evaluation order. */
   features: Feature[];
   selectedId: string | null;
-  assemblyAllFollow: boolean;
-  setAssemblyAllFollow: (all: boolean) => void;
+  assemblyAngleScope: RibAngleScope;
+  setAssemblyAngleScope: (scope: RibAngleScope) => void;
   /** Monotonic counter so ids are reproducible across a session. */
   nextFeatureNumber: number;
 
@@ -191,7 +193,7 @@ interface KerrosState {
   addAssemblyMember: (id: string, kind: AssemblyMember) => void;
   addRibOperation: (a: string, b: string, operation: RibOperation) => void;
   setAssemblyCount: (id: string, kind: 'rib' | 'support', count: number) => void;
-  setAssemblyAngle: (id: string, angle: number, all: boolean) => void;
+  setAssemblyAngle: (id: string, angle: number, scope: RibAngleScope) => void;
   setAssemblyChannelPose: (id: string, patch: Partial<Record<'px' | 'py' | 'pz' | 'yaw' | 'elevation' | 'roll', number>>) => void;
   addRod: () => void;
   addLegs: () => void;
@@ -387,8 +389,8 @@ function frameFor(features: Feature[], sculpt: Feature): Frame {
 export const useKerros = create<KerrosState>((set, get) => ({
   features: [],
   selectedId: null,
-  assemblyAllFollow: false,
-  setAssemblyAllFollow: (all) => set({ assemblyAllFollow: all }),
+  assemblyAngleScope: 'selected',
+  setAssemblyAngleScope: (scope) => set({ assemblyAngleScope: scope }),
   nextFeatureNumber: 1,
 
   machine: DEFAULT_MACHINE,
@@ -469,12 +471,12 @@ export const useKerros = create<KerrosState>((set, get) => ({
     for (let i = members.length; i < count; i++) features.push(assemblyMember(kind, layout, features, next++));
     return { features, nextFeatureNumber: next, selectedId: s.selectedId && removed.has(s.selectedId) ? id : s.selectedId };
   }),
-  setAssemblyAngle: (id, angle, all) => set((s) => {
+  setAssemblyAngle: (id, angle, scope) => set((s) => {
     const rib = s.features.find((f) => f.id === id);
     if (!rib || rib.kind !== 'assembly:rib' || !Number.isFinite(angle)) return s;
-    const delta = angle - Number(rib.params.angle || 0);
-    return { features: s.features.map((f) => f.id === id || (all && f.kind === 'assembly:rib' && f.params.groupId === rib.params.groupId)
-      ? { ...f, params: { ...f.params, angle: Number(f.params.angle || 0) + delta } } : f) };
+    const target = scope === 'selected' ? id : rib.params.groupId;
+    const key = scope === 'selected' ? 'angle' : ribAngleKey(scope);
+    return { features: s.features.map((f) => f.id === target ? { ...f, params: { ...f.params, [key]: angle } } : f) };
   }),
   setAssemblyChannelPose: (id, patch) => set((s) => {
     if (!Object.values(patch).every(Number.isFinite)) return s;
@@ -2037,7 +2039,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
       partPlacements: { ...data.layout.partPlacements },
       // Selections point at things that may no longer exist.
       selectedId: null,
-      assemblyAllFollow: false,
+      assemblyAngleScope: 'selected',
       selectedPartId: null,
       currentLayer: 1,
       currentSheet: 1,
