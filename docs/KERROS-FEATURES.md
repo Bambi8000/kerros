@@ -3093,14 +3093,16 @@ complete `npm run verify` and upload **only `dist/`** as a build artifact. The
 workflow has read-only repository access and no deployment job or credentials
 for another repository. Actions are pinned to commit hashes.
 
-The source repository stays private. Its current GitHub plan rejects Pages
-there, so the public `Bambi8000/kerros-web` repository holds only the compiled
-site and `.nojekyll`. Its Pages source is **Deploy from a branch**, `main`, `/`.
+The source repository `Bambi8000/kerros` is public by the owner's choice. The
+separate public `Bambi8000/kerros-web` deployment repository was created for the
+initial release while the source repository was private; it retains the same
+site URL and holds only the compiled site and `.nojekyll`. Its Pages source is
+**Deploy from a branch**, `main`, `/`.
 Releases copy a locally verified `dist/` into a separate clone of that public
 repository, inspect the staged files, then commit and push with the maintainer's
-GitHub login. README records this process. A private source push verifies the
+GitHub login. README records this process. A source push verifies the
 code but does not update the public site. Source files, documentation and source
-Git history are never copied to the public repository.
+Git history are never copied to the deployment repository.
 
 The URL is `https://bambi8000.github.io/kerros-web/`.
 `GITHUB_PAGES=true` switches Vite's base to `/kerros-web/`, so scripts, styles,

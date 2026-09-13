@@ -88,6 +88,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+27a30b0 Serve public browser releases from a separate repository
 73846af Prepare verified browser releases for GitHub Pages
 bf9f66d Add editable hole punches to the current slice
 e38638f Use actual geometry limits and loaded state in feature diagnostics
@@ -127,4 +128,3 @@ e6fd419 Interleaved pins that check their own work, bosses kept inside the form,
 c12d1fb Docs and inventory at 0.20.0: legs from the field, and the layer selector
 577903d Legs cut from the field, so one over the rim takes a bite instead of vanishing
 b10220d Splayed leg holes as the swept hull of two ellipses, with ghosts that stop where the holes do
-d160f68 Keep the last slice while modelling, so a fixture's ghost can find its layers

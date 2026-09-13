@@ -39,10 +39,11 @@ results name the known cause, and imported/profile/sculpt features are recognise
 in the tree.
 
 The browser release is served from `https://bambi8000.github.io/kerros-web/`.
-The source repository stays private; the separate public `Bambi8000/kerros-web`
-repository contains only verified `dist/` contents and `.nojekyll`, served from
-its `main` branch root. This is required by the current GitHub plan, which
-rejects Pages in the private repository. `.github/workflows/pages.yml` verifies
+The source repository `Bambi8000/kerros` is public by the owner's choice. The
+separate `Bambi8000/kerros-web` deployment repository contains only verified
+`dist/` contents and `.nojekyll`, served from its `main` branch root. It was
+created when the source repository was private and keeps the existing site URL
+working. `.github/workflows/pages.yml` verifies
 source pushes and saves a build artifact; publishing remains a separate
 maintainer step documented in README, with no cross-repository token stored in
 CI. `GITHUB_PAGES=true` selects `/kerros-web/`; local and native builds use the
