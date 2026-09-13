@@ -3089,14 +3089,22 @@ attaches them.
 
 `.github/workflows/pages.yml` builds the same UI as the native shell. Pushes to
 `main` and manual runs install the locked dependencies on Node.js 24, run the
-complete `npm run verify` and upload **only `dist/`**. The deploy job depends on
-the successful build, runs only for `main`, and uses the `github-pages`
-environment. Only that job receives Pages and deployment-token write access;
-the build has read-only repository access. Actions are pinned to commit hashes.
+complete `npm run verify` and upload **only `dist/`** as a build artifact. The
+workflow has read-only repository access and no deployment job or credentials
+for another repository. Actions are pinned to commit hashes.
 
-The repository's Pages source must be **GitHub Actions**. The target URL is
-`https://bambi8000.github.io/kerros/`. `GITHUB_PAGES=true` switches Vite's base to
-`/kerros/`, so scripts, styles, icons, dynamic imports and the worker resolve
+The source repository stays private. Its current GitHub plan rejects Pages
+there, so the public `Bambi8000/kerros-web` repository holds only the compiled
+site and `.nojekyll`. Its Pages source is **Deploy from a branch**, `main`, `/`.
+Releases copy a locally verified `dist/` into a separate clone of that public
+repository, inspect the staged files, then commit and push with the maintainer's
+GitHub login. README records this process. A private source push verifies the
+code but does not update the public site. Source files, documentation and source
+Git history are never copied to the public repository.
+
+The URL is `https://bambi8000.github.io/kerros-web/`.
+`GITHUB_PAGES=true` switches Vite's base to `/kerros-web/`, so scripts, styles,
+icons, dynamic imports and the worker resolve
 under the project path. Development and Tauri builds retain `/`. The Pages
 verification command builds the actual release artifact; no second unverified
 build replaces it before upload.

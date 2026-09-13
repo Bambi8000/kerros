@@ -38,13 +38,15 @@ as the pipeline. Window messages use the physical ceilings, zero perforation
 results name the known cause, and imported/profile/sculpt features are recognised
 in the tree.
 
-The browser release has a GitHub Pages workflow in `.github/workflows/pages.yml`.
-Once Pages is enabled with GitHub Actions as its source, pushes to `main` run
-the complete verify chain and publish only `dist/` at
-`https://bambi8000.github.io/kerros/`. `GITHUB_PAGES=true` selects that URL base;
-local and native builds use the root. The public browser bundle contains the
-application, while project files stay in the browser and are saved by download.
-Repository visibility is separate from the site's visibility.
+The browser release is served from `https://bambi8000.github.io/kerros-web/`.
+The source repository stays private; the separate public `Bambi8000/kerros-web`
+repository contains only verified `dist/` contents and `.nojekyll`, served from
+its `main` branch root. This is required by the current GitHub plan, which
+rejects Pages in the private repository. `.github/workflows/pages.yml` verifies
+source pushes and saves a build artifact; publishing remains a separate
+maintainer step documented in README, with no cross-repository token stored in
+CI. `GITHUB_PAGES=true` selects `/kerros-web/`; local and native builds use the
+root. Project files stay in the browser and are saved by download.
 
 ## What Kerros is
 
