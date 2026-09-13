@@ -7,9 +7,17 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.30.1.** The MVP as originally scoped is
+**State at the time of writing: version 0.30.2.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+`Minimal solid` is a third wall-mount Outline option, alongside `Open frame`
+and `Solid rectangle`. It fills the profile-following frame's centre before
+cutting tab slots, mounting holes and LED openings, preserving the same outer
+shape and fitted rib joints. Both profile-following modes share their settings;
+switching between them is reversible. The default remains Open frame and old
+projects keep their selected outline. The filled plate also needs a physical
+coupon; geometry checks do not establish strength.
 
 New linear assemblies use a minimal, open wall frame. Its upper and lower rails
 follow each rib's usable shoulder profile and placement. Since 0.30.1, short ribs

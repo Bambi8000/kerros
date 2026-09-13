@@ -234,7 +234,7 @@ export function buildAssembly(
   }
   for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:backplate')) {
     const w = num(f, 'width', radius * 2), h = num(f, 'height', height), z = num(f, 'pz');
-    if (f.params.outline !== 'frame' && !(w > 2 * minBridge && h > 2 * minBridge)) { say('error', [f.id], 'The backplate width and height must exceed two minimum bridges.'); continue; }
+    if (f.params.outline !== 'frame' && f.params.outline !== 'solid' && !(w > 2 * minBridge && h > 2 * minBridge)) { say('error', [f.id], 'The backplate width and height must exceed two minimum bridges.'); continue; }
     const t = f.params.ownMaterial === true ? Math.max(0.2, num(f, 'thickness', stockT)) : stockT;
     const back = makePart(f, 'backplate', [num(f, 'px'), num(f, 'py') - t / 2, z], [1, 0, 0], [0, 0, 1], { minX: -w / 2, maxX: w / 2, minY: -h / 2, maxY: h / 2 }, (x, y) => rectDistance(x, y, 0, 0, w, h, num(f, 'cornerRadius', 3)));
     back.meta.wallOffset = num(f, 'wallOffset');
@@ -284,7 +284,8 @@ export function buildAssembly(
   if (backs.length && supports.length) say('error', [...backs, ...supports].map((p) => p.meta.id), 'Wall tabs and ring slots require different insertion paths. Use one support system per assembly.');
   for (const back of backs) {
     const f = children.find((f) => f.id === back.meta.id)!;
-    const follows = f.params.outline === 'frame';
+    const filled = f.params.outline === 'solid';
+    const follows = f.params.outline === 'frame' || filled;
     const front = back.meta.origin[1] + back.meta.thickness / 2;
     const tabH = Math.max(2, num(f, 'tabHeight', 12));
     const tabGap = Math.max(tabH * 2, num(f, 'tabSpacing', height * 0.45));
@@ -323,18 +324,20 @@ export function buildAssembly(
         return [(box.minX + box.maxX) / 2 + back.meta.origin[0], (box.minY + box.maxY) / 2 + back.meta.origin[2]];
       })).sort((a, b) => a[0][0] - b[0][0]);
       if (pairs.length < 2 || pairs.at(-1)![0][0] - pairs[0][0][0] <= frameWidth) {
-        say('error', [f.id], 'An open frame needs at least two usable ribs spread wider than its frame width. Separate the ribs or use a solid rectangle.');
+        say('error', [f.id], `${filled ? 'A minimal solid backplate' : 'An open frame'} needs at least two usable ribs spread wider than its frame width. Separate the ribs or use a solid rectangle.`);
         parts.splice(parts.indexOf(back), 1); continue;
       }
       upper = pairs.map((p) => p[1]);
       const loop = [...pairs.map((p) => p[0]), ...[...upper].reverse()].flat();
       const distance = polygonDistance(loop, kernel, reach);
-      const source: Distance = (x, y) => Math.abs(distance(x, y)) - frameWidth / 2;
+      // Both outlines share their outer offset. Fill before applying any slots
+      // or mounting holes so switching modes cannot fill a functional opening.
+      const source: Distance = (x, y) => (filled ? distance(x, y) : Math.abs(distance(x, y))) - frameWidth / 2;
       const box = polyBox(loop), pad = frameWidth / 2;
       back.source = back.field = source;
       back.box = { minX: box.minX - pad, maxX: box.maxX + pad, minY: box.minY - pad, maxY: box.maxY + pad };
       back.step = Math.max(back.step, (back.box.maxX - back.box.minX) / 1400, (back.box.maxY - back.box.minY) / 1400);
-      if (!samples(box, Math.max(back.step, minBridge / 2), (x, y) => distance(x, y) < -pad - minBridge))
+      if (!filled && !samples(box, Math.max(back.step, minBridge / 2), (x, y) => distance(x, y) < -pad - minBridge))
         say('error', [f.id], 'The frame has no usable centre opening. Reduce frame width or profile inset, or separate the ribs.');
     }
     for (const { rib, shoulder, backU, tabZ, openings } of plans) {

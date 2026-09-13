@@ -83,6 +83,10 @@ try {
   state().addAssemblyMember(group.id,'channel');
   const back=state().features.find(f=>f.kind==='assembly:backplate');
   state().setParam(back.id,'ownMaterial',true);state().setParam(back.id,'thickness',5);state().setParam(back.id,'kerf',.12);
+  state().setParam(back.id,'outline','solid');
+  const solidProject=parseProject(serializeProject(state().projectData(),'0.30.2','2026-09-14T00:00:00Z'));
+  state().applyProject(solidProject.data,solidProject.nextFeatureNumber);
+  assert.equal(state().features.find(f=>f.id===back.id).params.outline,'solid','Minimal solid survives save/open');
   const job={features:state().features,thickness:3,kerf:.15,materialName:'Birch',spacerHeight:6,resolution:120,tolerance:.03,smoothing:1,minFeature:1,seed:7};
   const output=runSliceJob(job,new Map());
   assert.equal(output.set.assembly.cuttable,true,JSON.stringify(output.set.assembly.issues));

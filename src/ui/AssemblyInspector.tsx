@@ -26,7 +26,8 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
   const kind = feature.kind.slice('assembly:'.length);
   const members = state.features.filter((f) => f.params.groupId === layout?.id);
   const p = feature.params;
-  const follows = p.outline === 'frame';
+  const filled = p.outline === 'solid';
+  const follows = p.outline === 'frame' || filled;
   const patch = (key: string, value: number | string | boolean) => state.setParam(feature.id, key, value);
   const number = (key: string, label: string, fallback = 0, unit = 'mm', step = 1) => <NumberField key={key} label={label} value={num(feature, key, fallback)} unit={unit} step={step} onChange={(v) => patch(key, v)} />;
   const toggle = (key: string, label: string, fallback = false) => <label className="assembly-check"><input type="checkbox" checked={typeof p[key] === 'boolean' ? Boolean(p[key]) : fallback} onChange={(e) => patch(key, e.target.checked)} />{label}</label>;
@@ -93,10 +94,10 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
     </div>}
     {kind === 'backplate' && <>
       <div className="group"><div className="group-head">Backplate</div>
-        {choose('outline', 'Outline', [['frame', 'Open frame'], ['rectangle', 'Solid rectangle']], 'rectangle')}
+        {choose('outline', 'Outline', [['frame', 'Open frame'], ['solid', 'Minimal solid'], ['rectangle', 'Solid rectangle']], 'rectangle')}
         {follows ? <>
           {number('frameWidth', 'Frame width', num(feature, 'tabHeight', 12) + 6)}{number('profileInset', 'Profile inset', 4)}
-          <p className="hint">Upper and lower rails follow every rib’s usable shoulder band. Rounded ends join them into one open frame. Width sets rail thickness; inset moves the rails inward. Short ribs reduce the inset locally or use one centred tab, keeping the requested tab height.</p>
+          <p className="hint">{filled ? 'The same profile-following outline as Open frame, with its centre filled. Frame width and profile inset keep the same meaning in both modes; tab slots and mounting holes remain open.' : 'Upper and lower rails follow every rib’s usable shoulder band. Rounded ends join them into one open frame. Width sets rail thickness; inset moves the rails inward.'} Short ribs reduce the inset locally or use one centred tab, keeping the requested tab height.</p>
         </> : <>
         {number('width', 'Plate width')}{number('height', 'Plate height')}{number('cornerRadius', 'Corner radius')}{number('margin', 'Fit margin', 8)}
         <button className="btn" disabled={pending || !set?.assembly} onClick={() => {

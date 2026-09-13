@@ -138,4 +138,36 @@ assert.ok(errors(run(manual)).some(i=>i.message.includes('mounting opening')),'m
 const single=assembly.features.filter(f=>f.kind!=='assembly:rib'||f.params.ordinal===0);
 assert.ok(errors(run(single)).some(i=>i.message.includes('at least two usable ribs')));
 console.log('  ok    LED route and explicit refusals for narrow/closed/missing frames, offsets and unsupported mounting holes');
+
+// Minimal solid fills only the frame centre, before any functional cuts.
+for(const mount of ['none','screw','keyhole']){
+  const features=structuredClone(assembly.features);backFeature(features).params.mount=mount;
+  // Also carry a short end rib, a moved rib and mixed stock through both modes.
+  features.find(f=>f.kind==='assembly:rib').params.sourceX=-39;
+  features.find(f=>f.kind==='assembly:rib'&&f.params.ordinal===4).params.pz=3;
+  Object.assign(backFeature(features).params,{ownMaterial:true,thickness:5,kerf:.12});
+  const open=run(features), openBack=backSlice(open);
+  backFeature(features).params.outline='solid';
+  const solid=run(features), solidBack=backSlice(solid);
+  assert.deepEqual(errors(open),[]);assert.deepEqual(errors(solid),[]);
+  assert.equal(groupContours(solidBack.contours).length,1);
+  assert.deepEqual(solidBack.contours.filter(c=>!c.isHole),openBack.contours.filter(c=>!c.isHole),'the outer cut contour is identical');
+  const hole=centreHole(openBack), openings=openBack.contours.filter(c=>c.isHole&&c!==hole);
+  assert.deepEqual(solidBack.contours.filter(c=>c.isHole),openings,'all tab and mounting cuts are preserved exactly');
+  assert.ok(field(openBack)(0,0)>0&&field(solidBack)(0,0)<0,'the actual centre changes from empty to material');
+  assert.deepEqual(solid.slices.filter(s=>s.part.kind==='rib'),open.slices.filter(s=>s.part.kind==='rib'),'filling the backplate never changes the ribs');
+  assert.deepEqual(solid.assembly.joints,open.assembly.joints);
+  backFeature(features).params.outline='frame';
+  assert.deepEqual(run(features),open,'switching back restores the complete open frame');
+}
+const filled=structuredClone(assembly.features);backFeature(filled).params.outline='solid';
+const solidNominal=backSlice(run(filled,{kerf:0})), solidKerf=backSlice(run(filled,{kerf:.2}));
+near(box(solidKerf.contours.find(c=>!c.isHole)).w-box(solidNominal.contours.find(c=>!c.isHole)).w,.2,.025);
+Object.assign(backFeature(filled).params,{mountPlacement:'manual',mountZ:0,mountSpacing:12});
+assert.deepEqual(errors(run(filled)),[],'manual mounting holes can use the filled centre');
+Object.assign(backFeature(filled).params,{mount:'none',frameWidth:45});
+assert.deepEqual(errors(run(filled)),[],'a solid backplate does not require an open centre');
+backFeature(filled).params.frameWidth=2;
+assert.equal(run(filled).assembly.cuttable,false,'filling keeps the tab edge bridge check');
+console.log('  ok    minimal solid: identical outer contour, all functional openings, short ribs, reversible switching, kerf and centre mounting');
 console.log('OK    wall frames');

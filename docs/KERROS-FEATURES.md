@@ -3304,6 +3304,18 @@ connect those stations in X order and close with rounded end rails, leaving an
 open centre. The same heights place mating tabs. Moving a rib or editing its
 source updates both the frame and its joints.
 
+Since 0.30.2, `Minimal solid` (`outline: 'solid'`) uses the same outer offset
+but fills the centre. The fill is applied before tab slots, mounting openings
+and LED cuts, so functional holes remain open. It shares Frame width, Profile
+inset, offsets, automatic mounting and fitted tabs with Open frame. Changing
+Outline preserves those settings; selecting Open frame again restores its
+centre opening. Minimal solid keeps the rib/contact and bridge checks but does
+not require a centre opening. Manual mounting holes can use the filled centre.
+Both profile-following outlines need at least two usable ribs spread wider than
+Frame width. New assemblies still default to Open frame; missing Outline still
+means Solid rectangle. This choice is carried by the project, worker, Part,
+Assembly, Sheet, DXF, manifest and PDF through the existing shared cut contours.
+
 Since 0.30.1, the inset is a preference on short ribs: it reduces locally until
 two full-height tabs fit, keeping a minimum bridge plus sampling slack between
 their clearance slots. If a pair cannot fit, one centred tab uses the requested
@@ -3463,7 +3475,12 @@ mixed stock, oblique joints, kerf direction, LED coexistence and explicit refusa
 cases. Short end and middle rib regressions check actual slot contours, unchanged
 tab height, tab material through both backplate faces, a connected frame and
 complete attachment coverage. Too-short and empty source profiles block export;
-disabled ribs are excluded explicitly. Its sphere fixture uses 72.2% less backplate area than the rectangle;
+disabled ribs are excluded explicitly. Minimal solid checks compare the actual
+outer contour and functional holes against Open frame, including a short rib,
+rib movement and mixed stock; they also check reversible switching, kerf and
+manual holes in the filled centre. The state/export validator carries Minimal
+solid through save/open, nesting, DXF, manifest/PDF and the real worker.
+The open sphere fixture uses 72.2% less backplate area than the rectangle;
 this does not establish strength. All three validators are in `npm run verify`.
 Channel gizmo checks cover quaternion roundtrips, vertical poles, section roll,
 rotated layouts, a route anchor distinct from fitted midpoint, actual bore
