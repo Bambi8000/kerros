@@ -446,6 +446,13 @@ about to happen when this handoff was written; ask before assuming.
    part paid for: the swept-section arithmetic legs needed — a tilted solid met
    by a plane, and the sweep between two faces of a sheet — is the same
    mathematics, and it is written and validated.
+   The current design is recorded in
+   [the assembly implementation plan](docs/KERROS-ASSEMBLY-PLAN.md): upright
+   radial and linear ribs, adjustable supports, a wall backplate with approved
+   glued tab joints, and an LED channel through selected assembly parts. These
+   are planned, not shipped. The plan records the user's confirmed scope and
+   extends the phases below with assembly placement, targeting and full-sheet
+   intersection checks.
    - **Phase A: generalised slice planes.** `sliceModel` assumes `z = const`, but
      marching squares, Chaikin, RDP, kerf and grouping all work in the plane's own
      coordinates and do not care which plane it is. Generalise to an origin plus

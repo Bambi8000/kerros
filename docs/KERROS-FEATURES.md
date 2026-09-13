@@ -3244,3 +3244,15 @@ would have rendered the model inside-out.
 `src/core/sdf.ts` and `src/core/surfaceNets.ts` therefore have **no value
 imports**. Keep it that way — type-only imports are erased by Node and are
 fine, value imports would drag the whole app into the validator.
+
+## Assembly expansion — **planned, not shipped**
+
+[KERROS-ASSEMBLY-PLAN.md](KERROS-ASSEMBLY-PLAN.md) records the proposed radial
+and linear rib assembly, adjustable support plates, wall-mounted backplate and
+LED channel tool. The user confirmed upright ribs for the first version and
+glued tab-and-slot wall joints. LED channels are planned as straight assembly
+routes with round or rectangular cross-sections, expressed as cuts in the
+selected parts after placement. The plan distinguishes full-thickness openings
+from mid-plane samples and laser through-cuts from blind pockets. These tools
+are not present in version 0.28.0; the existing cable fixture and horizontal
+layer workflow retain the behaviour described above.
