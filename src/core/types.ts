@@ -1,3 +1,5 @@
+import type { CurveSketch } from './curves.ts';
+
 /**
  * Kerros core domain types.
  *
@@ -106,6 +108,8 @@ export interface Feature {
    * existed mean what it always meant, with no migration to get wrong.
    */
   keys?: ProfileKey[];
+  /** Authored curves and morph keys, saved with the project rather than linked to SVG files. */
+  sketch?: CurveSketch;
   /** Saved nominal 2D loops for independent plates, including holes. */
   plateOutline?: number[][];
 }

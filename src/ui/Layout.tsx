@@ -17,6 +17,7 @@ import { activeAssembly } from '../core/assembly';
 import { AssemblyViewport } from './AssemblyViewport';
 import { AssemblyPartView } from './AssemblyPartView';
 import { AssemblyInspector } from './AssemblyInspector';
+import { CurveEditor } from './CurveEditor';
 
 const VIEWS: { key: ViewName; label: string }[] = [
   { key: 'persp', label: 'Orbit' },
@@ -79,6 +80,9 @@ export function Layout() {
   const setCurrentLayer = useKerros((s) => s.setCurrentLayer);
   const panel = useKerros((s) => s.panel);
   const setPanel = useKerros((s) => s.setPanel);
+  const curveEditorId = useKerros(s => s.curveEditorId);
+  const curveKeyId = useKerros(s => s.curveKeyId);
+  const curveEditing = mode === 'slice' && selectedFeature?.id === curveEditorId && !!selectedFeature?.sketch;
 
   // Slicing runs only while a view needs it, and once for both consumers.
   const {
@@ -158,7 +162,7 @@ export function Layout() {
               className={`view-btn${mode === m.key ? ' is-active' : ''}`}
               onClick={() => setMode(m.key)}
             >
-              {m.key === 'slice' && assembly ? 'Part' : m.label}
+              {m.key === 'slice' && assembly && !curveEditing ? 'Part' : m.label}
             </button>
           ))}
         </nav>
@@ -265,7 +269,9 @@ export function Layout() {
                 : 'Viewport'
           }
         >
-          {assembly && mode === 'stack' ? (
+          {curveEditing ? (
+            <CurveEditor key={`${curveEditorId}:${curveKeyId ?? 'base'}`} feature={selectedFeature!} slices={sliceFresh ? slices : null} />
+          ) : assembly && mode === 'stack' ? (
             <AssemblyViewport set={slices} pending={slicePending} sourceFeatures={sliceSourceFeatures} />
           ) : assembly && mode === 'slice' ? (
             <AssemblyPartView set={slices} pending={slicePending} />

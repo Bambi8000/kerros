@@ -16,6 +16,8 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
   if (f.kind.startsWith('assembly:')) return `${f.id} · ${f.kind.slice(9)}${f.kind === 'assembly:layout' ? ` · ${f.params.layout}` : ''}`;
   if (f.kind === 'holePunch') return `hole · Ø${f.params.diameter} mm · z ${Number(f.params.pz).toFixed(2)} mm`;
   if (f.kind === 'profile') {
+    if (f.sketch) return f.params.curveMode === 'morph' && f.sketch.keys.length
+      ? `drawn morph · ${f.sketch.keys.length} ${f.sketch.keys.length === 1 ? 'key' : 'keys'}` : 'drawn profile · repeated layers';
     const keys = usableProfileKeys(f);
     if (keys.length >= 2) {
       const span = Math.max(...keys.map((k) => k.z)) - Math.min(...keys.map((k) => k.z));
@@ -126,6 +128,7 @@ export function FeatureTree() {
   const ensureSculpt = useKerros((s) => s.ensureSculpt);
   const loadImport = useKerros((s) => s.loadImport);
   const loadProfile = useKerros((s) => s.loadProfile);
+  const addCurveProfile = useKerros(s => s.addCurveProfile);
   const removeFeature = useKerros((s) => s.removeFeature);
   const moveFeature = useKerros((s) => s.moveFeature);
   const toggleFeature = useKerros((s) => s.toggleFeature);
@@ -294,6 +297,9 @@ export function FeatureTree() {
           >
             SVG outline…
           </button>
+        </div>
+        <div className="add-row">
+          <button type="button" className="btn btn-wide" onClick={addCurveProfile}>Curve profile</button>
         </div>
         <div className="add-row">
           <button type="button" className="btn" onClick={addLegs}>

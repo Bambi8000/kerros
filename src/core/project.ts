@@ -16,6 +16,8 @@
  * module.
  */
 
+import type { CurveLoop, CurvePoint, CurveSketch } from './curves.ts';
+
 export const PROJECT_FORMAT = 'kerros-project';
 export const PROJECT_FORMAT_VERSION = 1;
 
@@ -50,6 +52,8 @@ export interface ProjectFeature {
   strokes?: ProjectStroke[];
   /** Profile features only: morph keys. Omitted entirely when there are none. */
   keys?: ProjectProfileKey[];
+  /** Native curve controls are project data; imported SVG rings remain external. */
+  sketch?: CurveSketch;
   /** Independent plate geometry, in millimetres before kerf. */
   plateOutline?: number[][];
 }
@@ -205,6 +209,46 @@ const DEFAULTS: ProjectData = {
 
 const STAGES = ['SHAPE', 'CARVE', 'RIG', 'SLICE', 'PATTERN', 'LAYOUT', 'EXPORT'];
 
+/** All-or-nothing: losing an inner loop or key would change the intended cut. */
+function parseCurveSketch(raw: unknown): CurveSketch | null {
+  const drawing = asRecord(raw);
+  const readPoint = (rawPoint: unknown): CurvePoint | null => Array.isArray(rawPoint) && rawPoint.length === 2 &&
+    rawPoint.every(v => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= 100000)
+    ? [rawPoint[0], rawPoint[1]] : null;
+  const readLoops = (rawLoops: unknown): CurveLoop[] | null => {
+    if (!Array.isArray(rawLoops) || !rawLoops.length || rawLoops.length > 32) return null;
+    const loops: CurveLoop[] = [];
+    for (const rawLoop of rawLoops) {
+      if (!Array.isArray(rawLoop) || rawLoop.length < 3 || rawLoop.length > 256) return null;
+      const loop: CurveLoop = [];
+      for (const rawNode of rawLoop) {
+        const node = asRecord(rawNode), point = readPoint(node.point), incoming = readPoint(node.incoming), outgoing = readPoint(node.outgoing);
+        if (!point || !incoming || !outgoing) return null;
+        loop.push({ point, incoming, outgoing, smooth: node.smooth === true });
+      }
+      loops.push(loop);
+    }
+    return loops;
+  };
+  const base = readLoops(drawing.base);
+  if (!base || !Array.isArray(drawing.keys) || drawing.keys.length > 32) return null;
+  const keys: CurveSketch['keys'] = [];
+  const counter = asNumber(drawing.nextKey, 1);
+  let nextKey = Number.isSafeInteger(counter) && counter > 0 ? counter : 1;
+  for (const rawKey of drawing.keys) {
+    const key = asRecord(rawKey), loops = readLoops(key.loops), id = asString(key.id, ''), z = asNumber(key.z, NaN);
+    if (!loops || !id || !Number.isFinite(z) || Math.abs(z) > 100000 || keys.some(k => k.id === id || Math.abs(k.z - z) < 1e-6)) return null;
+    keys.push({ id, z, loops });
+    const serial = /^k(\d+)$/.exec(id);
+    if (serial) {
+      const value = Number(serial[1]) + 1;
+      if (!Number.isSafeInteger(value)) return null;
+      nextKey = Math.max(nextKey, value);
+    }
+  }
+  return { base, keys, nextKey };
+}
+
 function parseFeature(
   raw: unknown,
   index: number,
@@ -237,6 +281,12 @@ function parseFeature(
     enabled: asBoolean(row.enabled, true),
     params,
   };
+
+  if (row.sketch !== undefined) {
+    const sketch = parseCurveSketch(row.sketch);
+    feature.sketch = sketch ?? { base: [], keys: [], nextKey: 1 };
+    if (!sketch) warnings.push(`Feature ${index + 1} has an invalid curve drawing. No loops or keys were silently dropped; replace the drawing before cutting.`);
+  }
 
   if (row.plateOutline !== undefined) {
     // Reject the entire snapshot if any loop is broken. Dropping just a hole

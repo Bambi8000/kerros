@@ -7,9 +7,27 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.36.1.** The MVP as originally scoped is
+**State at the time of writing: version 0.37.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+**Native curve profiles** now open a drawing editor in Slice. Add `Curve profile`
+under source tools, draw a closed Bézier path or ellipse/circle, then reshape
+anchors and handles. Repeat the base through the height, or copy drawings to
+actual layers such as 1, 5 and 10 and morph between those keys. Native controls
+are saved in the project; imported SVG profiles keep their external-file contract.
+Keys retain physical local heights when the layer plan changes, and the slab
+includes every saved key. A drag previews locally and commits once on release;
+Undo/Redo and project ownership guards protect edits. Selecting a key does not
+recalculate geometry. This uses the existing distance-field morph and retains
+its measured gradient/kerf limitations; physical cuts remain untested. See
+FEATURES and `tools/validate-curves.mjs`.
+
+The reported two-branch lamp remains outside the one-centre vertical support
+fitter. Its disconnected interior layer is a geometric refusal, not a stalled
+calculation. Branch-specific supports and their attachment to the shared lower
+stack still need a separate design and implementation; this release does not
+silently skip those pieces or claim to support them.
 
 Numeric inspector fields now display at most two decimal places without
 rounding the model. In-progress edits remain editable until blur; external

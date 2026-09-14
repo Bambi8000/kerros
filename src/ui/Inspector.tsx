@@ -50,6 +50,7 @@ import type { SliceSet } from '../core/slice';
 import { activeAssembly } from '../core/assembly';
 import { AssemblyStatus } from './AssemblyInspector';
 import { NumberField } from './NumberField';
+import { CurveInspector } from './CurveInspector';
 import type { PunchResult } from '../core/pipeline';
 
 const SELECTOR_LABELS: Record<LayerSelectorKind, string> = {
@@ -2911,6 +2912,7 @@ export function Inspector({ slices, patternCounts, holeMisses, punchResults, sli
     return <PaintInspector feature={feature} slices={slices} />;
   }
   if (feature.kind === 'profile') {
+    if (feature.sketch) return <CurveInspector key={feature.id} feature={feature} slices={slices} fresh={sliceFresh} />;
     return <ProfileInspector feature={feature} />;
   }
   if (feature.kind === 'boss') {

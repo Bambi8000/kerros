@@ -78,6 +78,7 @@ import {
 } from './slice.ts';
 import type { GapReport, Slice, SliceSet } from './slice.ts';
 import { buildVerticalSupports } from './verticalSupports.ts';
+import { curveHeight, curveSketchError, flattenCurve } from './curves.ts';
 
 /**
  * Every import here names its file with a `.ts` extension.
@@ -1212,6 +1213,32 @@ export function profileVolume(feature: Feature, needed = 0) {
    */
   const reachFor = (span: number) =>
     Math.min(Math.max(needed, Number(feature.params.k) || 0), span * 0.6);
+
+  if (feature.sketch) {
+    const sketch = feature.sketch, error = curveSketchError(sketch);
+    if (error) throw new Error(`${feature.name}: ${error}`);
+    const height = curveHeight(sketch, Number(feature.params.height));
+    const drawings = feature.params.curveMode === 'morph' && sketch.keys.length
+      ? sketch.keys.slice().sort((a, b) => a.z - b.z) : [{ z: 0, loops: sketch.base }];
+    const boxes: ReturnType<typeof profileBounds>[] = [];
+    const entries: MorphEntry[] = drawings.map(drawing => {
+      const profile = { rings: drawing.loops.map(loop => flattenCurve(loop)), fill: 'holes' as const };
+      const box = profileBounds(profile); boxes.push(box);
+      return { z: drawing.z, index: indexProfile(profile, 1, 0.06, reachFor(Math.max(box.w, box.h, 1))) };
+    });
+    const repeated = entries.length === 1 ? entries[0].index : null;
+    // Authored keys sit on real sheet centres. Hold the end drawings to the
+    // source slab faces so adding the first key does not shorten the lamp.
+    entries.unshift({ z: -height / 2, index: entries[0].index });
+    entries.push({ z: height / 2, index: entries.at(-1)!.index });
+    return {
+      reach: Math.min(...entries.map(entry => entry.index.reach)),
+      sample: (x: number, y: number, z: number) => repeated ? extrudeProfile(repeated, height, round, x, y, z)
+        : extrudeMorph(entries, feature.params.easing === 'linear' ? 'linear' : 'smooth', round, x, y, z),
+      min: [Math.min(...boxes.map(b => b.minX)), Math.min(...boxes.map(b => b.minY)), -height / 2] as [number, number, number],
+      max: [Math.max(...boxes.map(b => b.maxX)), Math.max(...boxes.map(b => b.maxY)), height / 2] as [number, number, number],
+    };
+  }
 
   const keys = usableProfileKeys(feature);
   if (keys.length >= 2) {

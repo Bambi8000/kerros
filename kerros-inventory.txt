@@ -1,29 +1,29 @@
-KERROS INVENTORY  2026-09-14  version 0.36.1
+KERROS INVENTORY  2026-09-14  version 0.37.0
 
 --- source, lines each
-   38172 total
-    2957 src/ui/Inspector.tsx
-    2285 src/core/store.ts
-    1723 src/core/pipeline.ts
+   38943 total
+    2959 src/ui/Inspector.tsx
+    2325 src/core/store.ts
+    1750 src/core/pipeline.ts
     1704 src/core/sdf.ts
     1484 tools/validate-nest.mjs
     1470 src/ui/Viewport.tsx
     1271 src/core/nest.ts
-    1238 src/ui/SliceInspector.tsx
+    1241 src/ui/SliceInspector.tsx
     1221 tools/validate-pipeline.mjs
     1093 src/core/slice.ts
     1087 src/ui/ProfilePanel.tsx
     1067 src/core/profile2d.ts
      857 src/core/assembly.ts
-     826 src/index.css
+     844 src/index.css
      805 tools/validate-sdf.mjs
      772 tools/validate-window.mjs
      736 tools/validate-profile.mjs
      687 tools/validate-slice.mjs
      644 src/ui/SheetView.tsx
      638 src/core/job.ts
+     557 src/core/project.ts
      527 src/core/window.ts
-     507 src/core/project.ts
      489 src/core/rig.ts
      471 tools/validate-rig-export.mjs
      470 tools/validate-project.mjs
@@ -33,10 +33,10 @@ KERROS INVENTORY  2026-09-14  version 0.36.1
      384 tools/validate-import.mjs
      383 tools/validate-sculpt.mjs
      379 tools/validate-legs.mjs
-     340 src/ui/Layout.tsx
+     346 src/ui/Layout.tsx
+     336 src/ui/FeatureTree.tsx
      334 src/core/fixture.ts
      330 src/core/legs.ts
-     330 src/ui/FeatureTree.tsx
      316 src/ui/AssemblyViewport.tsx
      283 src/core/meshImport.ts
      283 src/ui/download.ts
@@ -46,10 +46,11 @@ KERROS INVENTORY  2026-09-14  version 0.36.1
      251 tools/validate-fixture.mjs
      242 src/ui/useSheets.ts
      239 src/core/layers.ts
+     239 src/ui/CurveEditor.tsx
      234 src/ui/AssemblyInspector.tsx
      231 src/core/dxf.ts
      220 tools/validate-layers.mjs
-     205 src/core/types.ts
+     209 src/core/types.ts
      203 tools/validate-surfacenets.mjs
      202 src/core/surfaceNets.ts
      200 tools/validate-vertical-supports.mjs
@@ -59,6 +60,7 @@ KERROS INVENTORY  2026-09-14  version 0.36.1
      162 src/core/paint.ts
      162 tools/validate-free-plates.mjs
      159 tools/validate-assembly-state.mjs
+     155 src/core/curves.ts
      153 src/core/pdf.ts
      151 tools/validate-assembly.mjs
      138 src/core/twist.ts
@@ -67,6 +69,7 @@ KERROS INVENTORY  2026-09-14  version 0.36.1
      137 tools/validate-pdf.mjs
      136 tools/validate-assembly-preview.mjs
      131 src/ui/PartInspector.tsx
+     129 tools/validate-curves.mjs
      113 tools/validate-twist.mjs
      108 tools/validate-state.mjs
      107 tools/validate-rib-joints.mjs
@@ -77,6 +80,7 @@ KERROS INVENTORY  2026-09-14  version 0.36.1
       78 src-tauri/src/lib.rs
       70 tools/validate-hole-punch.mjs
       68 tools/make-icon.py
+      67 src/ui/CurveInspector.tsx
       54 src/ui/NumberField.tsx
       53 src/core/assemblyFeatures.ts
       52 src/assets/hero.png
@@ -85,6 +89,7 @@ KERROS INVENTORY  2026-09-14  version 0.36.1
       45 src/ui/ErrorBoundary.tsx
       43 src/ui/latestJob.ts
       38 src/core/profiles.ts
+      25 src/ui/curveSession.ts
       18 src/core/mesh.ts
       17 src/ui/AssemblyPartView.tsx
       16 src/ui/SliceStatus.tsx
@@ -100,11 +105,12 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs && node tools/validate-free-plates.mjs && node tools/validate-vertical-supports.mjs
+check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs && node tools/validate-free-plates.mjs && node tools/validate-vertical-supports.mjs && node tools/validate-curves.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+d69b839 Show current slice calculation status and recover failed requests
 77bc47e Auto-fit vertical supports to hollow horizontal stacks
 144f102 Add cross-lapped vertical supports for horizontal stacks
 e8e2624 Keep numeric inspector values compact and editable
@@ -144,4 +150,3 @@ e325f7e Panel resolves ring thickness through ringThickness(), the same function
 f6818bf Remove CLEARANCE_HOLES, a dead duplicate of ROD_CLEARANCE nothing read
 9089d48 Audit at 0.26.0: five findings, none geometric, layer 3 checklist recorded
 a390be1 The validator count in the handoff was six batches out of date
-83f19e8 Docs and inventory at 0.26.0

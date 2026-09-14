@@ -1072,6 +1072,9 @@ export function SliceInspector({ slices, reports, ms, pending }: Props) {
       </div>
 
       <div className="slice-bar">
+        <button className="btn" onClick={() => selected?.sketch ? useKerros.getState().editCurveProfile(selected.id) : useKerros.getState().addCurveProfile()}>
+          {selected?.sketch ? 'Edit curves' : 'Curve profile'}
+        </button>
         {/* Each tool owns its pointer branch before the select fallback. */}
         <button type="button" className={`btn${tool === 'punch' ? ' is-active' : ''}`}
           aria-pressed={tool === 'punch'} title="Click to add one round hole on this layer. Esc cancels."

@@ -2644,8 +2644,9 @@ judge that than the program is.
 ## 2D profiles and SVG import — **shipped**
 
 `src/core/profile2d.ts`. An outline in a plane, kept as a **distance function**
-rather than as a polygon. The sources are an SVG file now, a brush stroke or a
-slice of the field later; once read they are all the same thing.
+rather than as a polygon. Sources include SVG files and native Bézier drawings;
+a brush stroke or a slice of the field remains a future source. Once prepared,
+they share the same distance index.
 
 Keeping it as a field is what makes morphing possible at all. Two profiles are
 interpolated by mixing their distances, with no correspondence between their
@@ -2760,16 +2761,83 @@ grid. They are kilobytes of plain numbers, so they cross to the worker with the
 tree for nothing, where a megabyte of Float32 has to be sent once per bake and
 cached on both sides.
 
-They are still not saved. `project.ts` copies `params`, `strokes` and a morph's
+Imported SVG rings are still not saved. `project.ts` copies `params`, `strokes` and a morph's
 **key list** — paths, sizes and fill rules, never any rings — so a reopened
-profile has its path and no geometry and the SVG has to be located again. The
+SVG profile has its path and no geometry and the SVG has to be located again. The
 trade mesh import already made, made deliberately a second time, and a third
-time per key.
+time per key. Native curve controls are authored project data and are saved;
+they do not change this external-file contract.
 
 The feature tree recognises imports, profiles and sculpt features alongside
 registered primitives. Loaded-state subtitles read actual mesh entries or
 outline rings, not saved counts; a live morph names its usable keys and their
 height span instead of claiming its unused base outline is missing.
+
+### Native curve drawing and layer keys — 0.37.0
+
+`src/core/curves.ts`, `CurveEditor.tsx`, `CurveInspector.tsx` and
+`curveSession.ts`. A native drawing is a `profile` feature with `sketch` data:
+a base drawing, named keys with local Z heights, and a monotonic key counter.
+It is separate from imported SVG `rings` and `keys`.
+
+Each closed loop has 3–256 cubic Bézier anchors, relative incoming/outgoing
+handles and a smooth/corner flag. Drawings allow 1–32 loops and up to 32 keys.
+Nested loops use even-odd fill for holes. A four-arc ellipse supplies the initial
+circle. Adaptive De Casteljau flattening uses a 0.02 mm tolerance, including
+collinear handles which overshoot their anchor; the validator measures 0.0128 mm
+maximum circle deviation at radius 40 mm. Inserting a point subdivides the
+cubic exactly. Moving an anchor carries its handles; dragging a smooth handle
+mirrors the other handle. Width/height reshape the authored controls and rebuild
+the distance index, rather than non-uniformly scaling an existing SDF.
+
+`Repeat one profile` extrudes one indexed drawing through the full height.
+`Morph between keys` feeds the existing distance-field interpolation and its
+Linear/Smooth easing. End drawings continue to the slab faces, so adding the
+first key cannot shorten the stack. The effective height includes every saved
+key, even while Repeat is selected. This native slab behaviour differs from the
+older imported-SVG morph's key-to-key height span described below.
+
+In Slice, choose `New key at layer`, then `Copy drawing to layer N`. It copies
+the selected drawing and selects the new key; an existing key is selected
+without being overwritten. The layer's actual completed sheet centre maps to
+profile-local Z, including translated and Z-reversed profiles. Keys keep that
+physical height if the layer plan changes; labels then say `Near layer` when
+necessary. Adding keys by layer requires current horizontal slices and a
+horizontal drawing plane. Tilted profiles remain drawable, but the inspector
+explains why layer-addressed copying is unavailable. Stale cuts never supply a
+new key height or a misleading layer label.
+
+The editor is reachable from `Curve profile` under source tools and from the
+horizontal Slice toolbar. Bézier pen clicks create corners, drags create handles,
+and clicking the first point or `Close path` closes the drawing. Ellipse/circle
+uses a bounding drag, with Shift for a circle. `Add loop / hole` retains existing
+loops. Point selection exposes handles, numeric X/Y, Smooth/Corner, subdivision,
+point removal and loop removal. Right-drag pans; Fit and zoom buttons frame the
+drawing. Arrow keys move points 1 mm, or 5 mm with Shift. Other morph keys appear
+faintly as guides. `View cut layers` returns to the ordinary cut view.
+
+Pointer movement changes only the local preview. A completed gesture commits
+once, and a pen path commits only on closure. Undo/Redo retain up to 30 edits in
+the current editor/key session; Escape cancels an unfinished edit. Lost pointer
+capture cancels the gesture. Guards check the current project, selected key and
+source sketch before committing. External drawing changes clear local history;
+selecting an existing key does not dirty geometry or restart slicing. Invalid
+edits explain that exports retain the last applied drawing.
+
+Project save/open deep-copies all native controls and keys. Malformed loops or
+keys invalidate the entire drawing rather than silently filling a hole or losing
+a key. The calculation then refuses it until the user replaces the drawing.
+There is no SVG reload requirement for these native drawings.
+
+`tools/validate-curves.mjs` imports the real geometry, pipeline, store and project
+modules. It checks preserved subdivision, handles and bounds, repeated cuts,
+actual layers 1/5/10, exact keys and intermediate easing, full-height behaviour,
+inner loops, one kerf shift, automatic supports on an annular drawing, guarded
+edits, save/open identity, malformed data, transformed and graded layer mapping,
+reachable UI, worker parity, nesting, DXF and PDF. Browser checks exercise real
+point/handle drags, pen closure, ellipse creation, Undo, key selection and the
+resulting shaped stack. Existing morph gradient and topology-pinch kerf limits
+below still apply; these drawings have not been physically cut.
 
 ## Morphing between key profiles — **shipped**
 

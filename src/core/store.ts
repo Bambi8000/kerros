@@ -51,6 +51,8 @@ import { rodFromFeature, rodPose, fitRodToBounds } from './rig';
 import { ribAngleKey, snapshotPlate, isFreePlate } from './assembly';
 import type { RibAngleScope } from './assembly';
 import type { SliceSet } from './slice';
+import { copyCurveSketch, curveSketchError, ellipseCurve } from './curves';
+import type { CurveSketch } from './curves';
 
 export type ViewName = 'persp' | 'top' | 'front' | 'side';
 
@@ -119,6 +121,9 @@ interface KerrosState {
    * change then happen together instead of racing in two effects.
    */
   panel: Panel;
+  /** Transient drawing selection, never part of a saved project. */
+  curveEditorId: string | null;
+  curveKeyId: string | null;
 
   /** Sculpting takes the left mouse button, so it is a mode you switch on. */
   /**
@@ -207,6 +212,10 @@ interface KerrosState {
   /** Read an SVG outline and make, or replace, a profile feature. */
   loadProfile: (id: string | null, name: string, svg: string) => string;
   setProfileSize: (id: string, size: number) => void;
+  addCurveProfile: () => void;
+  editCurveProfile: (id: string, keyId?: string | null) => void;
+  closeCurveEditor: () => void;
+  setCurveSketch: (id: string, sketch: CurveSketch, expected: CurveSketch) => boolean;
   /** Turn a profile into a morph, or add another key above the top one. */
   addProfileKey: (id: string) => void;
   removeProfileKey: (id: string, at: number) => void;
@@ -394,6 +403,8 @@ function frameFor(features: Feature[], sculpt: Feature): Frame {
 export const useKerros = create<KerrosState>((set, get) => ({
   features: [],
   selectedId: null,
+  curveEditorId: null,
+  curveKeyId: null,
   assemblyAngleScope: 'selected',
   setAssemblyAngleScope: (scope) => set({ assemblyAngleScope: scope }),
   nextFeatureNumber: 1,
@@ -1057,6 +1068,31 @@ export const useKerros = create<KerrosState>((set, get) => ({
    * Refitting rather than re-reading: the file may be long gone, and scaling
    * rings that are already in millimetres is exact.
    */
+  addCurveProfile: () => set(s => {
+    const id = `f${s.nextFeatureNumber}`;
+    const sketch: CurveSketch = { base: [ellipseCurve(0, 0, 40, 40)], keys: [], nextKey: 1 };
+    return { features: [...s.features, { id, kind: 'profile', stage: SHAPE, name: 'Curve profile', enabled: true, sketch,
+      params: { op: 'union', k: 10, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
+        height: 100, round: 0, fill: 'holes', curveMode: 'repeat', easing: 'smooth' } }],
+      nextFeatureNumber: s.nextFeatureNumber + 1, selectedId: id, curveEditorId: id, curveKeyId: null,
+      mode: 'slice', panel: 'inspector', currentLayer: 1 };
+  }),
+
+  editCurveProfile: (id, keyId = null) => set(s => {
+    const feature = s.features.find(f => f.id === id && f.kind === 'profile' && f.sketch);
+    if (!feature) return s;
+    const target = keyId ?? (feature.params.curveMode === 'morph' ? feature.sketch!.keys[0]?.id ?? null : null);
+    return { selectedId: id, curveEditorId: id, curveKeyId: feature.sketch!.keys.some(k => k.id === target) ? target : null,
+      mode: 'slice', panel: 'inspector' };
+  }),
+  closeCurveEditor: () => set({ curveEditorId: null, curveKeyId: null }),
+  setCurveSketch: (id, sketch, expected) => {
+    const s = get(), feature = s.features.find(f => f.id === id && f.kind === 'profile');
+    if (!feature || feature.sketch !== expected || curveSketchError(sketch)) return false;
+    set({ features: s.features.map(f => f.id === id ? { ...f, sketch: copyCurveSketch(sketch) } : f) });
+    return true;
+  },
+
   setProfileSize: (id, size) =>
     set((s) => ({
       features: s.features.map((f) => {
@@ -2006,6 +2042,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
         enabled: f.enabled,
         params: { ...f.params },
         ...(f.plateOutline ? { plateOutline: f.plateOutline.map((r) => [...r]) } : {}),
+        ...(f.sketch ? { sketch: copyCurveSketch(f.sketch) } : {}),
         ...(f.strokes && f.strokes.length > 0
           ? { strokes: f.strokes.map((k) => ({ ...k, points: [...k.points] })) }
           : {}),
@@ -2060,6 +2097,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
         params: { ...f.params },
         ...(f.strokes ? { strokes: f.strokes.map((k) => ({ ...k, points: [...k.points] })) } : {}),
         ...(f.keys ? { keys: f.keys.map((k) => ({ ...k })) } : {}),
+        ...(f.sketch ? { sketch: copyCurveSketch(f.sketch) } : {}),
         ...(f.plateOutline ? { plateOutline: f.plateOutline.map((r) => [...r]) } : {}),
       })),
       nextFeatureNumber: Math.max(nextFeatureNumber, data.nextFeatureNumber ?? 1),
@@ -2078,6 +2116,8 @@ export const useKerros = create<KerrosState>((set, get) => ({
       partPlacements: { ...data.layout.partPlacements },
       // Selections point at things that may no longer exist.
       selectedId: null,
+      curveEditorId: null,
+      curveKeyId: null,
       assemblyAngleScope: 'selected',
       selectedPartId: null,
       currentLayer: 1,
