@@ -16,7 +16,7 @@ import { deepestShellWall, fixturesFromFeatures, paintPlaneIndex, profileVolume,
 import { strokesByPlane } from '../core/paint';
 import { MAX_REPEAT_STEPS, twistPeriod } from '../core/twist';
 import { MAX_WINDOWS_PER_LAYER, MAX_WINDOW_WIDTH, windowCountRange, windowHalfAngle } from '../core/window';
-import type { BrushOp } from '../core/store';
+import type { BrushOp, WorkspaceMode } from '../core/store';
 import {
   BLEND_PARAM,
   OPS,
@@ -2809,6 +2809,7 @@ interface InspectorProps {
   holeMisses: Record<string, number>;
   punchResults: Record<string, PunchResult>;
   sliceFresh: boolean;
+  sliceError: string | null;
   /** Chosen layers with no sheet, by legs feature. */
   legGaps: Record<string, number>;
   pinLoose: Record<string, number[]>;
@@ -2816,10 +2817,11 @@ interface InspectorProps {
   sliced: boolean;
 }
 
-export function VerticalSupportsInspector({ feature, slices, fresh }: { feature: Feature; slices: SliceSet | null; fresh: boolean }) {
+export function VerticalSupportsInspector({ feature, slices, fresh, mode, error = null }: {
+  feature: Feature; slices: SliceSet | null; fresh: boolean; mode: WorkspaceMode; error?: string | null;
+}) {
   const setParam = useKerros(s => s.setParam);
   const setMode = useKerros(s => s.setMode);
-  const mode = useKerros(s => s.mode);
   const report = slices?.verticalSupports;
   const automatic = feature.params.fit === 'auto';
   const range = (values: [number, number]) => values.map(v => Number(v.toFixed(2))).filter((v, i, all) => !i || v !== all[0]).join('–');
@@ -2845,14 +2847,18 @@ export function VerticalSupportsInspector({ feature, slices, fresh }: { feature:
         min={min as number | undefined} max={max as number | undefined} step={step as number}
         onChange={v => setParam(feature.id, String(key), v)} />)}
       {!automatic && <div className="derived">Last layer 0 includes the top layer. The centre must lie in the cavity on every selected layer. Leave room above and below the range for the end shoulders. Choose Automatic to fit these settings to the cavity.</div>}
-      <button className="btn btn-wide" type="button" onClick={() => setMode('stack')}>View supports in Assembly</button>
+      {mode !== 'stack' && <button className="btn btn-wide" type="button" onClick={() => setMode('stack')}>
+        {fresh ? 'View supports in Assembly' : 'Calculate in Assembly'}
+      </button>}
     </div>
     <div className="group">
       {!feature.enabled ? <div className="derived">This support group is disabled.</div>
+        : error && mode !== 'model' ? <div className="derived">No current support result. Retry the calculation above.</div>
         : !fresh ? <div className="derived">{mode === 'model' ? 'Open Assembly to calculate current support joints.' : 'Calculating support joints…'}</div>
         : slices?.assembly ? <div className="derived">Vertical supports belong to horizontal stacks. Disable Ribs &amp; Supports to use them.</div>
         : !report ? <div className="derived">No layers available. Add a hollow source shape first.</div>
         : <>
+          {report.parts.length === 0 && <div className="derived">Calculation completed. No supports were fitted; resolve the geometry issues below.</div>}
           <div className="derived">{report.parts.length} supports · {report.contacts.length} layer joints.</div>
           {report.parts.length > 0 && report.fit && <>
             <div className="derived">Auto-fitted to layers {report.fit.firstLayer}–{report.fit.lastLayer}. The support profile follows the inside wall.</div>
@@ -2867,7 +2873,8 @@ export function VerticalSupportsInspector({ feature, slices, fresh }: { feature:
   </>;
 }
 
-export function Inspector({ slices, patternCounts, holeMisses, punchResults, sliceFresh, legGaps, pinLoose, sliced }: InspectorProps) {
+export function Inspector({ slices, patternCounts, holeMisses, punchResults, sliceFresh, sliceError, legGaps, pinLoose, sliced }: InspectorProps) {
+  const mode = useKerros(s => s.mode);
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
 
@@ -2896,7 +2903,7 @@ export function Inspector({ slices, patternCounts, holeMisses, punchResults, sli
   if (feature.kind === 'holePunch') {
     return <HolePunchInspector feature={feature} result={punchResults[feature.id]} fresh={sliceFresh} slices={slices} />;
   }
-  if (feature.kind === 'verticalSupports') return <VerticalSupportsInspector feature={feature} slices={slices} fresh={sliceFresh} />;
+  if (feature.kind === 'verticalSupports') return <VerticalSupportsInspector feature={feature} slices={slices} fresh={sliceFresh} mode={mode} error={sliceError} />;
   if (feature.kind.startsWith('fixture:')) {
     return <FixtureInspector feature={feature} slices={slices} misses={holeMisses[feature.id]} />;
   }

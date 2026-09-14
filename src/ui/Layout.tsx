@@ -12,6 +12,7 @@ import { SliceInspector } from './SliceInspector';
 import { useSheets } from './useSheets';
 import { Viewport } from './Viewport';
 import { useSlices } from './useSlices';
+import { SliceStatus } from './SliceStatus';
 import { activeAssembly } from '../core/assembly';
 import { AssemblyViewport } from './AssemblyViewport';
 import { AssemblyPartView } from './AssemblyPartView';
@@ -92,6 +93,9 @@ export function Layout() {
     ms: sliceMs,
     pending: slicePending,
     fresh: sliceFresh,
+    error: sliceError,
+    completedAt: sliceCompletedAt,
+    recalculate,
     sourceFeatures: sliceSourceFeatures,
   } = useSlices(mode !== 'model');
   const sheets = useSheets(sliceFresh ? slices : null, sliceWindows);
@@ -297,6 +301,9 @@ export function Layout() {
             </button>
           </header>
 
+          {mode !== 'model' && <SliceStatus pending={slicePending} error={sliceError} completedAt={sliceCompletedAt}
+            ms={sliceMs} hasResult={slices !== null} onRecalculate={recalculate} />}
+
           <ErrorBoundary label={panel === 'inspector' ? 'Inspector' : 'Profiles'}>
             {panel === 'inspector' ? (
               mode === 'sheet' ? (
@@ -310,6 +317,7 @@ export function Layout() {
                   holeMisses={holeMisses}
                   punchResults={punchResults}
                   sliceFresh={sliceFresh}
+                  sliceError={sliceError}
                   legGaps={legGaps}
                   pinLoose={pinLoose}
                   sliced={sliceFresh && slices !== null}

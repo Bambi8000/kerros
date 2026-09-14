@@ -7,13 +7,24 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.36.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.36.1.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
 Numeric inspector fields now display at most two decimal places without
 rounding the model. In-progress edits remain editable until blur; external
 changes replace stale drafts. This keeps long gizmo-generated values legible.
+
+Cut views now show a shared calculation status, completion time and an explicit
+`Recalculate` action. Edits still update automatically outside Model; Model
+continues to defer cuts until entering a cut view. The support inspector no
+longer offers navigation to Assembly while already there. A completed geometric
+refusal is labelled as such and Manual split-layer refusals name every affected
+layer. These changes do not add support for branched/disconnected layer pieces.
+Worker calculation failures now reach the UI instead of becoming successful
+empty results. `Retry calculation` submits current inputs; retry freshness,
+project/import ownership and cancellation guards keep old cuts out of export.
+A stopped worker can use the existing inline fallback on the next request.
 
 **Automatic vertical support fitting** now follows the cavity of the original
 horizontal stack. New groups default to `Fit: Automatic`; old projects retain

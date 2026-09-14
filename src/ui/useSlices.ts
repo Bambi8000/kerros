@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useKerros } from '../core/store';
 import { EMPTY_OUTPUT } from '../core/pipeline';
 import type { SliceJob, SliceOutput } from '../core/pipeline';
@@ -11,13 +11,17 @@ const SLICE_DEBOUNCE_MS = 250;
 export interface SliceResult extends SliceOutput {
   /** True while a job is queued or running. */
   pending: boolean;
+  /** Calculation failures are not successful empty jobs. */
+  error: string | null;
+  completedAt: number | null;
+  recalculate: () => void;
   /** The output belongs to the current project and slice inputs. */
   fresh: boolean;
   /** Source tree of the retained output; never crosses a project/import change. */
   sourceFeatures: Feature[] | null;
 }
 
-const IDLE: SliceResult = { ...EMPTY_OUTPUT, pending: false, fresh: false, sourceFeatures: null };
+const IDLE = { ...EMPTY_OUTPUT, fresh: false, sourceFeatures: null, completedAt: null };
 
 /**
  * Slice the current feature tree, off the main thread.
@@ -55,19 +59,28 @@ export function useSlices(enabled: boolean): SliceResult {
   }), [features, thickness, kerf, materialName, spacerHeight, spacerHeightTop, spacerThickness,
     spacerHeightMid, twistPerLayer, twistOverrides, resolution, tolerance,
     smoothing, minFeature, seed]);
+  const [attempt, setAttempt] = useState(0);
+  const recalculate = useCallback(() => setAttempt(value => value + 1), []);
+  const [failed, setFailed] = useState<{
+    message: string; job: SliceJob; importRevision: number; projectRevision: number; attempt: number;
+  } | null>(null);
   const [done, setDone] = useState<{
-    output: SliceOutput; job: SliceJob; importRevision: number; projectRevision: number;
+    output: SliceOutput; job: SliceJob; importRevision: number; projectRevision: number; attempt: number; completedAt: number;
   } | null>(null);
   const generation = useRef(0);
 
   useEffect(() => {
     const mine = ++generation.current;
     if (!enabled) return;
+    setFailed(null);
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       void requestSlice(job, importRevision, controller.signal).then((output) => {
         if (!output || mine !== generation.current) return;
-        setDone({ output, job, importRevision, projectRevision });
+        setDone({ output, job, importRevision, projectRevision, attempt, completedAt: Date.now() });
+      }).catch((error: unknown) => {
+        if (controller.signal.aborted || mine !== generation.current) return;
+        setFailed({ message: (error instanceof Error ? error.message : String(error)).trim() || 'The slice calculation failed.', job, importRevision, projectRevision, attempt });
       });
     }, SLICE_DEBOUNCE_MS);
 
@@ -77,13 +90,14 @@ export function useSlices(enabled: boolean): SliceResult {
       // Invalidate immediately, including the next job's debounce interval.
       generation.current++;
     };
-  }, [enabled, job, importRevision, projectRevision]);
+  }, [enabled, job, importRevision, projectRevision, attempt]);
 
   // Retain this project's last slice for Model-mode fixture ghosts. Ownership
   // and freshness are checked during render, before effects can dispatch work.
-  if (!done || done.projectRevision !== projectRevision) return { ...IDLE, pending: enabled };
-  const fresh = done.job === job && done.importRevision === importRevision;
+  const error = failed?.job === job && failed.importRevision === importRevision && failed.projectRevision === projectRevision && failed.attempt === attempt ? failed.message : null;
+  if (!done || done.projectRevision !== projectRevision) return { ...IDLE, pending: enabled && !error, error, recalculate };
+  const fresh = done.job === job && done.importRevision === importRevision && done.attempt === attempt && !error;
   const sameSettings = (Object.keys(job) as (keyof SliceJob)[]).every((key) => key === 'features' || done.job[key] === job[key]);
-  return { ...done.output, fresh, pending: enabled && !fresh,
-    sourceFeatures: sameSettings && done.importRevision === importRevision ? done.job.features : null };
+  return { ...done.output, fresh, pending: enabled && !fresh && !error, error, recalculate, completedAt: fresh ? done.completedAt : null,
+    sourceFeatures: !error && sameSettings && done.importRevision === importRevision ? done.job.features : null };
 }

@@ -54,8 +54,9 @@ export function buildVerticalSupports(
   if (count < 1 || count > 12 || (!automatic && (depth < bridge * 2 || engagement < bridge * 2)) || clearance < 0 || clearance > t / 2)
     return fail(automatic ? 'Use 1–12 supports and clearance between 0 and half the sheet thickness.' : `Use 1–12 supports, depth and engagement at least ${(bridge * 2).toFixed(2)} mm, and clearance between 0 and half the sheet thickness.`);
   if (layers.length < 2) return fail('Vertical supports need at least two nonempty layers in the selected range.');
-  if (!automatic && layers.some(s => s.contours.filter(c => !c.isHole).length !== 1))
-    return fail('A selected layer has separate pieces. This support group requires one connected ring per layer.');
+  const separate = layers.filter(s => s.contours.filter(c => !c.isHole).length !== 1);
+  if (!automatic && separate.length)
+    return fail(`Layers ${separate.map(s => s.index).join(', ')} contain separate pieces. Each selected layer must be one connected ring around the support centre. Narrow the Manual layer range, or choose Automatic to look for a usable continuous range. Branches need separate attachment.`);
   const span = Math.max(layers.at(-1)!.zBottom + t - layers[0].zBottom + bridge * 4,
     ...layers.map(layer => { const b = boxOf(layer.contours); return Math.max(b.maxX - b.minX, b.maxY - b.minY); }));
   const step = Math.max(span / 1400, Math.min(0.15, t / 12, bridge / 8));

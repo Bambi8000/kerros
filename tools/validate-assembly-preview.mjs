@@ -113,6 +113,20 @@ try {
   assert.equal((await deliver()).kind, 'nest'); assert.deepEqual((await nest).unplacedIds, []);
   assert.equal(transport.work.length, 0);
   assert.equal(transport.imports, 2, 'changed revisions still resync imports before execution');
+  // A failed calculation must reject, not masquerade as a successful empty
+  // model. The same queue must run the next edited or retried job afterward.
+  const failedSlice = bridge.requestSlice(empty, 1);
+  const rejected = assert.rejects(failedSlice, /deliberate worker failure/);
+  const failedRequest = transport.work.shift();
+  transport.onmessage({ data: { kind: 'failed', token: failedRequest.token, message: 'deliberate worker failure' } });
+  await rejected; await tick();
+  const recovered = bridge.requestSlice(empty, 1);
+  await deliver(); assert.equal((await recovered).set, null, 'a real empty model remains a valid successful calculation');
+  const fallbackFailure = bridge.requestSlice(empty, 1);
+  const stopped = assert.rejects(fallbackFailure, /worker stopped/);
+  transport.onerror(); await stopped; await tick();
+  assert.equal((await bridge.requestSlice(empty, 1)).set, null, 'a stopped worker recovers through the real inline pipeline');
+  console.log('  ok    worker failures reject, retries drain correctly and a stopped worker recovers without false empty success');
   console.log('  ok    actual bridge/worker: one active job, newest slice, cancellation, mixed job kinds, imports and complete final cuts');
 } finally {
   if (oldWorker === undefined) delete globalThis.Worker; else globalThis.Worker = oldWorker;

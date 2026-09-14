@@ -756,6 +756,19 @@ Count, Rotation and Joint clearance editable; the derived dimensions appear
 under Fitted dimensions after a current result. Stale or disabled results do not
 claim a successful fit.
 
+Since **0.36.1**, `Calculate in Assembly` / `View supports in Assembly` is
+shown only outside Assembly. The shared cut-view status shows pending work,
+completion time, calculation errors and a real `Recalculate` / `Retry calculation`
+action. Support counts and successful fits remain hidden while stale. A completed
+zero-support result explicitly says it was calculated and rejected, with the
+geometry issues below. Manual refusals name all disconnected layer numbers and
+suggest a narrower range or Automatic's search for a usable continuous range;
+branches still need separate attachment. The Sphere → Shell → Capsule → Shell
+regression demonstrates how shelling already-hollow material can create separate
+pieces; combining the shapes before one final Shell restores a shared cavity in
+that fixture. No Shell operations are silently removed. A calculation error shows recovery
+instructions instead of an endless "Calculating" message.
+
 Automatic fits the centre to the bounding-box centre of the largest sliced
 cavity, transformed by that layer's actual twist. It follows translated sources;
 it is not an interior-point optimiser for arbitrary concave or multiple cavities.
@@ -3081,6 +3094,37 @@ not ask the user to start the pack again. The kerf test is independent and
 remains available.
 An empty model with a completed calculation says it produced no cut layers,
 rather than asking for that same calculation again.
+
+### Calculation feedback and retries — 0.36.1
+
+`SliceStatus` is visible above the right-hand inspector or Profiles in every
+cut view, so source editing in Assembly still shows pending work. It names when
+the previous result is retained and shows the completion time and duration of
+the current calculation. A successful calculation may still have geometry
+refusals; the support inspector distinguishes that outcome from worker failure.
+It no longer offers a redundant button to enter the current Assembly view.
+
+`useSlices.recalculate` increments a transient request attempt, without changing
+the saved project or feature parameters. That attempt participates in freshness
+immediately, before the effect/debounce, so exports and nesting cannot use the
+old result during a retry. Source changes continue to create a new job through
+the feature-tree dependency; Mode changes keep the existing deferred Model path.
+No automatic retries, periodic timers or background Model slicing are added.
+
+The slice bridge rejects worker failures instead of returning `EMPTY_OUTPUT`.
+The hook catches both worker and inline errors, scoped to job, attempt, import
+and project. A failed current request stops pending, stays stale and offers
+Retry calculation. Old-project, canceled and superseded errors are ignored.
+New input or an explicit retry clears the failed state and submits current data.
+A real empty model remains a successful empty result. A stopped worker retains
+the existing inline fallback for the next request. Preview/nesting transport
+semantics are unchanged.
+
+The bridge validator drives the real worker transport through failure, retry and
+worker-stop recovery. The support validator covers the status truth table,
+mode-aware navigation and named split layers. Browser checks additionally edit
+a sphere/capsule source repeatedly, change Fit, invoke Recalculate and switch
+between Model and Assembly, watching current counts and completion times.
 
 ### If the worker will not start
 

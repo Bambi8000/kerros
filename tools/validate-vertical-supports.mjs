@@ -121,6 +121,24 @@ assert.ok(errors(run([sphere,autoSupport])).some(i=>/no cavity/.test(i.message))
 assert.ok(errors(run([body,{...cavity,params:{...cavity.params,r1:56,r2:56}},autoSupport])).some(i=>/wall is too thin/.test(i.message)));
 assert.deepEqual(run([body,cavity,{...support,params:{...support.params,fit:'manual'}}]).set,set,'absent fit preserves the legacy manual geometry');
 assert.deepEqual(run([sphere,shell,{...autoSupport,enabled:false}]).set,run([sphere,shell]).set);
+const secondRing={...body,id:'f8',params:{...body.params,px:150}};
+const separateSource=run([body,cavity,secondRing]);
+const splitLayerIds=separateSource.set.slices.filter(s=>s.contours.filter(c=>!c.isHole).length!==1).map(s=>s.index);
+assert.ok(splitLayerIds.length>0);
+const splitFailure=run([body,cavity,secondRing,support]);
+assert.ok(errors(splitFailure).some(i=>i.message.includes(`Layers ${splitLayerIds.join(', ')} contain separate pieces`)));
+// Reproduce the reported Sphere -> Shell -> Capsule -> Shell ordering.
+// A second shell can split already-hollow material into disconnected rings.
+const blendedSphere={...sphere,params:{...sphere.params,r:40,px:0,py:0}};
+const blendedCapsule={id:'f4',kind:'capsule',stage:'SHAPE',name:'Capsule',enabled:true,params:defaultParams(findModule('capsule'))};
+const finalShell={...shell,id:'f5'};
+const doubleShell=run([blendedSphere,shell,blendedCapsule,finalShell,autoSupport],{minFeature:1});
+assert.ok(errors(doubleShell).some(i=>i.message.includes('separate pieces')));
+const sharedCavity=run([blendedSphere,{...shell,enabled:false},blendedCapsule,finalShell,autoSupport],{minFeature:1});
+assert.deepEqual(errors(sharedCavity),[]);
+assert.equal(sharedCavity.set.verticalSupports.parts.length,autoSupport.params.count);
+assert.ok(sharedCavity.set.verticalSupports.contacts.length>0,'editing the source after a refusal produces fitted supports');
+console.log('  ok    repeated shells can split the compound source; one shared final shell restores fitted supports');
 console.log('  ok    automatic shelled sphere, closed-end report, local fitting, all slab clearances, live centre/size/count/angle, dense layers and interior refusal');
 const server=await createServer({configFile:false,server:{middlewareMode:true,watch:null,hmr:false,ws:false},optimizeDeps:{noDiscovery:true,include:[]},appType:'custom'});
 try{
@@ -129,6 +147,7 @@ try{
  const {nestByMaterial}=await server.ssrLoadModule('/src/core/nest.ts');
  const {writeDxfR12}=await server.ssrLoadModule('/src/core/dxf.ts');
  const {writePdf}=await server.ssrLoadModule('/src/core/pdf.ts');
+ const {SliceStatus}=await server.ssrLoadModule('/src/ui/SliceStatus.tsx');
  const {VerticalSupportsInspector}=await server.ssrLoadModule('/src/ui/Inspector.tsx');
  const {createElement}=await import('react'),{renderToStaticMarkup}=await import('react-dom/server');
  const state=()=>useKerros.getState();
@@ -141,13 +160,26 @@ try{
  state().applyProject(saved.data,saved.nextFeatureNumber);assert.equal(state().features.find(f=>f.id===selected).params.angle,27.5);
  assert.equal(state().features.find(f=>f.id===selected).params.fit,'auto');
  state().selectFeature(selected);
- const html=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:support,slices:set,fresh:true}));
+ const html=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:support,slices:set,fresh:true,mode:'stack'}));
  for(const text of ['Vertical supports','Depth into cavity','Joint clearance','layer joints'])assert.ok(html.includes(text),text);
- const autoHtml=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:autoSupport,slices:autoSet,fresh:true}));
+ const autoHtml=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:autoSupport,slices:autoSet,fresh:true,mode:'stack'}));
  for(const text of ['Automatic','Auto-fitted to layers','Fitted dimensions','no vertical support joints'])assert.ok(autoHtml.includes(text),text);
  assert.ok(!autoHtml.includes('Depth into cavity'),'automatic dimensions are derived, not dead editable controls');
- const staleHtml=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:autoSupport,slices:autoSet,fresh:false}));
+ const staleHtml=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:autoSupport,slices:autoSet,fresh:false,mode:'stack'}));
  assert.ok(!staleHtml.includes('Auto-fitted to layers'),'old automatic success is hidden while calculating');
+ assert.ok(!autoHtml.includes('View supports in Assembly'),'Assembly must not offer navigation to itself');
+ const modelHtml=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:autoSupport,slices:autoSet,fresh:false,mode:'model'}));
+ assert.ok(modelHtml.includes('Calculate in Assembly'));
+ const failedHtml=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:autoSupport,slices:autoSet,fresh:false,mode:'stack',error:'test failure'}));
+ assert.ok(failedHtml.includes('Retry the calculation above'));
+ assert.ok(!failedHtml.includes('Calculating support joints'),'failed is not pending');
+ const rejectedHtml=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:support,slices:interrupted.set,fresh:true,mode:'stack'}));
+ assert.ok(rejectedHtml.includes('Calculation completed. No supports were fitted'));
+ const status=patch=>renderToStaticMarkup(createElement(SliceStatus,{pending:false,error:null,completedAt:1,ms:200,hasResult:true,onRecalculate:()=>{},...patch}));
+ assert.ok(status({}).includes('Recalculate'));assert.ok(status({}).includes('Calculated'));
+ const busy=status({pending:true,completedAt:null});assert.ok(busy.includes('disabled=""'));assert.ok(busy.includes('Previous result shown'));
+ const failure=status({error:'test failure',completedAt:null});assert.ok(failure.includes('Retry calculation'));assert.ok(failure.includes('role="alert"'));assert.ok(!failure.includes('Calculated'));
+ console.log('  ok    calculation status distinguishes current, pending, rejected and failed; Assembly navigation is mode-aware');
  const parts=buildParts(set,[]), vertical=parts.filter(p=>p.label.startsWith('V'));
  assert.equal(vertical.length,support.params.count);assert.ok(vertical.every(p=>p.layer===undefined));
  const nested=nestByMaterial(parts,{sheetWidth:720,sheetHeight:400,gap:4,labelHeight:3,trueShape:false,cell:2});assert.equal(nested.unplaced.length,0);

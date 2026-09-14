@@ -10,7 +10,6 @@
 import { importGrids } from '../core/store';
 import {
   EMPTY_NEST,
-  EMPTY_OUTPUT,
   EMPTY_PREVIEW,
   runNestJob,
   runPreviewJob,
@@ -138,8 +137,7 @@ async function executeSlice(job: SliceJob, revision: number): Promise<SliceOutpu
   });
 
   if (reply.kind === 'sliced') return reply.output;
-  console.error('[Kerros] slicing failed in the worker:', reply.kind === 'failed' ? reply.message : '');
-  return EMPTY_OUTPUT;
+  throw new Error(reply.kind === 'failed' ? reply.message : 'The slice worker returned an unexpected reply.');
 }
 
 export function requestPreview(job: PreviewJob, revision: number, signal?: AbortSignal): Promise<PreviewOutput | undefined> {

@@ -1,8 +1,8 @@
-KERROS INVENTORY  2026-09-14  version 0.36.0
+KERROS INVENTORY  2026-09-14  version 0.36.1
 
 --- source, lines each
-   38082 total
-    2950 src/ui/Inspector.tsx
+   38172 total
+    2957 src/ui/Inspector.tsx
     2285 src/core/store.ts
     1723 src/core/pipeline.ts
     1704 src/core/sdf.ts
@@ -33,16 +33,16 @@ KERROS INVENTORY  2026-09-14  version 0.36.0
      384 tools/validate-import.mjs
      383 tools/validate-sculpt.mjs
      379 tools/validate-legs.mjs
+     340 src/ui/Layout.tsx
      334 src/core/fixture.ts
-     332 src/ui/Layout.tsx
      330 src/core/legs.ts
      330 src/ui/FeatureTree.tsx
      316 src/ui/AssemblyViewport.tsx
      283 src/core/meshImport.ts
      283 src/ui/download.ts
      275 tools/validate-boss.mjs
+     256 src/core/verticalSupports.ts
      255 src/core/font.ts
-     255 src/core/verticalSupports.ts
      251 tools/validate-fixture.mjs
      242 src/ui/useSheets.ts
      239 src/core/layers.ts
@@ -52,10 +52,10 @@ KERROS INVENTORY  2026-09-14  version 0.36.0
      205 src/core/types.ts
      203 tools/validate-surfacenets.mjs
      202 src/core/surfaceNets.ts
+     200 tools/validate-vertical-supports.mjs
      199 src/core/boss.ts
-     194 src/ui/workerBridge.ts
+     192 src/ui/workerBridge.ts
      173 tools/validate-wall-frame.mjs
-     168 tools/validate-vertical-supports.mjs
      162 src/core/paint.ts
      162 tools/validate-free-plates.mjs
      159 tools/validate-assembly-state.mjs
@@ -65,15 +65,15 @@ KERROS INVENTORY  2026-09-14  version 0.36.0
      138 tools/validate-paint.mjs
      138 tools/validate-rod-rotation.mjs
      137 tools/validate-pdf.mjs
+     136 tools/validate-assembly-preview.mjs
      131 src/ui/PartInspector.tsx
-     122 tools/validate-assembly-preview.mjs
      113 tools/validate-twist.mjs
      108 tools/validate-state.mjs
      107 tools/validate-rib-joints.mjs
      106 tools/validate-rib-angles.mjs
+     103 src/ui/useSlices.ts
       99 src/ui/usePreview.ts
       92 src/ui/kerros.worker.ts
-      89 src/ui/useSlices.ts
       78 src-tauri/src/lib.rs
       70 tools/validate-hole-punch.mjs
       68 tools/make-icon.py
@@ -87,6 +87,7 @@ KERROS INVENTORY  2026-09-14  version 0.36.0
       38 src/core/profiles.ts
       18 src/core/mesh.ts
       17 src/ui/AssemblyPartView.tsx
+      16 src/ui/SliceStatus.tsx
       10 src/App.tsx
       10 src/main.tsx
        6 src-tauri/src/main.rs
@@ -104,6 +105,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+77bc47e Auto-fit vertical supports to hollow horizontal stacks
 144f102 Add cross-lapped vertical supports for horizontal stacks
 e8e2624 Keep numeric inspector values compact and editable
 b1b1ffa Clear stale success notices after plate placement actions
@@ -143,4 +145,3 @@ f6818bf Remove CLEARANCE_HOLES, a dead duplicate of ROD_CLEARANCE nothing read
 9089d48 Audit at 0.26.0: five findings, none geometric, layer 3 checklist recorded
 a390be1 The validator count in the handoff was six batches out of date
 83f19e8 Docs and inventory at 0.26.0
-63bedb7 A brush that edits one sheet, onion skin behind it, and a gradient with a middle
