@@ -2201,6 +2201,12 @@ wrote it:
   revision and the project revision. Feature ids may recur in another file;
   they never grant access to the previous project's geometry. Imported meshes
   must be located again, even when reopening the same project.
+- Since 0.34.0, free plate snapshots save `plateOutline`: nominal 2D loops in
+  millimetres, including holes. This is independent geometry, unlike external
+  profile `rings`. Save/open deep-copies the loops. One malformed loop refuses
+  the whole snapshot with a warning and a manufacturing error; the parser never
+  drops only a hole and silently adds material. Existing format-1 files remain
+  readable without this optional field.
 
 The validator round-trips a full project byte-for-byte, then feeds the parser
 garbage, a foreign file, a future version, an empty file, and a file where
@@ -3318,8 +3324,9 @@ fine, value imports would drag the whole app into the validator.
 ## Assembly expansion — **shipped** (0.29.0)
 
 The approved scope remains in [KERROS-ASSEMBLY-PLAN.md](KERROS-ASSEMBLY-PLAN.md).
-This first version supports upright ribs: free XYZ translation and rotation in
-plan, without arbitrary tilt. Choose a source shape, then `Radial ribs` or
+The original version supports upright ribs with XYZ translation and rotation in
+plan. Since 0.34.0, independent free plates also support arbitrary tilt and
+cloning; automatic rib joints retain their upright constraint. Choose a source shape, then `Radial ribs` or
 `Linear ribs` in the tree. Only one assembly layout can be active. Disabling it
 restores the horizontal workflow. Existing horizontal fixtures, paint, punches
 and patterns are listed as excluded while an upright assembly is enabled.
@@ -3327,7 +3334,8 @@ and patterns are listed as excluded while an upright assembly is enabled.
 ### Persistent parts and source profiles
 
 `assembly:layout`, `assembly:rib`, `assembly:support`, `assembly:backplate` and
-`assembly:channel`, plus `assembly:joint` since 0.31.0, are SLICE-stage feature records. Their params and group IDs
+`assembly:channel`, plus `assembly:joint` since 0.31.0 and `assembly:plate` since
+0.34.0, are SLICE-stage feature records. Their params and group IDs
 travel through the existing project format and worker transport. `assembly.ts`
 and `assemblyFeatures.ts` have no value imports. `pipeline.ts` supplies the real
 sheet tracer, indexed polygon distance and thin-feature checker.
@@ -3350,6 +3358,60 @@ limited to 64 and horizontal supports to 12 per assembly to bound interactive
 work. Switching the angle scope does not change any feature parameters;
 group rotation applies an equal delta about each affected rib's own pivot.
 Whole-layout rotation uses the common assembly pivot instead.
+
+### Free placement and Clone plate — **shipped** (0.34.0)
+
+Select one rib, horizontal support, backplate or free plate in Assembly. Its
+inspector offers `Clone plate`, which captures the finished **nominal** local
+outline and all its existing holes and slots, freezes the current stock as its
+own material, assigns a new ID and selects Move. The copy starts one stock
+thickness plus 10 mm along the source normal, leaving 10 mm between faces. It
+may still collide with another part; collision checks name those parts and
+block manufacturing export. Names do not define identity or group membership.
+
+`Free placement` converts a linked part in place using the same snapshot. It
+retains its feature ID and original source parameters: `Restore linked
+placement` switches it back and rebuilds the automatic geometry. `freePlacement`
+selects the snapshot path; it does not overwrite source-station, support or wall
+settings. A new `assembly:plate` copy has no live source link. `Add free plate`
+in Assembly settings creates a rounded rectangle with width, height and corner
+radius controls. Snapshots keep their saved shape; they are not non-uniformly
+scaled to fit a new width or height.
+
+All free plates expose Position X/Y/Z and Rotation X/Y/Z, use a rigid
+Rz·Ry·Rx basis, and enable every axis of the existing Move/Rotate gizmo. Numbers
+are in assembly coordinates; the whole layout transform still applies. The
+pivot is the plate's saved local origin, which need not be its area centroid.
+The gizmo applies a world quaternion delta to the full plate basis, then recovers
+local Euler angles, including vertical poles. A drag commits one complete pose
+on release. Numeric poses and repeated drags reuse retained cut meshes at exact
+current frames during the worker rebuild. They never supply manufacturing cuts.
+Shape, stock, project and source changes retain the existing freshness gates.
+Clone/Free placement are unavailable until the selected current cut result is
+ready; the store also rejects a snapshot from a different feature-tree revision.
+
+Snapshots store `plateOutline` loops from `Slice.nominalContours`, before kerf.
+The ordinary distance-index/iso-level path compensates them once for the chosen
+stock. Copying compensated paths would double the allowance. Loops are deep
+copied through feature creation, project save/open and the real worker. Copies
+survive removal of their source feature and external SVG; the layout retains a
+fallback source centre for a free-only project after removing the source form.
+Positions remain relative to the layout, whose centre normally follows the
+source bounds. Malformed snapshot loops stop that plate's cuts explicitly.
+
+Free plates have **no generated attachments or verified insertion sequence**.
+Their saved slots are geometry, not references to mating parts. They are excluded
+from automatic wall tabs, ring slots and upright rib operations; an explicit
+rib operation referencing a freed rib reports that condition until restored or
+disabled. Wall attachment totals cover linked ribs, and the separate free-plate
+warning names the independently mounted parts. Free rib sources retain their
+Odd/Even ordinal and Fan ordering slot for restoration but do not move with those
+groups. They participate in actual finished-stock collisions. LED channels add
+an explicit `Free plates` target checkbox; rods target them automatically, using
+the same full-thickness oblique envelope. Existing snapshot openings remain when
+a route moves, and a new route must still satisfy the ordinary bridge/edge checks.
+Part, Sheet, material nesting, DXF and PDF use the same plate geometry, `P` labels,
+and complete placement frames. No structural rating is implied by free placement.
 
 ### Angle groups and symmetric fan — **shipped** (0.32.0)
 
@@ -3388,7 +3450,7 @@ open the row outward (left +angle, right -angle); negative values converge
 inward. Fan 0 removes only this contribution. The final result is symmetric
 when the other individual/group offsets are symmetric too.
 
-Disabled ribs remain in this ordering so hiding one does not rearrange the
+Disabled and freed rib sources remain in this ordering so hiding or freeing one does not rearrange the
 others. Deleting/adding ribs or moving one past another redistributes the
 fan. Uneven physical gaps still use equal angle steps by position in the row.
 The fan is absent from radial controls and contributes zero to radial geometry;
@@ -3400,14 +3462,15 @@ existing manufacturing refusals remain in force.
 **Immediate angle feedback (0.32.1).** `ribAnglePreview` derives current rib
 frames from the retained cut result and its original feature tree, using the
 same `ribPlacementAngles` as manufacturing. It only accepts individual/group/
-fan angle edits. Source changes, membership, tree order, other parameters,
+fan angle edits, plus rigid free-plate position/rotation edits since 0.34.0.
+Source changes, membership, tree order, other parameters,
 stock/settings changes, imports and project changes invalidate this shortcut.
 The 3D view reuses existing meshes at these absolute frames; it does not trace,
 extrude or run collision sweeps on a numeric edit. Selection changes only
 recolour existing meshes. Repeated edits rebase on the retained result, so
 rotations cannot accumulate drift or apply twice when a final result arrives.
 
-The viewport says `Angle preview · checking cuts…` and fades old supports.
+The viewport says `Placement preview · checking cuts…` and fades old supports.
 It is showing the last cut outlines at the new angles: shoulders, slots, LED
 openings and the support outline remain provisional until the full job returns.
 Rib rotation handles remain usable during these angle-only checks. Meshes are
@@ -3692,8 +3755,17 @@ invalidation, and verifies retained cuts are not mutated. It drives the actual
 bridge and worker with delayed transport to prove that superseded work is never
 dispatched, aborts settle, mixed job kinds progress, import revisions sync and
 the final reply contains full manufacturing geometry. Timings are reported for
-the fixture, not asserted as a hardware-independent limit. All six assembly
+the fixture, not asserted as a hardware-independent limit. The assembly
 validators are in `npm run verify`.
+`tools/validate-free-plates.mjs` compares arbitrary ZYX frames and gizmo deltas
+against three.js, including both poles and rotated layouts. It checks nominal
+snapshots from ribs, supports and wall plates, holes, stock and kerf; full-stock
+LED openings and rods through tilted free plates; collisions; immediate frames
+versus the finished pipeline; unchanged cut paths; source deletion; atomic
+selection/pose, stable IDs, stale snapshot refusal, restoration, deep persistence
+and malformed-loop refusal. It also exercises reachable inspector controls, the
+actual worker, nesting, DXF, manifest and vector PDF. Browser testing additionally
+checks real handle dragging, which a mathematical validator cannot establish.
 Channel gizmo checks cover quaternion roundtrips, vertical poles, section roll,
 rotated layouts, a route anchor distinct from fitted midpoint, actual bore
 centres after a pose edit, atomic state writes and save/open. They do not replace

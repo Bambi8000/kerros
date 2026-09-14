@@ -3,7 +3,7 @@ import type { Feature } from './types.ts';
 import type { Bounds } from './slice.ts';
 
 type Params = Feature['params'];
-export type AssemblyMember = 'rib' | 'support' | 'backplate' | 'channel';
+export type AssemblyMember = 'rib' | 'support' | 'backplate' | 'channel' | 'plate';
 export type RibOperation = 'cross' | 'clearance';
 export function ribOperation(a: Feature, b: Feature, operation: RibOperation, next: number): Feature {
   return { id: `f${next}`, kind: 'assembly:joint', stage: 'SLICE', enabled: true,
@@ -29,6 +29,7 @@ export function assemblyFeatures(kind: 'radial' | 'linear', next: number, bounds
     const feature = assemblyMember(kind, layout, features, next++);
     features.push(feature);
   };
+  bounds.min.forEach((v, i) => { layout.params[`sourceCentre${'XYZ'[i]}`] = (v + bounds.max[i]) / 2; });
   if (kind === 'radial') { member('support'); member('support'); }
   else member('backplate');
   return { features, next, id: layout.id };
@@ -46,6 +47,7 @@ export function assemblyMember(kind: AssemblyMember, layout: Feature, features: 
     Object.assign(params, { station: maxStation + 1, sourceX: (maxStation + 1) * Number(p.sourceSpacing || p.spacing), sourceAngle: angle, angle: 0 });
   } else if (kind === 'support') Object.assign(params, { outerDiameter: radius * 1.82, innerDiameter: radius * 1.2, pz: siblings.length === 0 ? -height * 0.25 : siblings.length === 1 ? height * 0.25 : 0 });
   else if (kind === 'backplate') Object.assign(params, { outline: 'frame', frameWidth: Math.max(8, height * 0.08) + 6, profileInset: 4, mountPlacement: 'auto', width: radius * 2 + 16, height: height + 16, margin: 8, cornerRadius: 4, tabHeight: Math.max(8, height * 0.08), tabSpacing: height * 0.45, tabProtrusion: 0, wallOffset: 0, mount: 'screw', screwDiameter: 4, headDiameter: 8, mountSpacing: radius * 1.5, mountZ: height * 0.37 });
+  else if (kind === 'plate') Object.assign(params, { freePlacement: true, plateShape: 'rectangle', plateWidth: 80, plateHeight: 120, plateRadius: 3, plateX: radius * 1.6, plateY: 0, plateZ: 0, plateRx: 90, plateRy: 0, plateRz: 0 });
   else Object.assign(params, { shape: 'tube', diameter: 16, width: 12, height: 5, cornerRadius: 0, clearance: 0.25, py: radius * 0.3, yaw: 0, elevation: 0, roll: 0, length: radius * 3, through: true, open: false, openAngle: 90, ribTarget: true, supportTarget: false, backplateTarget: false, targetIds: '' });
-  return { id: `f${next}`, kind: `assembly:${kind}`, stage: 'SLICE', name: `${kind === 'backplate' ? 'Wall mount' : kind === 'channel' ? 'LED channel' : kind === 'support' ? 'Support' : 'Rib'} ${ordinal + 1}`, enabled: true, params };
+  return { id: `f${next}`, kind: `assembly:${kind}`, stage: 'SLICE', name: `${kind === 'backplate' ? 'Wall mount' : kind === 'channel' ? 'LED channel' : kind === 'support' ? 'Support' : kind === 'plate' ? 'Free plate' : 'Rib'} ${ordinal + 1}`, enabled: true, params };
 }

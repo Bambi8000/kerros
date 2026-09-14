@@ -1,4 +1,4 @@
-/** Upright sheet assemblies. Pure geometry; collaborators are supplied by the pipeline. */
+/** Linked upright ribs and independent 3D plates. Pure geometry supplied by the pipeline. */
 import type { Feature } from './types.ts';
 import type { Bounds, Contour, Slice, SliceSet } from './slice.ts';
 
@@ -22,6 +22,7 @@ interface WorkPart {
   step: number;
 }
 const TAU = Math.PI * 2;
+const RAD = Math.PI / 180;
 export const assemblyNumber = (f: Feature, key: string, fallback = 0): number => {
   const value = f.params[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
@@ -34,9 +35,9 @@ export const ribAngleKey = (scope: Exclude<RibAngleScope, 'selected'>) => scope 
 export const ribAngleValue = (rib: Feature, layout: Feature, scope: RibAngleScope) => scope === 'selected' ? num(rib, 'angle') : num(layout, ribAngleKey(scope));
 /** Used by both the gizmo preview and its target highlighting. */
 export function ribAngleTargets(features: Feature[], id: string, scope: RibAngleScope): string[] {
-  const selected = features.find((f) => f.id === id && f.kind === 'assembly:rib');
+  const selected = features.find((f) => f.id === id && f.kind === 'assembly:rib' && !isFreePlate(f));
   if (!selected) return [];
-  return features.filter((f) => f.enabled && f.kind === 'assembly:rib' && f.params.groupId === selected.params.groupId
+  return features.filter((f) => f.enabled && f.kind === 'assembly:rib' && !isFreePlate(f) && f.params.groupId === selected.params.groupId
     && (scope === 'all' || (scope === 'selected' ? f.id === id : ribAngleGroup(f) === scope))).map((f) => f.id);
 }
 /** Fan is an additive linear-layout component. Hidden ribs retain their slots. */
@@ -48,8 +49,8 @@ export function ribPlacementAngles(features: Feature[], layout: Feature): Map<st
   return new Map(ribs.map((rib, i) => [rib.id, num(rib, 'angle') + num(layout, 'ribAngle')
     + num(layout, ribAngleKey(ribAngleGroup(rib))) + (ribs.length > 1 ? fan * (1 - 2 * i / (ribs.length - 1)) : 0)]));
 }
-/** Repose the last cut outlines while angle-only edits await manufacturing checks.
- * Returns null for any source, membership, joint or non-angle parameter change.
+/** Repose retained cuts for linked rib angles and independent plate poses.
+ * Returns null for source, membership, joint or other geometry changes.
  * Callers must also enforce project/import ownership. This never supplies cuts.
  */
 export function ribAnglePreview(set: SliceSet | null, before: Feature[] | null, after: Feature[]): Map<string, Part> | null {
@@ -59,6 +60,7 @@ export function ribAnglePreview(set: SliceSet | null, before: Feature[] | null, 
     const a = before[i], b = after[i];
     if (a === b) continue;
     const allowed = b.id === layout.id ? ['ribAngle', 'oddAngle', 'evenAngle', 'fanAngle']
+      : isFreePlate(b) && b.params.groupId === layout.id ? ['plateX', 'plateY', 'plateZ', 'plateRx', 'plateRy', 'plateRz']
       : b.kind === 'assembly:rib' && b.params.groupId === layout.id ? ['angle'] : [];
     if (!allowed.length) return null;
     for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
@@ -73,6 +75,14 @@ export function ribAnglePreview(set: SliceSet | null, before: Feature[] | null, 
   const oldAngles = ribPlacementAngles(before, oldLayout), angles = ribPlacementAngles(after, layout);
   return new Map(set.slices.flatMap((slice) => {
     const part = slice.part;
+    if (part?.kind === 'plate' && set.assembly?.origin) {
+      const feature = after.find((f) => f.id === part.id && f.enabled && isFreePlate(f));
+      if (!feature) return [];
+      const a = num(layout, 'angle') * RAD;
+      const frame = freePlateFrame(num(feature, 'plateRx'), num(feature, 'plateRy'), num(feature, 'plateRz'));
+      return [[part.id, { ...part, origin: add3(rotateZ([num(feature, 'plateX'), num(feature, 'plateY'), num(feature, 'plateZ')], a), set.assembly.origin),
+        u: rotateZ(frame.u, a), v: rotateZ(frame.v, a), n: rotateZ(frame.n, a) }]];
+    }
     if (part?.kind !== 'rib' || !angles.has(part.id) || !oldAngles.has(part.id)) return [];
     const delta = (angles.get(part.id)! - oldAngles.get(part.id)!) * Math.PI / 180;
     return [[part.id, { ...part, u: rotateZ(part.u, delta), n: rotateZ(part.n, delta) }]];
@@ -110,6 +120,43 @@ export function channelAngles(worldU: Vec3, worldV: Vec3, layoutAngle: number) {
   const roll = Math.atan2(dot3(u, base.v), dot3(u, base.u)) * 180 / Math.PI;
   return { yaw, elevation, roll };
 }
+export const isFreePlate = (f: Feature) => f.kind === 'assembly:plate' || (['assembly:rib', 'assembly:support', 'assembly:backplate'].includes(f.kind) && f.params.freePlacement === true);
+export function freePlateFrame(rx: number, ry: number, rz: number) {
+  const a = rx * RAD, b = ry * RAD, c = rz * RAD;
+  const rotate = ([x, y, z]: Vec3): Vec3 => {
+    const y1 = y * Math.cos(a) - z * Math.sin(a), z1 = y * Math.sin(a) + z * Math.cos(a);
+    return rotateZ([x * Math.cos(b) + z1 * Math.sin(b), y1, -x * Math.sin(b) + z1 * Math.cos(b)], c);
+  };
+  return { u: rotate([1, 0, 0]), v: rotate([0, 1, 0]), n: rotate([0, 0, 1]) };
+}
+/** Recover local Euler angles after a world-space gizmo quaternion delta. */
+export function freePlateAngles(worldU: Vec3, worldV: Vec3, layoutAngle: number) {
+  const u = rotateZ(worldU, -layoutAngle * RAD), v = rotateZ(worldV, -layoutAngle * RAD);
+  const n: Vec3 = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const ry = Math.asin(Math.max(-1, Math.min(1, -u[2])));
+  const regular = Math.abs(u[2]) < 1 - 1e-12;
+  return { plateRx: (regular ? Math.atan2(v[2], n[2]) : 0) / RAD, plateRy: ry / RAD,
+    plateRz: (regular ? Math.atan2(u[1], u[0]) : Math.atan2(-v[0], v[1])) / RAD };
+}
+/** Never snapshot compensated paths: doing so would apply kerf twice. */
+export function snapshotPlate(source: Feature, slice: Slice, layout: Feature, assemblyOrigin: Vec3, id: string, duplicate: boolean): Feature | null {
+  const part = slice.part;
+  if (!source.enabled || !part || part.id !== source.id || !slice.nominalContours?.length) return null;
+  const angle = Number(layout.params.angle || 0);
+  const position = rotateZ(part.origin.map((v, i) => v - assemblyOrigin[i]) as Vec3, -angle * RAD);
+  if (duplicate) {
+    const normal = rotateZ(part.n, -angle * RAD), gap = part.thickness + 10;
+    position.forEach((_, i) => { position[i] += normal[i] * gap; });
+  }
+  const pose = { plateX: position[0], plateY: position[1], plateZ: position[2], ...freePlateAngles(part.u, part.v, angle) };
+  return {
+    ...(duplicate ? { id, kind: 'assembly:plate', stage: 'SLICE' as const, name: `${source.name} copy`, enabled: true } : source),
+    params: { ...(duplicate ? { groupId: layout.id, ownMaterial: true, materialName: part.stockName || part.material, thickness: part.thickness, kerf: part.kerf } : source.params),
+      ...pose, freePlacement: true, plateShape: 'snapshot' },
+    plateOutline: slice.nominalContours.map((c) => [...c.points]),
+  };
+}
+
 export function rectDistance(x: number, y: number, cx: number, cy: number, w: number, h: number, r = 0): number {
   r = Math.min(r, w / 2, h / 2);
   const dx = Math.abs(x - cx) - w / 2 + r, dy = Math.abs(y - cy) - h / 2 + r;
@@ -250,7 +297,7 @@ export function buildAssembly(
     const name = own ? String(f.params.materialName || 'Custom stock') : options.materialName || 'Stock';
     const span = Math.max(box.maxX - box.minX, box.maxY - box.minY, 1);
     const step = Math.max(span / 1400, Math.min(span / Math.max(120, options.resolution), Math.min(thickness, stockT, minBridge * 2) / 4));
-    const part: WorkPart = { meta: { id: f.id, label: `${kind === 'rib' ? 'R' : kind === 'support' ? 'S' : 'B'}${f.id.slice(1)}`, kind, origin, u, v, n: cross3(u, v), thickness, kerf, material: `${name} / ${thickness} mm / kerf ${kerf} mm` }, box, source, field: source, zones: [], step };
+    const part: WorkPart = { meta: { id: f.id, label: `${kind === 'rib' ? 'R' : kind === 'support' ? 'S' : kind === 'plate' ? 'P' : 'B'}${f.id.slice(1)}`, kind, origin, u, v, n: cross3(u, v), thickness, kerf, stockName: name, material: `${name} / ${thickness} mm / kerf ${kerf} mm` }, box, source, field: source, zones: [], step };
     parts.push(part); return part;
   };
   if (num(layout, 'jointClearance', 0.1) < 0 || (radial && (num(layout, 'ribDepth', 25) <= 0 || num(layout, 'innerRadius') < 0))) say('error', [layout.id], 'Joint clearance and centre radius cannot be negative; rib depth must be positive.');
@@ -258,7 +305,7 @@ export function buildAssembly(
   const incompatible = features.filter((f) => f.enabled && !f.kind.startsWith('assembly:') && f.stage !== 'SHAPE' && f.stage !== 'CARVE');
   if (incompatible.length) say('warning', incompatible.map((f) => f.id), 'Horizontal-layer tools are not applied to upright parts. Disable the assembly to edit their original layers.');
   const placementAngles = ribPlacementAngles(features, layout);
-  for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:rib')) {
+  for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:rib' && !isFreePlate(f))) {
     const sourceAngle = num(f, 'sourceAngle') * Math.PI / 180;
     const baseU: Vec3 = radial ? [Math.cos(sourceAngle), Math.sin(sourceAngle), 0] : [0, 1, 0];
     const pivot = radial ? num(layout, 'pivotRadius', radius * 0.7) : 0;
@@ -277,20 +324,43 @@ export function buildAssembly(
     if (!sourceContours.length) { say('error', [f.id], 'The source plane contains no rib. Move its source station or change the source form.'); continue; }
     makePart(f, 'rib', origin, rotateZ(baseU, angle), [0, 0, 1], contourBox(sourceContours), kernel.distance(sourceContours, reach));
   }
-  if (!parts.length) say('error', [layout.id], 'No enabled ribs intersect the source form. Add a rib or adjust the source planes.');
-  for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:support')) {
+  for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:support' && !isFreePlate(f))) {
     const outer = num(f, 'outerDiameter', radius * 1.8) / 2, inner = num(f, 'innerDiameter', radius * 1.2) / 2;
     if (!(outer > inner + minBridge) || inner < 0) { say('error', [f.id], 'The support needs a positive outer diameter and a remaining ring wider than the minimum bridge.'); continue; }
     const source: Distance = (x, y) => Math.max(Math.hypot(x, y) - outer, inner > 0 ? inner - Math.hypot(x, y) : -Infinity);
     makePart(f, 'support', [num(f, 'px'), num(f, 'py'), num(f, 'pz')], [1, 0, 0], [0, 1, 0], { minX: -outer, minY: -outer, maxX: outer, maxY: outer }, source);
   }
-  for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:backplate')) {
+  for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:backplate' && !isFreePlate(f))) {
     const w = num(f, 'width', radius * 2), h = num(f, 'height', height), z = num(f, 'pz');
     if (f.params.outline !== 'frame' && f.params.outline !== 'solid' && !(w > 2 * minBridge && h > 2 * minBridge)) { say('error', [f.id], 'The backplate width and height must exceed two minimum bridges.'); continue; }
     const t = f.params.ownMaterial === true ? Math.max(0.2, num(f, 'thickness', stockT)) : stockT;
     const back = makePart(f, 'backplate', [num(f, 'px'), num(f, 'py') - t / 2, z], [1, 0, 0], [0, 0, 1], { minX: -w / 2, maxX: w / 2, minY: -h / 2, maxY: h / 2 }, (x, y) => rectDistance(x, y, 0, 0, w, h, num(f, 'cornerRadius', 3)));
     back.meta.wallOffset = num(f, 'wallOffset');
   }
+
+  for (const f of children.filter((f) => f.enabled && isFreePlate(f))) {
+    const frame = freePlateFrame(num(f, 'plateRx'), num(f, 'plateRy'), num(f, 'plateRz'));
+    let box: Box2, source: Distance;
+    if (f.params.plateShape === 'snapshot') {
+      const rings = f.plateOutline;
+      if (!rings?.length || !rings.every((r) => r.length >= 6 && r.length % 2 === 0 && r.every(Number.isFinite))) {
+        say('error', [f.id], 'This free plate has no valid saved outline. Restore its linked source or replace the plate.'); continue;
+      }
+      const contours = rings.map((points) => ({ points, area: 1, isHole: false }));
+      box = contourBox(contours); source = kernel.distance(contours, reach);
+    } else {
+      const w = num(f, 'plateWidth', 80), h = num(f, 'plateHeight', 120), r = num(f, 'plateRadius', 3);
+      if (!(w > 0 && h > 0 && r >= 0 && r <= Math.min(w, h) / 2)) {
+        say('error', [f.id], 'Plate width and height must be positive; corner radius must fit inside the plate.'); continue;
+      }
+      box = { minX: -w / 2, maxX: w / 2, minY: -h / 2, maxY: h / 2 };
+      source = (x, y) => rectDistance(x, y, 0, 0, w, h, r);
+    }
+    makePart(f, 'plate', [num(f, 'plateX'), num(f, 'plateY'), num(f, 'plateZ')], frame.u, frame.v, box, source);
+  }
+  if (!parts.length) say('error', [layout.id], 'No enabled plates could be built. Add a free plate, enable a rib or adjust its source plane.');
+  const free = parts.filter((p) => p.meta.kind === 'plate');
+  if (free.length) say('warning', free.map((p) => p.meta.id), 'Free plates have independent outlines and no generated attachments. Saved slots and holes stay with the plate; they are not live joints. Collision checks include them. Plan their mounting and insertion separately from the linked ribs.');
 
   const ribs = parts.filter((p) => p.meta.kind === 'rib');
   const supports = parts.filter((p) => p.meta.kind === 'support');
@@ -459,8 +529,8 @@ export function buildAssembly(
 
   // Count enabled feature IDs, including ribs whose source plane was empty.
   // A plausible partial support must never be reported as a complete assembly.
-  for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:backplate')) {
-    const expected = children.filter((r) => r.enabled && r.kind === 'assembly:rib');
+  for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:backplate' && !isFreePlate(f))) {
+    const expected = children.filter((r) => r.enabled && r.kind === 'assembly:rib' && !isFreePlate(r));
     const missing = expected.filter((r) => !joints.some((j) => j.parts.includes(f.id) && j.parts.includes(r.id)));
     say(missing.length ? 'error' : 'info', [f.id, ...missing.map((r) => r.id)], `Wall attachment: ${expected.length - missing.length} of ${expected.length} enabled ribs have complete tab joints.${missing.length ? ' The named ribs are unattached; resolve their checks before export.' : ''}`);
   }
@@ -481,7 +551,7 @@ export function buildAssembly(
     const a = ribs.find((r) => r.meta.id === f.params.ribA), b = ribs.find((r) => r.meta.id === f.params.ribB);
     const ids = [f.id, String(f.params.ribA || ''), String(f.params.ribB || '')].filter(Boolean);
     if (a && a === b) { say('error', ids, 'Both references select the same rib. Choose two different ribs for an intersection.'); continue; }
-    if (!a || !b) { say('error', ids, 'A referenced rib is missing, disabled or has no source profile. Choose two enabled ribs in this assembly.'); continue; }
+    if (!a || !b) { say('error', ids, 'A referenced rib is missing, disabled, in free placement or has no source profile. Choose two linked upright ribs in this assembly, or disable the operation.'); continue; }
     const key = [a.meta.id, b.meta.id].sort().join(':');
     if (usedPairs.has(key)) { say('error', ids, 'This rib pair has more than one enabled operation. Keep one cross joint or clearance cut.'); continue; }
     usedPairs.add(key);
@@ -756,7 +826,7 @@ export function buildAssembly(
     if (order.length !== ribs.length) say('error', ribs.filter((r) => !order.includes(r.meta.id)).map((r) => r.meta.id), 'Rib insertion paths depend on each other in a cycle. Change placement or angles to allow sequential assembly.');
     else if (order.length && joints.length) say('info', order, `Dry-fit insertion order: ${order.map((id) => parts.find((p) => p.meta.id === id)!.meta.label).join(', ')}. Clearance and path checks are sampled; confirm the sequence with a small physical coupon.`);
   }
-  if (!supports.length && !backs.length) say('warning', ribs.map((p) => p.meta.id), crossJoints ? 'No wall plate or horizontal supports are enabled. Rib cross joints do not establish a mounting or load rating.' : 'No supports are enabled. These are loose ribs with no generated attachment.');
+  if (ribs.length && !supports.length && !backs.length) say('warning', ribs.map((p) => p.meta.id), crossJoints ? 'No wall plate or horizontal supports are enabled. Rib cross joints do not establish a mounting or load rating.' : 'No supports are enabled. These are loose ribs with no generated attachment.');
 
   const globalAngle = num(layout, 'angle') * Math.PI / 180;
   const translation: Vec3 = [centre[0] + num(layout, 'px'), centre[1] + num(layout, 'py'), centre[2] + num(layout, 'pz')];
@@ -771,7 +841,7 @@ export function buildAssembly(
     const exact = kernel.distance(nominal, Math.max(part.meta.kerf * 2, part.step * 4));
     const contours = part.meta.kerf > 0 ? kernel.trace(exact, part.box, part.step, part.meta.kerf / 2, Math.min(options.tolerance, part.step / 12)) : nominal;
     const meta: Part = { ...part.meta, origin: world(part.meta.origin), u: rotateZ(part.meta.u, globalAngle), v: rotateZ(part.meta.v, globalAngle), n: rotateZ(part.meta.n, globalAngle) };
-    const slice: Slice = { index: slices.length + 1, z: meta.origin[2], zBottom: meta.origin[2] - meta.thickness / 2, contours, circles: [], part: meta };
+    const slice: Slice = { index: slices.length + 1, z: meta.origin[2], zBottom: meta.origin[2] - meta.thickness / 2, contours, nominalContours: nominal, circles: [], part: meta };
     if (kernel.thin({ ...slice, contours: nominal }, minBridge)) say('warning', [meta.id], `A remaining bridge is below ${minBridge} mm. Inspect this part before cutting.`);
     slices.push(slice);
   }
@@ -783,5 +853,5 @@ export function buildAssembly(
     else compact.push(issue);
   }
   return { slices, planes: [], pitch: 0, thickness: stockT, z0: bounds.min[2], planesExamined: parts.length, step: Math.max(0, ...parts.map((p) => p.step)), kerf: options.kerf,
-    assembly: { id: layout.id, cuttable: !issues.some((i) => i.severity === 'error'), issues: compact, joints, channels } };
+    assembly: { id: layout.id, origin: translation, cuttable: !issues.some((i) => i.severity === 'error'), issues: compact, joints, channels } };
 }

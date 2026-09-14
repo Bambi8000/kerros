@@ -50,6 +50,8 @@ export interface ProjectFeature {
   strokes?: ProjectStroke[];
   /** Profile features only: morph keys. Omitted entirely when there are none. */
   keys?: ProjectProfileKey[];
+  /** Independent plate geometry, in millimetres before kerf. */
+  plateOutline?: number[][];
 }
 
 export interface ProjectPlacement {
@@ -235,6 +237,18 @@ function parseFeature(
     enabled: asBoolean(row.enabled, true),
     params,
   };
+
+  if (row.plateOutline !== undefined) {
+    // Reject the entire snapshot if any loop is broken. Dropping just a hole
+    // would silently add material to a manufacturing part.
+    if (Array.isArray(row.plateOutline) && row.plateOutline.length > 0 && row.plateOutline.every((ring) =>
+      Array.isArray(ring) && ring.length >= 6 && ring.length % 2 === 0 && ring.every((v) => typeof v === 'number' && Number.isFinite(v)))) {
+      feature.plateOutline = row.plateOutline.map((ring: number[]) => [...ring]);
+    } else {
+      feature.plateOutline = [];
+      warnings.push(`Feature ${index + 1} has an invalid plate outline. Its snapshot cannot be cut; restore the source or replace the plate.`);
+    }
+  }
 
   if (Array.isArray(row.strokes)) {
     const strokes: ProjectStroke[] = [];

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Feature } from '../core/types';
 import type { SliceSet } from '../core/slice';
-import { assemblyNumber as num, sheetWorld, ribAngleGroup, ribAngleTargets, ribAngleValue, ribPlacementAngles } from '../core/assembly';
+import { assemblyNumber as num, sheetWorld, ribAngleGroup, ribAngleTargets, ribAngleValue, ribPlacementAngles, isFreePlate } from '../core/assembly';
 import { useKerros } from '../core/store';
 import { NumberField } from './NumberField';
 
@@ -35,11 +35,12 @@ export function AssemblyStatus({ set, pending }: { set: SliceSet | null; pending
     </>}
   </div>;
 }
-export function AssemblyInspector({ feature, set, pending }: { feature: Feature; set: SliceSet | null; pending: boolean }) {
+export function AssemblyInspector({ feature, set, pending, sourceFeatures }: { feature: Feature; set: SliceSet | null; pending: boolean; sourceFeatures?: Feature[] | null }) {
   const state = useKerros();
   const [notice, setNotice] = useState('');
   const layout = feature.kind === 'assembly:layout' ? feature : state.features.find((f) => f.id === feature.params.groupId);
-  const kind = feature.kind.slice('assembly:'.length);
+  const free = isFreePlate(feature);
+  const kind = free ? 'plate' : feature.kind.slice('assembly:'.length);
   const members = state.features.filter((f) => f.params.groupId === layout?.id);
   const p = feature.params;
   const filled = p.outline === 'solid';
@@ -55,12 +56,17 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
     setNotice(removed.length ? `Removed ${removed.map((f) => f.id).join(', ')}. Retained parts keep their IDs and edits. Explicit channel targets remain visible for correction.` : 'Existing parts keep their placement. New ribs fill the largest radial gap or extend the linear row.');
   }} />;
   const part = set?.slices.find((s) => s.part?.id === feature.id)?.part;
+  const snapshot = (duplicate: boolean) => {
+    if (!pending && set && sourceFeatures && state.snapshotAssemblyPlate(feature.id, set, sourceFeatures, duplicate)) {
+      setNotice(duplicate ? 'Independent copy selected. Drag the Move handles to place it; press R to rotate.' : 'Free placement enabled. The current outline and openings are saved. Restore linked placement to return to the source settings.');
+    } else setNotice('The current plate is not ready to copy. Wait for its cut outline to finish rebuilding.');
+  };
   const scope = state.assemblyAngleScope;
   const angleTargets = ribAngleTargets(state.features, feature.id, scope);
   const fanControl = layout?.params.layout === 'linear' && <div className="group"><div className="group-head">Symmetric fan</div>
     <NumberField label="Fan edge angle" value={num(layout, 'fanAngle')} unit="°" onChange={(v) => state.setParam(layout.id, 'fanAngle', v)} />
     <p className="hint">Positive opens outward; negative turns inward. Equal angle steps run left to right. The fan contribution is 0° at an odd-count centre, or a mirrored pair for even counts. Individual and group angles are added; Fan 0 removes only the fan.</p>
-    <p className="hint">Placement order includes hidden ribs. Moving a rib past another or changing the count redistributes the fan.</p>
+    <p className="hint">Placement order includes hidden and freed rib sources. Free plates do not follow the fan. Moving a linked rib past another or changing the count redistributes the fan.</p>
   </div>;
   return <div className="inspector assembly-inspector">
     <div className="group">
@@ -69,6 +75,24 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
       {layout && kind !== 'layout' && <button className="btn" onClick={() => state.selectFeature(layout.id)}>Assembly settings</button>}
       {!feature.enabled && <p className="warn">This feature is disabled. Enable it in the feature tree to include it.</p>}
     </div>
+    {['rib', 'support', 'backplate', 'plate'].includes(kind) && <div className="group"><div className="group-head">Plate actions</div>
+      <button className="btn" disabled={pending || !part || !feature.enabled || !sourceFeatures} onClick={() => snapshot(true)}>Clone plate</button>
+      {!free && <button className="btn" disabled={pending || !part || !feature.enabled || !sourceFeatures} onClick={() => snapshot(false)}>Free placement</button>}
+      {free && feature.kind !== 'assembly:plate' && <button className="btn" onClick={() => patch('freePlacement', false)}>Restore linked placement</button>}
+      <p className="hint">{pending ? 'Waiting for the current cut outline before copying.' : 'Clone preserves this plate’s shape, openings and stock as an independent copy. The copy starts 10 mm clear of this face. Check its new position against the other parts.'}</p>
+      {!free && <p className="hint">Free placement saves the current outline and unlocks all three rotation axes. Existing openings stay with the plate; automatic attachments stop updating. The original source settings remain available to restore.</p>}
+    </div>}
+    {free && <div className="group"><div className="group-head">Free placement · 3D</div>
+      <div className="assembly-scope">
+        <button className="btn" onClick={() => { state.setMode('stack'); state.setGizmoMode('translate'); }}>Move plate</button>
+        <button className="btn" onClick={() => { state.setMode('stack'); state.setGizmoMode('rotate'); }}>Rotate plate</button>
+      </div>
+      {number('plateX', 'Position X')}{number('plateY', 'Position Y')}{number('plateZ', 'Position Z')}
+      {number('plateRx', 'Rotation X', 0, '°')}{number('plateRy', 'Rotation Y', 0, '°')}{number('plateRz', 'Rotation Z', 0, '°')}
+      <p className="hint">Drag any axis in Assembly. M moves, R rotates; Snap uses 5 mm / 15°. Position and angles use the assembly coordinates. The pivot is this plate’s local origin. Odd, Even, All and Fan apply only to linked ribs.</p>
+      {p.plateShape !== 'snapshot' && <>{number('plateWidth', 'Plate width', 80)}{number('plateHeight', 'Plate height', 120)}{number('plateRadius', 'Corner radius', 3)}</>}
+      <p className="hint">{p.plateShape === 'snapshot' ? 'The saved outline includes its existing holes and slots. It no longer follows edits to the source shape. ' : ''}Free plates have no generated attachments. Plan their joints and mounting separately.</p>
+    </div>}
     {kind === 'layout' && <>
       <div className="group"><div className="group-head">Distribution · {p.layout === 'linear' ? 'Linear' : 'Radial'}</div>
         {count('rib', 'Ribs')}{count('support', 'Horizontal supports')}
@@ -93,6 +117,7 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
         <p className="hint">Joint clearance and laser kerf are separate. Test the fit in your actual stock.</p>
       </div>
       <div className="group"><div className="group-head">Add to assembly</div>
+        <button className="btn" onClick={() => { state.addAssemblyMember(feature.id, 'plate'); state.setMode('stack'); state.setGizmoMode('translate'); }}>Add free plate</button>
         <button className="btn" disabled={members.some((f) => f.kind === 'assembly:backplate')} onClick={() => state.addAssemblyMember(feature.id, 'backplate')}>Add wall mount</button>
         <button className="btn" onClick={() => state.addAssemblyMember(feature.id, 'channel')}>Add LED channel</button>
         <p className="hint">Use ring supports or a wall mount. Their insertion directions cannot be combined in this version.</p>
@@ -120,7 +145,7 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
     {kind === 'joint' && <div className="group"><div className="group-head">Rib intersection</div>
       {choose('operation', 'Action', [['cross', 'Cross joint'], ['clearance', 'Clearance cut']], 'cross')}
       {(['ribA', 'ribB'] as const).map((key) => {
-        const choices = members.filter((f) => f.kind === 'assembly:rib').map((f): [string, string] => [f.id, `R${f.id.slice(1)} · ${f.name}${f.enabled ? '' : ' (disabled)'}`]);
+        const choices = members.filter((f) => f.kind === 'assembly:rib' && !isFreePlate(f)).map((f): [string, string] => [f.id, `R${f.id.slice(1)} · ${f.name}${f.enabled ? '' : ' (disabled)'}`]);
         if (!choices.some(([id]) => id === p[key])) choices.unshift([String(p[key] ?? ''), `${p[key] || 'Unset'} (missing)`]);
         return <div key={key}>{choose(key, p.operation === 'clearance' ? key === 'ribA' ? 'Cut rib' : 'Keep rib' : key === 'ribA' ? 'Rib A' : 'Rib B', choices, '')}
           <button className="btn" disabled={!members.some((f) => f.id === p[key])} onClick={() => { state.selectFeature(String(p[key])); state.setMode('slice'); }}>Inspect R{String(p[key]).slice(1)}</button></div>;
@@ -192,13 +217,13 @@ export function AssemblyInspector({ feature, set, pending }: { feature: Feature;
         <p className="hint">Opening direction: 0° right, 90° up in Part view. An edge-open notch is a through-cut, not a blind pocket.</p>
       </div>
       <div className="group"><div className="group-head">Cut targets</div>
-        {toggle('ribTarget', 'Ribs', true)}{toggle('supportTarget', 'Supports')}{toggle('backplateTarget', 'Backplate')}
+        {toggle('ribTarget', 'Ribs', true)}{toggle('supportTarget', 'Supports')}{toggle('backplateTarget', 'Backplate')}{toggle('plateTarget', 'Free plates')}
         <label className="field"><span className="field-label">Only these IDs</span><input placeholder="All checked types" value={String(p.targetIds || '')} onChange={(e) => patch('targetIds', e.target.value)} /></label>
-        <p className="hint">Optional feature IDs, separated by spaces: {members.filter((f) => ['assembly:rib', 'assembly:support', 'assembly:backplate'].includes(f.kind)).map((f) => f.id).join(', ')}.</p>
+        <p className="hint">Optional feature IDs, separated by spaces: {members.filter((f) => ['assembly:rib', 'assembly:support', 'assembly:backplate', 'assembly:plate'].includes(f.kind)).map((f) => f.id).join(', ')}.</p>
         {!pending && <p>{set?.assembly?.channels.find((c) => c.id === feature.id)?.status}</p>}
       </div>
     </>}
-    {['rib', 'support', 'backplate'].includes(kind) && <details className="group"><summary>Material</summary>
+    {['rib', 'support', 'backplate', 'plate'].includes(kind) && <details className="group"><summary>Material</summary>
       {toggle('ownMaterial', 'Use separate material')}
       {p.ownMaterial === true ? <><label className="field"><span className="field-label">Stock name</span><input value={String(p.materialName || '')} onChange={(e) => patch('materialName', e.target.value)} /></label>{number('thickness', 'Stock thickness', 3, 'mm', 0.1)}{number('kerf', 'Measured kerf', 0.15, 'mm', 0.01)}</> : <p className="hint">Uses {state.material.name}, {state.material.thickness} mm, kerf {state.material.kerf} mm. Edit the shared stock in Profiles.</p>}
       <p className="hint">Stock name, thickness and kerf determine which parts share a cutting sheet.</p>

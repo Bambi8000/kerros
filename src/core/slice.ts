@@ -65,13 +65,15 @@ export interface Slice {
   /** Z of the underside of the physical sheet, mm. */
   zBottom: number;
   contours: Contour[];
+  /** Finished assembly geometry before kerf, used for independent plate copies. */
+  nominalContours?: Contour[];
   /** Circular holes added by rig features. Empty until rods are applied. */
   circles: CircleHole[];
   /** Upright assemblies use local sheet coordinates and a rigid placement. */
   part?: {
     id: string;
     label: string;
-    kind: 'rib' | 'support' | 'backplate';
+    kind: 'rib' | 'support' | 'backplate' | 'plate';
     origin: [number, number, number];
     u: [number, number, number];
     v: [number, number, number];
@@ -79,6 +81,7 @@ export interface Slice {
     thickness: number;
     kerf: number;
     material: string;
+    stockName?: string;
     wallOffset?: number;
   };
 }
@@ -92,6 +95,7 @@ export interface SliceSet {
   };
   assembly?: {
     id: string;
+    origin?: [number, number, number];
     cuttable: boolean;
     issues: { severity: 'error' | 'warning' | 'info'; ids: string[]; message: string; ribCollision?: [string, string] }[];
     joints: { id: string; parts: string[]; instruction: string }[];

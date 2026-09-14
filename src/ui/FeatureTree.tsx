@@ -9,6 +9,7 @@ import { ribAngleGroup } from '../core/assembly';
 
 /** One line under a feature's name, saying what it does at a glance. */
 function subtitleFor(f: Feature, index: number, op: Op): string {
+  if (f.kind === 'assembly:plate' || (f.kind.startsWith('assembly:') && f.params.freePlacement === true)) return `${f.id} · free plate · 3D placement`;
   if (f.kind === 'assembly:rib') return `${f.id} · rib · ${ribAngleGroup(f) === 'odd' ? 'Odd' : 'Even'}`;
   if (f.kind === 'assembly:joint') return `${f.id} · ${f.params.operation === 'clearance' ? 'clearance cut' : 'cross joint'} · ${f.params.ribA} / ${f.params.ribB}`;
   if (f.kind.startsWith('assembly:')) return `${f.id} · ${f.kind.slice(9)}${f.kind === 'assembly:layout' ? ` · ${f.params.layout}` : ''}`;

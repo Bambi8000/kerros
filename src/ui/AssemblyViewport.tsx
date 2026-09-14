@@ -6,7 +6,7 @@ import type { SliceSet } from '../core/slice';
 import type { Feature } from '../core/types';
 import { rodFromFeature, rodPose } from '../core/rig';
 import { groupContours } from '../core/slice';
-import { channelAngles, ribAnglePreview, ribAngleTargets, ribAngleValue } from '../core/assembly';
+import { channelAngles, ribAnglePreview, ribAngleTargets, ribAngleValue, freePlateAngles, isFreePlate } from '../core/assembly';
 import type { RibAngleScope } from '../core/assembly';
 import type { GizmoMode } from '../core/store';
 import { useKerros, SNAP_ROTATE_DEG, SNAP_TRANSLATE_MM } from '../core/store';
@@ -44,7 +44,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
   const gizmoMode = useKerros((s) => s.gizmoMode);
   const snap = useKerros((s) => s.snapEnabled);
   const angleScope = useKerros((s) => s.assemblyAngleScope);
-  const anglePreview = (dragging && gizmoMode === 'rotate' && features.some((f) => f.id === selectedId && f.kind === 'assembly:rib')) || (pending && frames !== null);
+  const anglePreview = (dragging && features.some((f) => f.id === selectedId && (isFreePlate(f) || (gizmoMode === 'rotate' && f.kind === 'assembly:rib')))) || (pending && frames !== null);
   const report = set?.assembly;
 
   useEffect(() => {
@@ -79,6 +79,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
     let dragProject = -1;
     let dragMode: GizmoMode = 'translate', dragScope: RibAngleScope = 'selected';
     let dragChannel: NonNullable<SliceSet['assembly']>['channels'][number] | undefined;
+    let dragPart: SliceSet['slices'][number]['part'];
     let originals: { object: THREE.Object3D; matrix: THREE.Matrix4; pivot: THREE.Vector3 }[] = [];
     transform.addEventListener('dragging-changed', (event) => {
       const dragging = event.value === true;
@@ -90,6 +91,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
         dragStart = proxy.position.clone(); dragId = store.selectedId || '';
         dragMode = store.gizmoMode;
         dragChannel = current.current?.assembly?.channels.find((c) => c.id === dragId);
+        dragPart = frameRef.current?.get(dragId) ?? current.current?.slices.find((s) => s.part?.id === dragId)?.part;
         dragScope = store.assemblyAngleScope;
         const feature = store.features.find((f) => f.id === dragId);
         const layout = store.features.find((f) => f.id === feature?.params.groupId);
@@ -101,7 +103,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
             return [{ object, matrix: object.matrix.clone(), pivot: dragStart.clone() }];
           }
           const part = frameRef.current?.get(object.userData.featureId) ?? current.current?.slices.find((s) => s.part?.id === object.userData.featureId)?.part;
-          if (!part || !(dragMode === 'rotate' && !dragChannel ? targets.has(part.id) : part.id === dragId)) return [];
+          if (!part || !(dragMode === 'rotate' && !dragChannel && feature && !isFreePlate(feature) ? targets.has(part.id) : part.id === dragId)) return [];
           object.updateMatrix();
           return [{ object, matrix: object.matrix.clone(), pivot: new THREE.Vector3(...part.origin) }];
         });
@@ -117,7 +119,16 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
           else position.add(proxy.position.clone().sub(dragStart));
           store.setTransformWorld(dragId, position.toArray(), [rotation.x, rotation.y, rotation.z].map(THREE.MathUtils.radToDeg) as [number, number, number]);
         } else if (feature && layout && store.projectRevision === dragProject) {
-          if (dragMode === 'rotate' && dragChannel) {
+          if (isFreePlate(feature) && dragPart) {
+            if (dragMode === 'rotate') {
+              const u = new THREE.Vector3(...dragPart.u).applyQuaternion(proxy.quaternion);
+              const v = new THREE.Vector3(...dragPart.v).applyQuaternion(proxy.quaternion);
+              store.setFreePlatePose(dragId, freePlateAngles(u.toArray(), v.toArray(), Number(layout.params.angle || 0)));
+            } else {
+              const delta = proxy.position.clone().sub(dragStart).applyAxisAngle(new THREE.Vector3(0, 0, 1), -Number(layout.params.angle || 0) * Math.PI / 180);
+              store.setFreePlatePose(dragId, { plateX: Number(feature.params.plateX || 0) + delta.x, plateY: Number(feature.params.plateY || 0) + delta.y, plateZ: Number(feature.params.plateZ || 0) + delta.z });
+            }
+          } else if (dragMode === 'rotate' && dragChannel) {
             const u = new THREE.Vector3(...dragChannel.u).applyQuaternion(proxy.quaternion);
             const v = new THREE.Vector3(...dragChannel.v).applyQuaternion(proxy.quaternion);
             store.setAssemblyChannelPose(dragId, channelAngles(u.toArray(), v.toArray(), Number(layout.params.angle || 0)));
@@ -128,7 +139,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
             else store.setTransform(dragId, { px: Number(feature.params.px || 0) + delta.x, py: Number(feature.params.py || 0) + delta.y, pz: Number(feature.params.pz || 0) + delta.z });
           }
         }
-        proxy.rotation.set(0, 0, 0); dragId = ''; dragChannel = undefined;
+        proxy.rotation.set(0, 0, 0); dragId = ''; dragChannel = undefined; dragPart = undefined;
       }
     });
     transform.addEventListener('objectChange', () => {
@@ -264,7 +275,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
       const selected = part.id === selectedId, grouped = targets.has(part.id) && angleScope !== 'selected';
       if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) {
         object.material.color.set(selected ? '#e89155' : grouped ? '#d5a36a' : part.kind === 'rib' ? '#d9c9ac' : '#778c91');
-        const waitingSupport = anglePreview && part.kind !== 'rib';
+        const waitingSupport = anglePreview && part.kind !== 'rib' && part.kind !== 'plate';
         object.material.transparent = waitingSupport; object.material.opacity = waitingSupport ? 0.3 : 1;
         object.material.depthWrite = !waitingSupport;
       }
@@ -278,6 +289,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
   useEffect(() => {
     const e = engine.current; if (!e || e.dragging) return;
     let part = set?.slices.find((s) => s.part?.id === selectedId)?.part;
+    if (part && frames?.has(part.id)) part = frames.get(part.id);
     if (gizmoMode === 'rotate' && part?.kind === 'rib') {
       const targets = ribAngleTargets(useKerros.getState().features, selectedId ?? '', angleScope);
       // If the inspected rib is outside Odd/Even, put the handle on a member
@@ -286,11 +298,11 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
     }
     const channel = set?.assembly?.channels.find((c) => c.id === selectedId);
     const enabledChannel = channel && useKerros.getState().features.some((f) => f.id === channel.id && f.enabled) && channel.width > 0 && channel.height > 0;
-    const liveRibRotation = gizmoMode === 'rotate' && part?.kind === 'rib' && frames?.has(part.id);
-    if ((!part && !enabledChannel) || (pending && !liveRibRotation) || (gizmoMode === 'rotate' && !enabledChannel && part?.kind !== 'rib')) { e.transform.detach(); return; }
+    const livePlacement = part && frames?.has(part.id) && (part.kind === 'plate' || (gizmoMode === 'rotate' && part.kind === 'rib'));
+    if ((!part && !enabledChannel) || (pending && !livePlacement) || (gizmoMode === 'rotate' && !enabledChannel && part?.kind !== 'rib' && part?.kind !== 'plate')) { e.transform.detach(); return; }
     e.proxy.position.set(...(enabledChannel ? channel.origin : part!.origin)); e.proxy.rotation.set(0, 0, 0);
     e.transform.setMode(gizmoMode); e.transform.setSpace('world');
-    e.transform.showX = gizmoMode === 'translate' || Boolean(enabledChannel); e.transform.showY = e.transform.showX; e.transform.showZ = true;
+    e.transform.showX = gizmoMode === 'translate' || Boolean(enabledChannel) || part?.kind === 'plate'; e.transform.showY = e.transform.showX; e.transform.showZ = true;
     e.transform.setTranslationSnap(snap ? SNAP_TRANSLATE_MM : null);
     e.transform.setRotationSnap(snap ? SNAP_ROTATE_DEG * Math.PI / 180 : null);
     e.transform.attach(e.proxy);
@@ -298,7 +310,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
   useEffect(() => { engine.current?.fit(); }, [view]);
   return <section className="assembly-canvas">
     <div ref={host} className="assembly-three" />
-    <div className="assembly-overlay"><strong>Assembly</strong><span>{anglePreview ? dragging ? 'Angle preview' : 'Angle preview · checking cuts…' : pending ? 'Rebuilding…' : `${set?.slices.length ?? 0} parts`}</span><button className="btn" onClick={() => engine.current?.fit()}>Fit view</button></div>
+    <div className="assembly-overlay"><strong>Assembly</strong><span>{anglePreview ? dragging ? 'Placement preview' : 'Placement preview · checking cuts…' : pending ? 'Rebuilding…' : `${set?.slices.length ?? 0} parts`}</span><button className="btn" onClick={() => engine.current?.fit()}>Fit view</button></div>
     <div className="assembly-caption">{anglePreview ? 'Live placement using the last cut outlines. Joints, supports and cut checks update after editing.' : !set?.slices.length ? pending ? 'Building the first assembly preview…' : 'Add a source shape, then create Radial ribs or Linear ribs.' : report?.channels.some((c) => c.id === selectedId) ? `${features.find((f) => f.id === selectedId)?.kind === 'rod' ? 'Rod' : 'LED channel'} · M to move · R to rotate · drag a handle · cuts update on release` : 'Click a part, rod or LED channel to select · drag to orbit · scroll to zoom'}<br />{report && !pending && !dragging && !report.cuttable && 'Some parts need attention. Read the assembly checks in the inspector.'}</div>
   </section>;
 }

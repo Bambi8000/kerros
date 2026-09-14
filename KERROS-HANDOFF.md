@@ -7,9 +7,28 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.33.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.34.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+**Free plates and cloning** now support arbitrary XYZ placement and full ZYX
+rotation in Assembly. `Add free plate` creates an editable rounded rectangle.
+`Clone plate` snapshots any selected rib, support, wall plate or free plate,
+selects a new persistent ID and activates Move; the copy starts 10 mm clear of
+the source face. It owns the finished nominal outline (including holes/slots)
+and stock, so kerf is applied once. `Free placement` saves the selected linked
+part in place and unlocks all axes; `Restore linked placement` returns to its
+retained source settings. Saved `plateOutline` loops are independent of external
+SVGs and source geometry. A damaged loop invalidates the whole snapshot instead
+of quietly filling a hole. Copy actions require the current completed result.
+Move/Rotate drags preview immediately and commit one pose on release; numerical
+pose edits use the same fast frames. Free parts join collision, LED/rod, Part,
+nesting, DXF and PDF paths, but have no generated attachments or checked insertion
+sequence. Existing cut slots are frozen geometry, not live joints. Linked rib
+operations referencing a freed rib need correction or disabling. Odd/Even/All
+and Fan move only linked ribs; freed rib sources retain their sequence slots.
+See FEATURES and `tools/validate-free-plates.mjs`; mounting still needs design
+and a physical test.
 
 Rods now rotate freely with the Rotate gizmo in Model and upright Assembly,
 or with Rotation X/Y/Z in the inspector. Rotation preserves centre and length;
@@ -74,7 +93,7 @@ follow each rib's usable shoulder profile and placement. Since 0.30.1, short rib
 reduce the rail inset locally to fit two tabs, or use one centred tab if a pair
 cannot fit; the requested tab height is preserved. The old two-tab spacing
 requirement could omit a small end rib from the entire frame. Wall attachment
-checks now count every enabled rib, including empty source planes, and block
+checks now count every enabled linked rib, including empty source planes, and block
 export when any is unattached. An unplaceable tab stops frame generation rather
 than leaving a plausible partial support. Rail width and profile inset are editable. Two mounting holes
 follow the upper rail, with small inward pads where a dense rib row needs room.
@@ -485,11 +504,12 @@ way `FixtureInspector` was.
 - **A morph ignores `height`.** Its span is its keys, so the field would write
   a number nothing reads — the pattern gizmo's failure exactly. The inspector
   replaces the field with a sentence instead.
-- **Upright cross-slicing only.** Radial and linear ribs with ring supports or a
+- **Automatic joints remain upright.** Radial and linear ribs with ring supports or a
   wall backplate are available. Rib-to-rib cross joints support upright wall
   and loose-rib networks with a checked straight individual-part order.
-  Arbitrary tilt, group motions and cross-jointed networks with horizontal
-  rings remain deferred. Ring and wall support systems cannot be combined
+  Free plates can tilt arbitrarily and preserve saved cutouts, but do not
+  generate attachments. Tilted automatic joints, group insertion motions and
+  cross-jointed networks with horizontal rings remain deferred. Ring and wall support systems cannot be combined
   because their insertion paths differ.
 - **The bundle is unsigned.** It runs on the machine that built it; another Mac
   quarantines it. Proper notarising needs a paid Apple Developer account.
@@ -557,8 +577,9 @@ about to happen when this handoff was written; ask before assuming.
    ring and a 200 mm ring identical on the page.
 2. **Cross-slicing (fin / eggcrate mode)**: the upright subset of phases A-C
    shipped in 0.29.0; upright rib cross joints and one-rib clearance cuts
-   shipped in 0.31.0. General tilt, group assembly motions and crossing networks
-   with horizontal rings remain future work. The original phase breakdown
+   shipped in 0.31.0. Free placement and plate snapshots shipped in 0.34.0.
+   Automatic joints for tilted plates, group assembly motions and crossing
+   networks with horizontal rings remain future work. The original phase breakdown
    below records the rationale.
    The current design is recorded in
    [the assembly implementation plan](docs/KERROS-ASSEMBLY-PLAN.md): upright

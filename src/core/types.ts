@@ -106,6 +106,8 @@ export interface Feature {
    * existed mean what it always meant, with no migration to get wrong.
    */
   keys?: ProfileKey[];
+  /** Saved nominal 2D loops for independent plates, including holes. */
+  plateOutline?: number[][];
 }
 
 export interface MachineProfile {

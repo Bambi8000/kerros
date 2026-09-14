@@ -48,8 +48,9 @@ import { localiseFixture } from './fixture';
 import { assemblyFeatures, assemblyMember, ribOperation } from './assemblyFeatures';
 import type { AssemblyMember, RibOperation } from './assemblyFeatures';
 import { rodFromFeature, rodPose, fitRodToBounds } from './rig';
-import { ribAngleKey } from './assembly';
+import { ribAngleKey, snapshotPlate, isFreePlate } from './assembly';
 import type { RibAngleScope } from './assembly';
+import type { SliceSet } from './slice';
 
 export type ViewName = 'persp' | 'top' | 'front' | 'side';
 
@@ -192,6 +193,8 @@ interface KerrosState {
   addShape: (moduleKey: string) => void;
   addAssembly: (kind: 'radial' | 'linear') => void;
   addAssemblyMember: (id: string, kind: AssemblyMember) => void;
+  snapshotAssemblyPlate: (id: string, result: SliceSet, sources: Feature[], duplicate: boolean) => boolean;
+  setFreePlatePose: (id: string, patch: Partial<Record<'plateX' | 'plateY' | 'plateZ' | 'plateRx' | 'plateRy' | 'plateRz', number>>) => void;
   addRibOperation: (a: string, b: string, operation: RibOperation) => void;
   setAssemblyCount: (id: string, kind: 'rib' | 'support', count: number) => void;
   setAssemblyAngle: (id: string, angle: number, scope: RibAngleScope) => void;
@@ -454,12 +457,30 @@ export const useKerros = create<KerrosState>((set, get) => ({
   addRibOperation: (a, b, operation) => set((s) => {
     const first = s.features.find((f) => f.id === a && f.kind === 'assembly:rib' && f.enabled);
     const second = s.features.find((f) => f.id === b && f.kind === 'assembly:rib' && f.enabled);
-    if (!first || !second || a === b || !first.params.groupId || first.params.groupId !== second.params.groupId) return s;
+    if (!first || !second || isFreePlate(first) || isFreePlate(second) || a === b || !first.params.groupId || first.params.groupId !== second.params.groupId) return s;
     const existing = s.features.find((f) => f.kind === 'assembly:joint' && f.params.groupId === first.params.groupId
       && [f.params.ribA, f.params.ribB].includes(a) && [f.params.ribA, f.params.ribB].includes(b));
     if (existing) return { selectedId: existing.id, panel: 'inspector' };
     const feature = ribOperation(first, second, operation, s.nextFeatureNumber);
     return { features: [...s.features, feature], nextFeatureNumber: s.nextFeatureNumber + 1, selectedId: feature.id, panel: 'inspector' };
+  }),
+  snapshotAssemblyPlate: (id, result, sources, duplicate) => {
+    const s = get(), source = s.features.find((f) => f.id === id);
+    const layout = s.features.find((f) => f.enabled && f.id === source?.params.groupId);
+    const slice = result.slices.find((slice) => slice.part?.id === id);
+    if (s.features !== sources || !source || !layout || !slice || !result.assembly?.origin || result.assembly.id !== layout.id) return false;
+    const feature = snapshotPlate(source, slice, layout, result.assembly.origin, `f${s.nextFeatureNumber}`, duplicate);
+    if (!feature) return false;
+    const centre = Object.fromEntries(result.assembly.origin.map((v, i) => [`sourceCentre${'XYZ'[i]}`, v - Number(layout.params[['px', 'py', 'pz'][i]] || 0)]));
+    const features = s.features.map((f) => f.id === layout.id ? { ...f, params: { ...f.params, ...centre } } : f.id === id && !duplicate ? feature : f);
+    set({ features: duplicate ? [...features, feature] : features,
+      nextFeatureNumber: s.nextFeatureNumber + (duplicate ? 1 : 0), selectedId: feature.id,
+      assemblyAngleScope: 'selected', mode: 'stack', panel: 'inspector', gizmoMode: duplicate ? 'translate' : 'rotate' });
+    return true;
+  },
+  setFreePlatePose: (id, patch) => set((s) => {
+    if (!Object.values(patch).every(Number.isFinite)) return s;
+    return { features: s.features.map((f) => f.id === id && isFreePlate(f) ? { ...f, params: { ...f.params, ...patch } } : f) };
   }),
   setAssemblyCount: (id, kind, requested) => set((s) => {
     const layout = s.features.find((f) => f.id === id && f.kind === 'assembly:layout');
@@ -1968,6 +1989,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
         name: f.name,
         enabled: f.enabled,
         params: { ...f.params },
+        ...(f.plateOutline ? { plateOutline: f.plateOutline.map((r) => [...r]) } : {}),
         ...(f.strokes && f.strokes.length > 0
           ? { strokes: f.strokes.map((k) => ({ ...k, points: [...k.points] })) }
           : {}),
@@ -2022,6 +2044,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
         params: { ...f.params },
         ...(f.strokes ? { strokes: f.strokes.map((k) => ({ ...k, points: [...k.points] })) } : {}),
         ...(f.keys ? { keys: f.keys.map((k) => ({ ...k })) } : {}),
+        ...(f.plateOutline ? { plateOutline: f.plateOutline.map((r) => [...r]) } : {}),
       })),
       nextFeatureNumber: Math.max(nextFeatureNumber, data.nextFeatureNumber ?? 1),
       sliceRes: data.slicing.sliceRes,

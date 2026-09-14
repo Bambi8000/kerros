@@ -546,7 +546,7 @@ function rodManifest(set: SliceSet): string[] {
 /** Persistent part IDs are the link between the assembled drawing and the bed. */
 function uprightManifest(input: ManifestInput): string[] {
   const report = input.set.assembly!;
-  const lines = [`KERROS UPRIGHT ASSEMBLY v${input.version}`, `Machine: ${input.machineName}`, `Parts: ${input.set.slices.length}. Cutting sheets: ${input.sheets.length}.`, '',
+  const lines = [`KERROS ASSEMBLY v${input.version}`, `Machine: ${input.machineName}`, `Parts: ${input.set.slices.length}. Cutting sheets: ${input.sheets.length}.`, '',
     report.cuttable ? 'Geometry checks passed at the selected sample resolution.' : 'CHECKS FAILED - REVIEW ONLY. Do not cut this assembly.',
     'Dry-fit a small two-rib coupon before a full build. Verify measured kerf, joint fit, insertion order and LED clearance in the actual stock.',
     'Tabs require an adhesive suitable for the stock. Openings do not establish LED retention, hardware suitability or a load rating.', '', 'PARTS / ASSEMBLY COORDINATES (mm, Z up)'];

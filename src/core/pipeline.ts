@@ -269,21 +269,25 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
   if (activeAssembly(job.features)) {
     const started = Date.now();
     const field = composeField(job.features.filter(isFieldFeature), job.kerf, job.seed, job.thickness, { spacerHeight: 0 }, volumes);
-    if (!field.bounds) return EMPTY_OUTPUT;
     const layout = activeAssembly(job.features)!;
+    const centre = ['X', 'Y', 'Z'].map((axis) => Number(layout.params[`sourceCentre${axis}`] || 0));
+    const half = [Number(layout.params.radius) || 80, Number(layout.params.radius) || 80, (Number(layout.params.height) || 160) / 2];
+    // Independent plates survive removal of the source shape. Linked ribs
+    // still sample the actual (now empty) source and report their missing cuts.
+    const bounds = field.bounds ?? { min: centre.map((v, i) => v - half[i]) as [number, number, number], max: centre.map((v, i) => v + half[i]) as [number, number, number] };
     // Rods stay in world coordinates. Convert only the worker input to the
     // shared finite-cylinder route representation, never the saved feature.
     const angle = Number(layout.params.angle || 0), a = -angle * Math.PI / 180;
-    const origin = field.bounds.min.map((v, i) => (v + field.bounds!.max[i]) / 2 + Number(layout.params[['px', 'py', 'pz'][i]] || 0));
+    const origin = bounds.min.map((v, i) => (v + bounds.max[i]) / 2 + Number(layout.params[['px', 'py', 'pz'][i]] || 0));
     const assemblyFeatures = job.features.map((f): Feature => {
       if (f.kind !== 'rod') return f;
       const rod = rodFromFeature(f), pose = rodPose(rod), d = pose.centre.map((v, i) => v - origin[i]);
       return { ...f, kind: 'assembly:channel', params: { groupId: layout.id, rod: true, shape: 'tube',
         px: d[0] * Math.cos(a) - d[1] * Math.sin(a), py: d[0] * Math.sin(a) + d[1] * Math.cos(a), pz: d[2],
         ...channelAngles(pose.u, pose.v, angle), length: pose.length, diameter: rodDiameter(rod), clearance: 0,
-        through: false, ribTarget: true, supportTarget: true, backplateTarget: true } };
+        through: false, ribTarget: true, supportTarget: true, backplateTarget: true, plateTarget: true } };
     });
-    const set = buildAssembly(assemblyFeatures, field.solid, field.bounds, job, {
+    const set = buildAssembly(assemblyFeatures, field.solid, bounds, job, {
       trace: traceSheet,
       distance: (contours, reach) => {
         const index = indexProfile({ rings: contours.map((c) => c.points), fill: 'holes' }, 1, 0.02, Math.min(reach, Math.max(8, job.minFeature * 3, job.kerf * 2)));
