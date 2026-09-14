@@ -1,7 +1,7 @@
-KERROS INVENTORY  2026-09-14  version 0.34.1
+KERROS INVENTORY  2026-09-14  version 0.34.2
 
 --- source, lines each
-   37491 total
+   37502 total
     2898 src/ui/Inspector.tsx
     2269 src/core/store.ts
     1704 src/core/sdf.ts
@@ -75,13 +75,13 @@ KERROS INVENTORY  2026-09-14  version 0.34.1
       78 src-tauri/src/lib.rs
       70 tools/validate-hole-punch.mjs
       68 tools/make-icon.py
+      54 src/ui/NumberField.tsx
       53 src/core/assemblyFeatures.ts
       52 src/assets/hero.png
       51 tools/check-version.mjs
       50 tools/check-docs.mjs
       45 src/ui/ErrorBoundary.tsx
       43 src/ui/latestJob.ts
-      43 src/ui/NumberField.tsx
       38 src/core/profiles.ts
       18 src/core/mesh.ts
       17 src/ui/AssemblyPartView.tsx
@@ -102,6 +102,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+b1b1ffa Clear stale success notices after plate placement actions
 4c4a0e8 Add free 3D plate placement and independent cloning
 601c100 Rotate rods in stacks and upright assemblies with full-thickness openings
 6517014 Preview rib angles immediately and coalesce obsolete worker jobs
@@ -141,4 +142,3 @@ a390be1 The validator count in the handoff was six batches out of date
 63bedb7 A brush that edits one sheet, onion skin behind it, and a gradient with a middle
 962c262 Docs and inventory at 0.25.0
 e34b9da A capsule that bends into a sausage, and layers turned at assembly so the stack spirals
-aa019ba Docs and inventory at 0.24.0

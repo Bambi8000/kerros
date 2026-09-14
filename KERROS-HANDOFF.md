@@ -7,9 +7,13 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.34.1.** The MVP as originally scoped is
+**State at the time of writing: version 0.34.2.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+Numeric inspector fields now display at most two decimal places without
+rounding the model. In-progress edits remain editable until blur; external
+changes replace stale drafts. This keeps long gizmo-generated values legible.
 
 **Free plates and cloning** now support arbitrary XYZ placement and full ZYX
 rotation in Assembly. `Add free plate` creates an editable rounded rectangle.

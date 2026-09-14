@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 interface NumberFieldProps {
   label: string;
   value: number;
@@ -9,8 +11,8 @@ interface NumberFieldProps {
 }
 
 /**
- * Numeric input. Text is kept editable while typing (so backspacing a value
- * does not snap it back), and only finite numbers reach the store.
+ * Round the display, not the model. Keep an in-progress edit until blur;
+ * external changes (including clamps and gizmos) replace the draft.
  */
 export function NumberField({
   label,
@@ -21,19 +23,28 @@ export function NumberField({
   max,
   onChange,
 }: NumberFieldProps) {
+  const [draft, setDraft] = useState<{ value: number; text: string } | null>(null);
+  const display = String(Number(value.toFixed(2)));
   return (
     <label className="field">
       <span className="field-label">{label}</span>
       <span className="field-input">
         <input
           type="number"
-          value={value}
+          value={draft?.value === value ? draft.text : display}
           step={step}
           min={min}
           max={max}
           onChange={(e) => {
-            const next = Number(e.target.value);
-            if (e.target.value !== '' && Number.isFinite(next)) onChange(next);
+            const text = e.target.value;
+            const next = Number(text);
+            const valid = text !== '' && Number.isFinite(next);
+            setDraft({ value: valid ? next : value, text });
+            if (valid) onChange(next);
+          }}
+          onBlur={(e) => {
+            setDraft(null);
+            e.currentTarget.scrollLeft = 0;
           }}
         />
         {unit ? <span className="field-unit">{unit}</span> : null}

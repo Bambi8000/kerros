@@ -2243,6 +2243,12 @@ action, one place, no race.
 
 ### Part inspector — M4.4
 
+Shared numeric inspector fields display at most two decimal places (0.34.2),
+without rounding the stored geometry. Typed text remains editable, including
+an empty field; only finite, nonempty values reach the model. Blur restores
+the compact display. External changes and clamped values replace stale drafts.
+Opening or leaving a field alone never changes its underlying precision.
+
 A part is not a feature: it has no parameters of its own, it is what the tree
 produced. What it does have is a place on the bed and an angle, and those
 deserve exact numbers as well as dragging. Selecting a part on a sheet brings
