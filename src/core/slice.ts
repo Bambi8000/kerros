@@ -88,6 +88,12 @@ export interface Slice {
 
 export interface SliceSet {
   slices: Slice[];
+  /** Separate upright cut parts; never change horizontal layer numbering. */
+  verticalSupports?: {
+    parts: Slice[];
+    contacts: { id: string; layer: number; angle: number; split: number }[];
+    issues: { severity: 'error' | 'warning'; message: string }[];
+  };
   /** Oblique rods in horizontal stacks. Refused cuts block manufacturing export. */
   rods?: {
     routes: { id: string; label: string; start: [number, number, number]; end: [number, number, number]; diameter: number; layers: number[] }[];

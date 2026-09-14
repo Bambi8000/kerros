@@ -2816,6 +2816,41 @@ interface InspectorProps {
   sliced: boolean;
 }
 
+export function VerticalSupportsInspector({ feature, slices, fresh }: { feature: Feature; slices: SliceSet | null; fresh: boolean }) {
+  const setParam = useKerros(s => s.setParam);
+  const setMode = useKerros(s => s.setMode);
+  const mode = useKerros(s => s.mode);
+  const report = slices?.verticalSupports;
+  return <>
+    <div className="group">
+      <div className="group-head">Vertical supports</div>
+      <div className="derived">Internal plate spines for horizontal layers. Opposing slots hold the planned layer spacing. Uses the current sheet material.</div>
+      {[
+        ['count', 'Count', '', 1, 12, 1], ['angle', 'Rotation', '°', undefined, undefined, 1],
+        ['depth', 'Depth into cavity', 'mm', 1, undefined, 0.5], ['engagement', 'Wall engagement', 'mm', 1, undefined, 0.5],
+        ['clearance', 'Joint clearance', 'mm', 0, undefined, 0.05], ['px', 'Centre X', 'mm', undefined, undefined, 1],
+        ['py', 'Centre Y', 'mm', undefined, undefined, 1], ['firstLayer', 'First layer', '', 1, undefined, 1],
+        ['lastLayer', 'Last layer', '', 0, undefined, 1],
+      ].map(([key, label, unit, min, max, step]) => <NumberField key={String(key)} label={String(label)} unit={String(unit)} value={Number(feature.params[String(key)] ?? 0)}
+        min={min as number | undefined} max={max as number | undefined} step={step as number}
+        onChange={v => setParam(feature.id, String(key), v)} />)}
+      <div className="derived">Last layer 0 includes the top layer. The centre must lie in the cavity on every selected layer. Leave room above and below the range for the end shoulders.</div>
+      <button className="btn btn-wide" type="button" onClick={() => setMode('stack')}>View supports in Assembly</button>
+    </div>
+    <div className="group">
+      {!feature.enabled ? <div className="derived">This support group is disabled.</div>
+        : !fresh ? <div className="derived">{mode === 'model' ? 'Open Assembly to calculate current support joints.' : 'Calculating support joints…'}</div>
+        : slices?.assembly ? <div className="derived">Vertical supports belong to horizontal stacks. Disable Ribs &amp; Supports to use them.</div>
+        : !report ? <div className="derived">No layers available. Add a hollow source shape first.</div>
+        : <>
+          <div className="derived">{report.parts.length} supports · {report.contacts.length} layer joints.</div>
+          {report.issues.map((issue, i) => <div className="derived" key={i}>{issue.severity === 'error' ? 'Resolve before export: ' : ''}{issue.message}</div>)}
+          {report.parts.length > 0 && <div className="derived">Space the selected layers at their planned heights, then slide each support outward from the cavity into its matching slots. Fit rods and separately attach end layers afterward. Dry-fit a coupon before cutting the full lamp; glue and final retention need a material test.</div>}
+        </>}
+    </div>
+  </>;
+}
+
 export function Inspector({ slices, patternCounts, holeMisses, punchResults, sliceFresh, legGaps, pinLoose, sliced }: InspectorProps) {
   const features = useKerros((s) => s.features);
   const selectedId = useKerros((s) => s.selectedId);
@@ -2845,6 +2880,7 @@ export function Inspector({ slices, patternCounts, holeMisses, punchResults, sli
   if (feature.kind === 'holePunch') {
     return <HolePunchInspector feature={feature} result={punchResults[feature.id]} fresh={sliceFresh} slices={slices} />;
   }
+  if (feature.kind === 'verticalSupports') return <VerticalSupportsInspector feature={feature} slices={slices} fresh={sliceFresh} />;
   if (feature.kind.startsWith('fixture:')) {
     return <FixtureInspector feature={feature} slices={slices} misses={holeMisses[feature.id]} />;
   }

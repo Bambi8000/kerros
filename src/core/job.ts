@@ -50,7 +50,7 @@ export function buildParts(
 ): PartGeometry[] {
   const parts: PartGeometry[] = [];
 
-  for (const slice of set.slices) {
+  for (const slice of [...set.slices, ...(set.verticalSupports?.parts ?? [])]) {
     const groups = groupContours(slice.contours);
     groups.forEach((group, i) => {
       parts.push({
@@ -63,7 +63,7 @@ export function buildParts(
         circles: slice.circles
           .filter((circle) => circleFitsInPart(group, circle))
           .map((circle) => ({ x: circle.x, y: circle.y, r: circle.r })),
-        layer: slice.index,
+        ...(slice.index > 0 ? { layer: slice.index } : {}),
       });
     });
   }
@@ -238,6 +238,7 @@ export function manifestText(input: ManifestInput): string {
   lines.push('');
 
   lines.push(...rodManifest(set));
+  lines.push(...verticalSupportManifest(set));
   lines.push('LAYERS');
   lines.push('  #    z (mm)   parts  holes  sheet');
   for (const slice of set.slices) {
@@ -449,7 +450,7 @@ export function assemblyDocument(input: AssemblyInput): PdfPage[] {
 
   /* --- the drawings --- */
 
-  const drawings = set.slices.map((slice) => {
+  const drawings = [...set.slices, ...(set.verticalSupports?.parts ?? [])].map((slice) => {
     const groups = groupContours(slice.contours);
     const rings: number[][] = [];
     for (const group of groups) {
@@ -517,10 +518,10 @@ export function assemblyDocument(input: AssemblyInput): PdfPage[] {
        * thing you need once you have found it.
        */
       const turn = anyTwist ? twistAt(twistSpec, drawing.slice.index, twistTable) : 0;
-      const label =
+      const label = drawing.slice.part?.label ?? (
         anyTwist
           ? `L${String(drawing.slice.index).padStart(2, '0')} ${turn.toFixed(0)}°`
-          : `L${String(drawing.slice.index).padStart(2, '0')}`;
+          : `L${String(drawing.slice.index).padStart(2, '0')}`);
       const labelW = textWidth(label, 5);
       write(p, label, cx - labelW / 2, cy - cellH * 0.43, 5);
     });
@@ -529,7 +530,24 @@ export function assemblyDocument(input: AssemblyInput): PdfPage[] {
   }
 
   if (set.rods) pages.push(...textPages(rodManifest(set)));
+  if (set.verticalSupports) pages.push(...textPages(verticalSupportManifest(set)));
   return pages;
+}
+
+function verticalSupportManifest(set: SliceSet): string[] {
+  const report = set.verticalSupports;
+  if (!report) return [];
+  const lines = ['VERTICAL STACK SUPPORTS',
+    'Space the layers at their planned heights. Slide each support outward from the cavity into its matching slots.',
+    'Fit rods and separately attach unselected end layers afterward.',
+    'Dry-fit a cross-lap coupon in the actual stock. Glue and retention require a material test.'];
+  for (const slice of report.parts) {
+    const part = slice.part!, contacts = report.contacts.filter(c => c.id === part.id);
+    lines.push(`${part.label} ID ${part.id}: ${part.thickness} mm stock; angle ${contacts[0]?.angle.toFixed(2)} deg; centre ${part.origin.slice(0, 2).map(v => v.toFixed(2)).join(' / ')} mm.`,
+      `  Layers ${contacts.map(c => c.layer).join(', ')}.`);
+  }
+  for (const issue of report.issues) lines.push(`${issue.severity.toUpperCase()}: ${issue.message}`);
+  lines.push(''); return lines;
 }
 
 /** Rod placement is manufacturing information, carried into both manifest and PDF. */

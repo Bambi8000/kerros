@@ -1245,7 +1245,7 @@ export function Viewport({ slices }: ViewportProps) {
     };
     const twistTable = parseTwistOverrides(twistSpec.overrides);
 
-    for (const slice of slices.slices) {
+    for (const slice of [...slices.slices, ...(slices.verticalSupports?.parts ?? [])]) {
       if (hideAbove && slice.index > currentLayer) continue;
       const turn = (twistAt(twistSpec, slice.index, twistTable) * Math.PI) / 180;
 
@@ -1279,16 +1279,23 @@ export function Viewport({ slices }: ViewportProps) {
         }
 
         const geometry = new THREE.ExtrudeGeometry(shape, {
-          depth: slices.thickness,
+          depth: slice.part?.thickness ?? slices.thickness,
           bevelEnabled: false,
           curveSegments: 16,
         });
         const mesh = new THREE.Mesh(
           geometry,
-          slice.index === currentLayer ? highlighted : plain,
+          slice.part ? new THREE.MeshStandardMaterial({ color: 0x81958b, roughness: 0.7 }) : slice.index === currentLayer ? highlighted : plain,
         );
-        mesh.position.z = slice.zBottom;
-        if (turn !== 0) mesh.rotation.z = turn;
+        if (slice.part) {
+          const p = slice.part;
+          const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3(...p.u), new THREE.Vector3(...p.v), new THREE.Vector3(...p.n));
+          mesh.quaternion.setFromRotationMatrix(basis);
+          mesh.position.set(...p.origin).addScaledVector(new THREE.Vector3(...p.n), -p.thickness / 2);
+        } else {
+          mesh.position.z = slice.zBottom;
+          if (turn !== 0) mesh.rotation.z = turn;
+        }
         stack.add(mesh);
       }
     }

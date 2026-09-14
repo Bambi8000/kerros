@@ -7,13 +7,29 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.34.2.** The MVP as originally scoped is
+**State at the time of writing: version 0.35.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
 Numeric inspector fields now display at most two decimal places without
 rounding the model. In-progress edits remain editable until blur; external
 changes replace stale drafts. This keeps long gizmo-generated values legible.
+
+**Vertical supports** adds internal radial plate spines to the original
+horizontal stack. Add it under `Source shapes and layer tools`; it opens
+Assembly and its inspector. One group supplies 1–12 supports, with rotation,
+centre, cavity depth, wall engagement, clearance and an inclusive layer range.
+Opposing cross-lap slots use actual sheet heights and twist, and the spine
+profile follows the cavity. Selected sheets must have a connected ring and an
+open centre; closed caps, thin walls, crowded insertion and tight gaps are
+refused by name. Layers outside the range explicitly remain unsupported.
+Assemble the selected layers and spines first, then separately attach the end
+layers and fit rods. Upright cut parts stay separate from horizontal layer
+numbering but join Assembly, Sheet, DXF, manifest and PDF. All use the stock
+profile and one kerf compensation after nominal tracing. Rod interference
+blocks export; rods do not drill these spines. This is a sampled geometry
+check, not a strength claim. See FEATURES and `validate-vertical-supports.mjs`;
+cross-lap fit and assembly still require a physical coupon.
 
 **Free plates and cloning** now support arbitrary XYZ placement and full ZYX
 rotation in Assembly. `Add free plate` creates an editable rounded rectangle.
@@ -544,6 +560,11 @@ file, check this first.
 
 Everything here is validated in code and unproven in material. Test cuts were
 about to happen when this handoff was written; ask before assuming.
+
+- **Vertical stack supports.** Cut a two-layer cross-lap coupon in the stock,
+  check the layer-height shoulders, slot clearance, inward staging room and
+  outward insertion. Test retention and adhesive. Unselected end layers need
+  separate attachment; support plates do not establish a load rating.
 
 - **Upright assemblies.** Cut a two-rib/two-ring coupon and a two-rib wall
   coupon using the actual LED tube or profile. Measure kerf, slot and tab fit,

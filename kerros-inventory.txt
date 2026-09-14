@@ -1,18 +1,18 @@
-KERROS INVENTORY  2026-09-14  version 0.34.2
+KERROS INVENTORY  2026-09-14  version 0.35.0
 
 --- source, lines each
-   37502 total
-    2898 src/ui/Inspector.tsx
-    2269 src/core/store.ts
+   37922 total
+    2934 src/ui/Inspector.tsx
+    2285 src/core/store.ts
+    1723 src/core/pipeline.ts
     1704 src/core/sdf.ts
-    1680 src/core/pipeline.ts
     1484 tools/validate-nest.mjs
-    1463 src/ui/Viewport.tsx
+    1470 src/ui/Viewport.tsx
     1271 src/core/nest.ts
     1238 src/ui/SliceInspector.tsx
     1221 tools/validate-pipeline.mjs
-    1086 src/ui/ProfilePanel.tsx
-    1081 src/core/slice.ts
+    1087 src/core/slice.ts
+    1087 src/ui/ProfilePanel.tsx
     1067 src/core/profile2d.ts
      857 src/core/assembly.ts
      826 src/index.css
@@ -21,7 +21,7 @@ KERROS INVENTORY  2026-09-14  version 0.34.2
      736 tools/validate-profile.mjs
      687 tools/validate-slice.mjs
      644 src/ui/SheetView.tsx
-     619 src/core/job.ts
+     637 src/core/job.ts
      527 src/core/window.ts
      507 src/core/project.ts
      489 src/core/rig.ts
@@ -36,7 +36,7 @@ KERROS INVENTORY  2026-09-14  version 0.34.2
      334 src/core/fixture.ts
      332 src/ui/Layout.tsx
      330 src/core/legs.ts
-     323 src/ui/FeatureTree.tsx
+     330 src/ui/FeatureTree.tsx
      316 src/ui/AssemblyViewport.tsx
      283 src/core/meshImport.ts
      283 src/ui/download.ts
@@ -53,6 +53,7 @@ KERROS INVENTORY  2026-09-14  version 0.34.2
      202 src/core/surfaceNets.ts
      199 src/core/boss.ts
      194 src/ui/workerBridge.ts
+     175 src/core/verticalSupports.ts
      173 tools/validate-wall-frame.mjs
      162 src/core/paint.ts
      162 tools/validate-free-plates.mjs
@@ -66,6 +67,7 @@ KERROS INVENTORY  2026-09-14  version 0.34.2
      131 src/ui/PartInspector.tsx
      122 tools/validate-assembly-preview.mjs
      113 tools/validate-twist.mjs
+     111 tools/validate-vertical-supports.mjs
      108 tools/validate-state.mjs
      107 tools/validate-rib-joints.mjs
      106 tools/validate-rib-angles.mjs
@@ -97,11 +99,12 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs && node tools/validate-free-plates.mjs
+check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs && node tools/validate-free-plates.mjs && node tools/validate-vertical-supports.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+e8e2624 Keep numeric inspector values compact and editable
 b1b1ffa Clear stale success notices after plate placement actions
 4c4a0e8 Add free 3D plate placement and independent cloning
 601c100 Rotate rods in stacks and upright assemblies with full-thickness openings
@@ -141,4 +144,3 @@ a390be1 The validator count in the handoff was six batches out of date
 83f19e8 Docs and inventory at 0.26.0
 63bedb7 A brush that edits one sheet, onion skin behind it, and a gradient with a middle
 962c262 Docs and inventory at 0.25.0
-e34b9da A capsule that bends into a sausage, and layers turned at assembly so the stack spirals

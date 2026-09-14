@@ -77,6 +77,7 @@ import {
   traceSheet,
 } from './slice.ts';
 import type { GapReport, Slice, SliceSet } from './slice.ts';
+import { buildVerticalSupports } from './verticalSupports.ts';
 
 /**
  * Every import here names its file with a `.ts` extension.
@@ -351,7 +352,23 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     smoothing,
   };
 
-  const sliced = sliceModel(field.sample, bounds, { ...layerOptions, kerf });
+  const rawSlices = sliceModel(field.sample, bounds, { ...layerOptions, kerf });
+  const supportTwist = { perLayer: Number(twistPerLayer) || 0, overrides: twistOverrides ?? '' };
+  const supportTwistTable = parseTwistOverrides(supportTwist.overrides);
+  const supportFeature = features.find(f => f.enabled && f.kind === 'verticalSupports');
+  const supportLayerIndices = resolveLayers(selectorFromParams({ selKind: 'range',
+    selFrom: supportFeature?.params.firstLayer ?? 1,
+    selTo: Number(supportFeature?.params.lastLayer) || rawSlices.slices.length }), rawSlices.slices);
+  const sliced = supportFeature
+    ? buildVerticalSupports(rawSlices, sliceModel(field.sample, bounds, { ...layerOptions, kerf: 0 }), features,
+      { ...job, layerIndices: supportLayerIndices }, slice => twistAt(supportTwist, slice.index, supportTwistTable), {
+        trace: traceSheet,
+        distance: (contours, reach) => {
+          const index = indexProfile({ rings: contours.map(c => c.points), fill: 'holes' }, 1, 0.02, reach);
+          return (x, y) => indexedDistance(index, x, y);
+        },
+        thin: (slice, threshold) => minFeatureGap(slice, threshold).tooThin,
+      }) : rawSlices;
 
   // Window plugs come off the form as it was before any window was taken out of
   // it, on the same layer planes, so a plug and its hole are the same curve
@@ -686,6 +703,32 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
   // material burns through however good the geometry is.
   const threshold = Math.max(job.minFeature, kerf * 2);
   const reports = set.slices.map((slice) => minFeatureGap(slice, threshold));
+  if (set.verticalSupports) {
+    for (let i = 0; i < reports.length; i++) {
+      if (reports[i].tooThin) set.verticalSupports.issues.push({ severity: 'error', message: `Layer ${set.slices[i].index}: a finished bridge is below ${threshold.toFixed(2)} mm. Resolve it before cutting the supported stack.` });
+    }
+    for (const plate of set.verticalSupports.parts) for (const rod of rodsFromFeatures(features)) {
+      const pose = rodPose(rod), r = rodDiameter(rod) / 2 + threshold;
+      const section = Array.from({ length: 96 }, (_, i) => {
+        const a = i * Math.PI * 2 / 96, radius = r / Math.cos(Math.PI / 96);
+        return [radius * Math.cos(a), radius * Math.sin(a)];
+      }).flat();
+      const polygon = prismOpening(plate.part!, pose.start, pose.end, pose.u, pose.v, section);
+      if (polygon.length < 6) continue;
+      const opening = indexProfile({ rings: [polygon], fill: 'holes' }, 1, 0.02, 12);
+      const material = indexProfile({ rings: plate.nominalContours!.map(c => c.points), fill: 'holes' }, 1, 0.02, 12);
+      const edgeHits = (points: number[], test: (x: number, y: number) => number) => {
+        for (let i = 0; i < points.length; i += 2) {
+          const j = (i + 2) % points.length, dx = points[j] - points[i], dy = points[j + 1] - points[i + 1];
+          const steps = Math.ceil(Math.hypot(dx, dy) / 0.25);
+          for (let k = 0; k <= steps; k++) if (test(points[i] + dx * k / Math.max(steps, 1), points[i + 1] + dy * k / Math.max(steps, 1)) < 0) return true;
+        }
+        return false;
+      };
+      if (edgeHits(polygon, (x, y) => indexedDistance(material, x, y)) || plate.nominalContours!.some(c => edgeHits(c.points, (x, y) => indexedDistance(opening, x, y))))
+        set.verticalSupports.issues.push({ severity: 'error', message: `${plate.part!.label} intersects or crowds ${rod.label}. Move the rod or rotate the supports; rods do not drill vertical support plates.` });
+    }
+  }
 
   return {
     set,

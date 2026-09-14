@@ -731,6 +731,74 @@ finite/edge/collision refusals, mixed placements, Linear ribs and Radial
 supports, spacer/boss limits, save/open and the manifest/PDF/DXF paths.
 Material fit and rod retention still require a physical coupon.
 
+### Vertical stack supports — 0.35.0
+
+`src/core/verticalSupports.ts`, composed by `runSliceJob`, adds internal upright
+plate spines to the original horizontal-layer lamp. The tree button is under
+`Source shapes and layer tools`, beside the rod tools. It opens Assembly and
+selects the support inspector. Adding again selects the existing enabled group.
+Linear/Radial ribs keep their separate support system; the new feature is
+explicitly excluded there with the other horizontal tools.
+
+One `verticalSupports` RIG feature persists the group: `count` (1–12, default 3),
+`angle` in degrees, world `px`/`py` centre, `depth` into the cavity (12 mm),
+`engagement` into the wall (4 mm), and total `clearance` (0.2 mm). All plates use
+the current stock thickness and kerf. `firstLayer` and `lastLayer` select an
+inclusive contiguous run; last 0 means the top. The pipeline resolves this
+through the existing layer selector, against actual nonempty layer numbers.
+Changing the layer plan changes the physical joint heights. Outside layers are
+counted as unsupported, never silently claimed as fastened.
+
+At each selected sheet the radial wall is measured across nine offsets spanning
+the support thickness, allowance and minimum bridge. A closed centre, missing
+wall, separate pieces, insufficient engagement or crowded centre refuses the
+whole group. The spine follows these cavity measurements, staying constant
+over each complete stock slab and interpolating only across air gaps. End
+shoulders extend by twice the minimum bridge. They must not touch unselected
+sheets. Gap checks preserve the webs between vertical slots. A conservative
+angular sector reserves inward staging space for each spine before outward
+insertion, clear of the other spines.
+
+Each horizontal notch opens from the cavity to the middle of the engagement;
+each vertical notch opens from its outer edge back to that split. The horizontal
+slot width is support thickness plus total clearance; the vertical slot height
+is actual layer thickness plus that clearance. Their opposing shoulders set
+layer heights. Horizontal notches are counter-rotated by the layer twist so
+the assembled spines remain straight. Assemble the selected sheets and spines
+before fitting rods or separately attaching unselected end layers. Adhesive,
+retention, insertion accessibility and strength still need a physical test.
+
+Only enabled supports request an additional zero-kerf slice of the source.
+Nominal boolean cuts are traced in the sheet plane, redistanced, then traced
+at +kerf/2. A nominal/cut layer membership mismatch refuses supports instead of
+assigning an outline to the wrong height. Disabled/absent supports preserve the legacy result exactly. The
+new cuts precede rods, fixtures, punches and perforation, allowing their normal
+fit guards to see the notches. Finished thin bridges block support export.
+Full slab projections check rods against support material, with the minimum
+bridge as clearance; a conflict is explicit and blocks export rather than
+silently drilling or removing a spine. Other hardware suitability is not inferred
+from a fixture cut. Profile sampling targets 0.15 mm or finer, bounded to 1400
+cells across the largest part span. A grid too coarse for four samples across
+stock thickness or three across a bridge refuses the support group; thin stock
+cannot allocate an unbounded tracing grid. Radial searches and rod edges use
+0.25 mm sampling.
+
+`SliceSet.verticalSupports` carries separate upright `parts`, contact records
+and issues. Horizontal slice indices, spacers and twist keep their original
+meaning. The new parts carry U/V/N frames; Assembly extrudes those same cut
+contours at stock thickness, and Sheet nests them as V1…V12 alongside the
+horizontal layers. They have no horizontal layer number. DXF exports their
+closed contours, while the manifest/PDF record IDs, angles, centre, contacted
+layers and assembly instructions. Model shows the source, not these cut parts.
+Freshness and completed nesting still gate every manufacturing export.
+
+`tools/validate-vertical-supports.mjs` imports the real pipeline and checks
+complementary full-thickness slots, shoulders, all contacts, kerf direction,
+actual graded heights, twist, curved sources, translated centres, explicit
+refusals, rod interference, disabled identity, store actions, save/open, worker
+transport, inspector content, nesting, DXF, manifest and PDF. The browser check
+also reaches the new button, rotates the group and views the spines on a sheet.
+
 ### Spacer rings — M4
 
 `spacerPlans()` in `src/core/rig.ts`. Per rod: bore = the rod's clearance cut

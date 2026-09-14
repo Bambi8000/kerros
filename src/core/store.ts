@@ -200,6 +200,7 @@ interface KerrosState {
   setAssemblyAngle: (id: string, angle: number, scope: RibAngleScope) => void;
   setAssemblyChannelPose: (id: string, patch: Partial<Record<'px' | 'py' | 'pz' | 'yaw' | 'elevation' | 'roll', number>>) => void;
   addRod: () => void;
+  addVerticalSupports: () => void;
   addLegs: () => void;
   addPins: () => void;
   addBoss: () => void;
@@ -1308,6 +1309,21 @@ export const useKerros = create<KerrosState>((set, get) => ({
         f.id === id ? { ...f, params: { ...f.params, removed: '' } } : f,
       ),
     })),
+
+  addVerticalSupports: () =>
+    set((s) => {
+      const existing = s.features.find(f => f.kind === 'verticalSupports' && f.enabled);
+      if (existing) return { selectedId: existing.id, mode: 'stack', panel: 'inspector' };
+      const bounds = modelBounds(s.features.filter(f => f.stage === 'SHAPE'));
+      const id = `f${s.nextFeatureNumber}`;
+      return { features: [...s.features, { id, kind: 'verticalSupports', stage: 'RIG' as Stage,
+        name: 'Vertical supports', enabled: true,
+        params: { count: 3, depth: 12, engagement: 4, clearance: 0.2, angle: 0,
+          px: bounds ? (bounds.min[0] + bounds.max[0]) / 2 : 0,
+          py: bounds ? (bounds.min[1] + bounds.max[1]) / 2 : 0,
+          firstLayer: 1, lastLayer: 0 } }], nextFeatureNumber: s.nextFeatureNumber + 1,
+        selectedId: id, mode: 'stack', panel: 'inspector' };
+    }),
 
   addLegs: () =>
     set((s) => {

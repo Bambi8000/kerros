@@ -23,7 +23,7 @@ export type Stage = (typeof STAGES)[number];
 export const STAGE_NOTES: Record<Stage, string> = {
   SHAPE: 'Primitives, smooth unions, sculpt strokes, imports',
   CARVE: 'Subtracted volumes and shell thickness',
-  RIG: 'Rods, spacers, socket mount, cable channel, Wago chamber',
+  RIG: 'Rods, spacers, vertical supports, socket mount, cable channel, Wago chamber',
   SLICE: 'Layer pitch, contours, kerf offset',
   PATTERN: 'Wall perforation inside the shell band',
   LAYOUT: 'Nesting onto bed-sized sheets',

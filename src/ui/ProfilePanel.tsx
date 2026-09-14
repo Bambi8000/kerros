@@ -37,7 +37,7 @@ interface Props {
 
 export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: Props) {
   const assemblyMode = useKerros((s) => Boolean(activeAssembly(s.features)));
-  const exportReady = !slices?.rods?.issues.some((i) => i.severity === 'error') && sliceFresh && sheets.ready && (!assemblyMode || slices?.assembly?.cuttable === true);
+  const exportReady = !slices?.verticalSupports?.issues.some(i => i.severity === 'error') && !slices?.rods?.issues.some((i) => i.severity === 'error') && sliceFresh && sheets.ready && (!assemblyMode || slices?.assembly?.cuttable === true);
   const projectName = useKerros((s) => s.projectName);
   const setProjectName = useKerros((s) => s.setProjectName);
   const trueShape = useKerros((s) => s.trueShapeNesting);
@@ -940,6 +940,7 @@ export function ProfilePanel({ slices, reports, sheets, pinLoose, sliceFresh }: 
 
       <div className="group">
         <div className="group-head">Export</div>
+        {!assemblyMode && sliceFresh && slices?.verticalSupports?.issues.map((issue, i) => <div className="derived" key={`support-${i}`}>{issue.severity === 'error' ? 'Resolve before export: ' : ''}{issue.message}</div>)}
         {!assemblyMode && sliceFresh && slices?.rods?.issues.map((issue, i) => <div className="derived" key={i}>{issue.severity === 'error' ? 'Resolve before export: ' : ''}{issue.message}</div>)}
         {assemblyMode && <AssemblyStatus set={slices} pending={!sliceFresh} />}
         <button
