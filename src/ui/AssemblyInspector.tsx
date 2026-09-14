@@ -58,7 +58,7 @@ export function AssemblyInspector({ feature, set, pending, sourceFeatures }: { f
   const part = set?.slices.find((s) => s.part?.id === feature.id)?.part;
   const snapshot = (duplicate: boolean) => {
     if (!pending && set && sourceFeatures && state.snapshotAssemblyPlate(feature.id, set, sourceFeatures, duplicate)) {
-      setNotice(duplicate ? 'Independent copy selected. Drag the Move handles to place it; press R to rotate.' : 'Free placement enabled. The current outline and openings are saved. Restore linked placement to return to the source settings.');
+      setNotice('');
     } else setNotice('The current plate is not ready to copy. Wait for its cut outline to finish rebuilding.');
   };
   const scope = state.assemblyAngleScope;

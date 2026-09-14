@@ -3378,6 +3378,11 @@ in Assembly settings creates a rounded rectangle with width, height and corner
 radius controls. Snapshots keep their saved shape; they are not non-uniformly
 scaled to fit a new width or height.
 
+Since 0.34.1, successful plate actions clear transient notices. The active
+placement controls show the resulting state; an old “Free placement enabled”
+message must not remain after restoring the linked part. Refused snapshots still
+explain that the current cut result is not ready.
+
 All free plates expose Position X/Y/Z and Rotation X/Y/Z, use a rigid
 Rz·Ry·Rx basis, and enable every axis of the existing Move/Rotate gizmo. Numbers
 are in assembly coordinates; the whole layout transform still applies. The

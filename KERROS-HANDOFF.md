@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.34.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.34.1.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -29,6 +29,10 @@ operations referencing a freed rib need correction or disabling. Odd/Even/All
 and Fan move only linked ribs; freed rib sources retain their sequence slots.
 See FEATURES and `tools/validate-free-plates.mjs`; mounting still needs design
 and a physical test.
+
+The 0.34.1 follow-up removes stale success notices after plate actions: restored
+linked placement must not still say “Free placement enabled”. Refusal messages
+remain; the current controls identify the active placement mode.
 
 Rods now rotate freely with the Rotate gizmo in Model and upright Assembly,
 or with Rotation X/Y/Z in the inspector. Rotation preserves centre and length;

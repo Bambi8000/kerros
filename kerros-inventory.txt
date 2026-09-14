@@ -1,4 +1,4 @@
-KERROS INVENTORY  2026-09-14  version 0.34.0
+KERROS INVENTORY  2026-09-14  version 0.34.1
 
 --- source, lines each
    37491 total
@@ -102,6 +102,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+4c4a0e8 Add free 3D plate placement and independent cloning
 601c100 Rotate rods in stacks and upright assemblies with full-thickness openings
 6517014 Preview rib angles immediately and coalesce obsolete worker jobs
 0613f37 Add odd and even rib angle groups with a symmetric fan
@@ -141,4 +142,3 @@ a390be1 The validator count in the handoff was six batches out of date
 962c262 Docs and inventory at 0.25.0
 e34b9da A capsule that bends into a sausage, and layers turned at assembly so the stack spirals
 aa019ba Docs and inventory at 0.24.0
-0f40250 SVG outlines as a first-class 2D profile, indexed, and unioned rather than nested
