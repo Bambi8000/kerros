@@ -90,6 +90,12 @@ export interface SliceSet {
   slices: Slice[];
   /** Separate upright cut parts; never change horizontal layer numbering. */
   verticalSupports?: {
+    /** Derived automatic fit, never written over the saved manual settings. */
+    fit?: {
+      centre: [number, number]; firstLayer: number; lastLayer: number;
+      depth: [number, number]; engagement: [number, number];
+      excluded: { layer: number; reason: string }[];
+    };
     parts: Slice[];
     contacts: { id: string; layer: number; angle: number; split: number }[];
     issues: { severity: 'error' | 'warning'; message: string }[];

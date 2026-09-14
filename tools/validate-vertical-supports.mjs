@@ -78,6 +78,50 @@ assert.ok(cropped.set.verticalSupports.issues.some(i=>i.severity==='warning'&&i.
 const rod={id:'f4',kind:'rod',stage:'RIG',name:'Rod',enabled:true,params:{size:'M5',px:40,py:0,pz:0,length:80}};
 assert.ok(errors(run([body,cavity,support,rod])).some(i=>i.message.includes('Rod')));
 console.log('  ok    closed centres, crowded insertion, thin walls, short ranges, touching sheets and rod collisions refuse explicitly');
+// The user's shelled sphere has closed end discs: Automatic must work without
+// guessed layer numbers, even if the saved Manual centre and dimensions are bad.
+const shell={id:'f2',kind:'shell',stage:'CARVE',name:'Shell',enabled:true,params:{t:6}};
+const autoSupport={...support,params:{...support.params,fit:'auto',px:900,py:-700,depth:400,engagement:500,firstLayer:1,lastLayer:1}};
+const automatic=run([sphere,shell,autoSupport]), autoSet=automatic.set, fit=autoSet.verticalSupports.fit;
+assert.deepEqual(errors(automatic),[]);
+assert.equal(autoSet.verticalSupports.parts.length,autoSupport.params.count);
+assert.ok(fit.centre.every((v,i)=>Math.abs(v-[sphere.params.px,sphere.params.py][i])<.03),'centre follows the translated cavity');
+const expectedLayers=autoSet.slices.filter(s=>s.index>=fit.firstLayer&&s.index<=fit.lastLayer);
+assert.ok(expectedLayers.length>autoSet.slices.length/2);
+assert.equal(autoSet.verticalSupports.contacts.length,expectedLayers.length*autoSupport.params.count);
+assert.deepEqual(fit.excluded.map(row=>row.layer),autoSet.slices.filter(s=>!expectedLayers.includes(s)).map(s=>s.index));
+assert.ok(fit.excluded.length>0,'natural closed ends are reported');
+assert.ok(fit.depth[0]<fit.depth[1]&&fit.engagement[0]<fit.engagement[1],'local dimensions adapt to the curvature');
+for(const excluded of fit.excluded)assert.ok(autoSet.verticalSupports.issues.some(i=>i.message.includes(excluded.reason)));
+// Compare the finished nominal solids, across every stock slab and every spine.
+// A shoulder must not grow through a neighbouring ring when the profile changes.
+for(const plate of autoSet.verticalSupports.parts){
+ const spine=field(plate.nominalContours), [u0,u1]=ext(plate.nominalContours), p=plate.part;
+ for(const sheet of expectedLayers){
+  const material=field(sheet.nominalContours);
+  for(const z of [sheet.zBottom+.03,sheet.z,sheet.zBottom+job.thickness-.03])for(let u=u0;u<=u1;u+=.5){
+   if(spine(u,z)>-.03)continue;
+   for(const v of [-job.thickness/2,0,job.thickness/2])
+    assert.ok(material(p.origin[0]+p.u[0]*u+p.n[0]*v,p.origin[1]+p.u[1]*u+p.n[1]*v)>=-.03,'automatic spine clears each finished sheet through its full thickness');
+  }
+ }
+}
+const resized=run([{...sphere,params:{...sphere.params,r:40,px:-11,py:13}},shell,
+ {...autoSupport,params:{...autoSupport.params,count:4,angle:31}}],{spacerHeight:3,minFeature:1});
+assert.deepEqual(errors(resized),[]);
+assert.equal(resized.set.verticalSupports.parts.length,4);
+assert.notDeepEqual(resized.set.verticalSupports.fit,fit);
+assert.ok(resized.set.verticalSupports.fit.centre.every((v,i)=>Math.abs(v-[-11,13][i])<.03));
+assert.ok(resized.set.verticalSupports.contacts.some(c=>c.angle===31));
+const interruptedSource={...body,id:'f4',params:{...body.params,r1:55,r2:55,h:3,pz:plain.set.slices[2].z}};
+const interrupted=run([body,cavity,interruptedSource,autoSupport]);
+assert.ok(errors(interrupted).some(i=>/interior layers are never skipped/.test(i.message)));
+assert.equal(interrupted.set.verticalSupports.parts.length,0);
+assert.ok(errors(run([sphere,autoSupport])).some(i=>/no cavity/.test(i.message)));
+assert.ok(errors(run([body,{...cavity,params:{...cavity.params,r1:56,r2:56}},autoSupport])).some(i=>/wall is too thin/.test(i.message)));
+assert.deepEqual(run([body,cavity,{...support,params:{...support.params,fit:'manual'}}]).set,set,'absent fit preserves the legacy manual geometry');
+assert.deepEqual(run([sphere,shell,{...autoSupport,enabled:false}]).set,run([sphere,shell]).set);
+console.log('  ok    automatic shelled sphere, closed-end report, local fitting, all slab clearances, live centre/size/count/angle, dense layers and interior refusal');
 const server=await createServer({configFile:false,server:{middlewareMode:true,watch:null,hmr:false,ws:false},optimizeDeps:{noDiscovery:true,include:[]},appType:'custom'});
 try{
  const {useKerros}=await server.ssrLoadModule('/src/core/store.ts');
@@ -90,13 +134,20 @@ try{
  const state=()=>useKerros.getState();
  state().addShape('cone'); state().addVerticalSupports();
  assert.equal(state().mode,'stack');assert.equal(state().panel,'inspector');
+ assert.equal(state().features.find(f=>f.kind==='verticalSupports').params.fit,'auto');
  const selected=state().selectedId;state().addVerticalSupports();assert.equal(state().selectedId,selected);assert.equal(state().features.filter(f=>f.kind==='verticalSupports').length,1);
  state().setParam(selected,'angle',27.5);
  const saved=parseProject(serializeProject(state().projectData(),'0.35.0'));assert.ok(saved.ok);assert.deepEqual(saved.warnings,[]);
  state().applyProject(saved.data,saved.nextFeatureNumber);assert.equal(state().features.find(f=>f.id===selected).params.angle,27.5);
+ assert.equal(state().features.find(f=>f.id===selected).params.fit,'auto');
  state().selectFeature(selected);
  const html=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:support,slices:set,fresh:true}));
  for(const text of ['Vertical supports','Depth into cavity','Joint clearance','layer joints'])assert.ok(html.includes(text),text);
+ const autoHtml=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:autoSupport,slices:autoSet,fresh:true}));
+ for(const text of ['Automatic','Auto-fitted to layers','Fitted dimensions','no vertical support joints'])assert.ok(autoHtml.includes(text),text);
+ assert.ok(!autoHtml.includes('Depth into cavity'),'automatic dimensions are derived, not dead editable controls');
+ const staleHtml=renderToStaticMarkup(createElement(VerticalSupportsInspector,{feature:autoSupport,slices:autoSet,fresh:false}));
+ assert.ok(!staleHtml.includes('Auto-fitted to layers'),'old automatic success is hidden while calculating');
  const parts=buildParts(set,[]), vertical=parts.filter(p=>p.label.startsWith('V'));
  assert.equal(vertical.length,support.params.count);assert.ok(vertical.every(p=>p.layer===undefined));
  const nested=nestByMaterial(parts,{sheetWidth:720,sheetHeight:400,gap:4,labelHeight:3,trueShape:false,cell:2});assert.equal(nested.unplaced.length,0);
@@ -104,8 +155,14 @@ try{
  const input={set,sheets:nested.sheets,spacers:[],machineName:'Test',materialName:'Birch',thickness:3,kerf:.15,spacerHeight:6,spacerAchieved:6,version:'0.35.0',projectName:'Stack supports',ringThickness:3};
  assert.match(manifestText(input),/VERTICAL STACK SUPPORTS/);for(const plate of set.verticalSupports.parts)assert.ok(manifestText(input).includes(plate.part.id));
  assert.ok(assemblyDocument(input).length>assemblyDocument({...input,set:plain.set}).length);assert.ok(writePdf(assemblyDocument(input)).startsWith('%PDF'));
+ const autoParts=buildParts(autoSet,[]), autoNested=nestByMaterial(autoParts,{sheetWidth:720,sheetHeight:400,gap:4,labelHeight:3,trueShape:false,cell:2});
+ assert.equal(autoNested.unplaced.length,0);
+ assert.equal(autoParts.filter(p=>p.label.startsWith('V')).length,autoSupport.params.count);
+ for(const sheet of autoNested.sheets)assert.ok(!/NaN|Infinity/.test(writeDxfR12(sheetToDxf(sheet))));
+ assert.match(manifestText({...input,set:autoSet,sheets:autoNested.sheets}),/Automatic fit: layers/);
+ assert.ok(writePdf(assemblyDocument({...input,set:autoSet,sheets:autoNested.sheets})).startsWith('%PDF'));
  const oldSelf=globalThis.self,replies=[];globalThis.self={postMessage(m){replies.push(structuredClone(m));}};
- try{await server.ssrLoadModule('/src/ui/kerros.worker.ts');globalThis.self.onmessage({data:{kind:'slice',token:1,job}});assert.deepEqual(replies.at(-1).output.set,set);}finally{globalThis.self=oldSelf;}
+ try{await server.ssrLoadModule('/src/ui/kerros.worker.ts');globalThis.self.onmessage({data:{kind:'slice',token:1,job}});assert.deepEqual(replies.at(-1).output.set,set);globalThis.self.onmessage({data:{kind:'slice',token:2,job:{...job,features:[sphere,shell,autoSupport]}}});assert.deepEqual(replies.at(-1).output.set,autoSet);}finally{globalThis.self=oldSelf;}
  console.log('  ok    reachable inspector, persistent settings, real worker, separate cut parts, nesting, DXF, manifest and PDF');
 }finally{await server.close();}
 console.log('OK    vertical stack supports');

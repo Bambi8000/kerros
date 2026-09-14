@@ -541,6 +541,7 @@ function verticalSupportManifest(set: SliceSet): string[] {
     'Space the layers at their planned heights. Slide each support outward from the cavity into its matching slots.',
     'Fit rods and separately attach unselected end layers afterward.',
     'Dry-fit a cross-lap coupon in the actual stock. Glue and retention require a material test.'];
+  if (report.fit) lines.push(`Automatic fit: layers ${report.fit.firstLayer}-${report.fit.lastLayer}; depth ${report.fit.depth.map(v => v.toFixed(2)).join('-')} mm; engagement ${report.fit.engagement.map(v => v.toFixed(2)).join('-')} mm.`);
   for (const slice of report.parts) {
     const part = slice.part!, contacts = report.contacts.filter(c => c.id === part.id);
     lines.push(`${part.label} ID ${part.id}: ${part.thickness} mm stock; angle ${contacts[0]?.angle.toFixed(2)} deg; centre ${part.origin.slice(0, 2).map(v => v.toFixed(2)).join(' / ')} mm.`,

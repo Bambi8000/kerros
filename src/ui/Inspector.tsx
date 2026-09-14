@@ -2821,20 +2821,30 @@ export function VerticalSupportsInspector({ feature, slices, fresh }: { feature:
   const setMode = useKerros(s => s.setMode);
   const mode = useKerros(s => s.mode);
   const report = slices?.verticalSupports;
+  const automatic = feature.params.fit === 'auto';
+  const range = (values: [number, number]) => values.map(v => Number(v.toFixed(2))).filter((v, i, all) => !i || v !== all[0]).join('–');
   return <>
     <div className="group">
       <div className="group-head">Vertical supports</div>
       <div className="derived">Internal plate spines for horizontal layers. Opposing slots hold the planned layer spacing. Uses the current sheet material.</div>
+      <label className="field">
+        <span className="field-label">Fit</span>
+        <span className="field-input"><select value={automatic ? 'auto' : 'manual'} onChange={e => setParam(feature.id, 'fit', e.target.value)}>
+          <option value="auto">Automatic</option><option value="manual">Manual</option>
+        </select></span>
+      </label>
+      {automatic && <div className="derived">Follows the cavity as the source changes. Fits the centre, layer range, depth and engagement; closed ends remain separate.</div>}
       {[
         ['count', 'Count', '', 1, 12, 1], ['angle', 'Rotation', '°', undefined, undefined, 1],
-        ['depth', 'Depth into cavity', 'mm', 1, undefined, 0.5], ['engagement', 'Wall engagement', 'mm', 1, undefined, 0.5],
-        ['clearance', 'Joint clearance', 'mm', 0, undefined, 0.05], ['px', 'Centre X', 'mm', undefined, undefined, 1],
+        ...(!automatic ? [['depth', 'Depth into cavity', 'mm', 1, undefined, 0.5], ['engagement', 'Wall engagement', 'mm', 1, undefined, 0.5],
+        ['px', 'Centre X', 'mm', undefined, undefined, 1],
         ['py', 'Centre Y', 'mm', undefined, undefined, 1], ['firstLayer', 'First layer', '', 1, undefined, 1],
-        ['lastLayer', 'Last layer', '', 0, undefined, 1],
+        ['lastLayer', 'Last layer', '', 0, undefined, 1]] : []),
+        ['clearance', 'Joint clearance', 'mm', 0, undefined, 0.05],
       ].map(([key, label, unit, min, max, step]) => <NumberField key={String(key)} label={String(label)} unit={String(unit)} value={Number(feature.params[String(key)] ?? 0)}
         min={min as number | undefined} max={max as number | undefined} step={step as number}
         onChange={v => setParam(feature.id, String(key), v)} />)}
-      <div className="derived">Last layer 0 includes the top layer. The centre must lie in the cavity on every selected layer. Leave room above and below the range for the end shoulders.</div>
+      {!automatic && <div className="derived">Last layer 0 includes the top layer. The centre must lie in the cavity on every selected layer. Leave room above and below the range for the end shoulders. Choose Automatic to fit these settings to the cavity.</div>}
       <button className="btn btn-wide" type="button" onClick={() => setMode('stack')}>View supports in Assembly</button>
     </div>
     <div className="group">
@@ -2844,6 +2854,12 @@ export function VerticalSupportsInspector({ feature, slices, fresh }: { feature:
         : !report ? <div className="derived">No layers available. Add a hollow source shape first.</div>
         : <>
           <div className="derived">{report.parts.length} supports · {report.contacts.length} layer joints.</div>
+          {report.parts.length > 0 && report.fit && <>
+            <div className="derived">Auto-fitted to layers {report.fit.firstLayer}–{report.fit.lastLayer}. The support profile follows the inside wall.</div>
+            <details><summary>Fitted dimensions</summary><div className="derived">
+              Centre {report.fit.centre.map(v => Number(v.toFixed(2))).join(' / ')} mm · Depth {range(report.fit.depth)} mm · Engagement {range(report.fit.engagement)} mm.
+            </div></details>
+          </>}
           {report.issues.map((issue, i) => <div className="derived" key={i}>{issue.severity === 'error' ? 'Resolve before export: ' : ''}{issue.message}</div>)}
           {report.parts.length > 0 && <div className="derived">Space the selected layers at their planned heights, then slide each support outward from the cavity into its matching slots. Fit rods and separately attach end layers afterward. Dry-fit a coupon before cutting the full lamp; glue and final retention need a material test.</div>}
         </>}

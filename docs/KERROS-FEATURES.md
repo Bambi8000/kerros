@@ -749,11 +749,48 @@ through the existing layer selector, against actual nonempty layer numbers.
 Changing the layer plan changes the physical joint heights. Outside layers are
 counted as unsupported, never silently claimed as fastened.
 
+Since **0.36.0**, new groups use `fit: 'auto'`. Missing `fit` and explicit
+`manual` preserve the original geometry and all saved settings. The inspector's
+`Fit` selector switches modes without changing Manual values. Automatic leaves
+Count, Rotation and Joint clearance editable; the derived dimensions appear
+under Fitted dimensions after a current result. Stale or disabled results do not
+claim a successful fit.
+
+Automatic fits the centre to the bounding-box centre of the largest sliced
+cavity, transformed by that layer's actual twist. It follows translated sources;
+it is not an interior-point optimiser for arbitrary concave or multiple cavities.
+All layer/support wall measurements are cached once. A usable band must have at
+least two layers, with every support fitting every layer. Only ends may be
+trimmed: an unusable interior layer refuses the group instead of silently
+leaving a hole in the support coverage. Each omitted layer is reported with
+its actual reason and needs separate attachment. Manual remains available for
+choosing another centre or restricting the band deliberately.
+
+The automatic web is the material's minimum bridge plus half the joint clearance,
+two tracing steps and contour tolerance. Engagement targets twice stock thickness
+(or two webs, whichever is larger), clamped locally to preserve the outer wall
+web; it cannot fall below two webs. Cavity depth targets four stock thicknesses
+(or four webs), clamped locally to preserve the whole group's conservative
+outward-insertion corridor. Depth below two webs makes a layer unusable. The
+fit does not reduce count, clearance, material thickness or the minimum bridge.
+It derives the plan before any cut tracing; it never retries full slicing with
+trial dimensions. Source, stock, gap, count and rotation edits regenerate it.
+
+Automatic spines union a web-height shoulder rectangle at each contact with the
+continuous cavity-following profile before cutting slots. This avoids thin
+wedges where the profile turns beside a slot and preserves the sloped connector
+between closely spaced layers. The rectangle and slot evaluations are culled
+outside their Z band plus two tracing steps; final outlines are still redistanced
+before kerf. Automatic end shoulders extend by one fitted web; Manual retains
+its original twice-minimum-bridge extension. Remaining thin bridges, detached
+parts, rod collisions or shoulders touching unselected sheets still block export.
+The feature does not generate attachments for omitted end layers.
+
 At each selected sheet the radial wall is measured across nine offsets spanning
 the support thickness, allowance and minimum bridge. A closed centre, missing
 wall, separate pieces, insufficient engagement or crowded centre refuses the
 whole group. The spine follows these cavity measurements, staying constant
-over each complete stock slab and interpolating only across air gaps. End
+over each complete stock slab and interpolating only across air gaps. Manual end
 shoulders extend by twice the minimum bridge. They must not touch unselected
 sheets. Gap checks preserve the webs between vertical slots. A conservative
 angular sector reserves inward staging space for each spine before outward
@@ -784,7 +821,8 @@ cannot allocate an unbounded tracing grid. Radial searches and rod edges use
 0.25 mm sampling.
 
 `SliceSet.verticalSupports` carries separate upright `parts`, contact records
-and issues. Horizontal slice indices, spacers and twist keep their original
+and issues, plus the derived automatic fit (centre, first/last layer, depth and
+engagement ranges, excluded layer numbers and reasons). Horizontal slice indices, spacers and twist keep their original
 meaning. The new parts carry U/V/N frames; Assembly extrudes those same cut
 contours at stock thickness, and Sheet nests them as V1…V12 alongside the
 horizontal layers. They have no horizontal layer number. DXF exports their
@@ -798,6 +836,11 @@ actual graded heights, twist, curved sources, translated centres, explicit
 refusals, rod interference, disabled identity, store actions, save/open, worker
 transport, inspector content, nesting, DXF, manifest and PDF. The browser check
 also reaches the new button, rotates the group and views the spines on a sheet.
+Automatic regressions use a real shelled sphere with natural solid end discs,
+translated/resized sources, dense layers, changed counts/angles, full-slab
+nonintersection, explicit interior refusals and thin-wall failures. They also
+assert unchanged Manual output, persisted fit mode, stale-status hiding and
+worker/export transport of the derived fit.
 
 ### Spacer rings — M4
 

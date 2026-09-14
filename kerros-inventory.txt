@@ -1,8 +1,8 @@
-KERROS INVENTORY  2026-09-14  version 0.35.0
+KERROS INVENTORY  2026-09-14  version 0.36.0
 
 --- source, lines each
-   37922 total
-    2934 src/ui/Inspector.tsx
+   38082 total
+    2950 src/ui/Inspector.tsx
     2285 src/core/store.ts
     1723 src/core/pipeline.ts
     1704 src/core/sdf.ts
@@ -11,7 +11,7 @@ KERROS INVENTORY  2026-09-14  version 0.35.0
     1271 src/core/nest.ts
     1238 src/ui/SliceInspector.tsx
     1221 tools/validate-pipeline.mjs
-    1087 src/core/slice.ts
+    1093 src/core/slice.ts
     1087 src/ui/ProfilePanel.tsx
     1067 src/core/profile2d.ts
      857 src/core/assembly.ts
@@ -21,7 +21,7 @@ KERROS INVENTORY  2026-09-14  version 0.35.0
      736 tools/validate-profile.mjs
      687 tools/validate-slice.mjs
      644 src/ui/SheetView.tsx
-     637 src/core/job.ts
+     638 src/core/job.ts
      527 src/core/window.ts
      507 src/core/project.ts
      489 src/core/rig.ts
@@ -42,6 +42,7 @@ KERROS INVENTORY  2026-09-14  version 0.35.0
      283 src/ui/download.ts
      275 tools/validate-boss.mjs
      255 src/core/font.ts
+     255 src/core/verticalSupports.ts
      251 tools/validate-fixture.mjs
      242 src/ui/useSheets.ts
      239 src/core/layers.ts
@@ -53,8 +54,8 @@ KERROS INVENTORY  2026-09-14  version 0.35.0
      202 src/core/surfaceNets.ts
      199 src/core/boss.ts
      194 src/ui/workerBridge.ts
-     175 src/core/verticalSupports.ts
      173 tools/validate-wall-frame.mjs
+     168 tools/validate-vertical-supports.mjs
      162 src/core/paint.ts
      162 tools/validate-free-plates.mjs
      159 tools/validate-assembly-state.mjs
@@ -67,7 +68,6 @@ KERROS INVENTORY  2026-09-14  version 0.35.0
      131 src/ui/PartInspector.tsx
      122 tools/validate-assembly-preview.mjs
      113 tools/validate-twist.mjs
-     111 tools/validate-vertical-supports.mjs
      108 tools/validate-state.mjs
      107 tools/validate-rib-joints.mjs
      106 tools/validate-rib-angles.mjs
@@ -104,6 +104,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+144f102 Add cross-lapped vertical supports for horizontal stacks
 e8e2624 Keep numeric inspector values compact and editable
 b1b1ffa Clear stale success notices after plate placement actions
 4c4a0e8 Add free 3D plate placement and independent cloning
@@ -143,4 +144,3 @@ f6818bf Remove CLEARANCE_HOLES, a dead duplicate of ROD_CLEARANCE nothing read
 a390be1 The validator count in the handoff was six batches out of date
 83f19e8 Docs and inventory at 0.26.0
 63bedb7 A brush that edits one sheet, onion skin behind it, and a gradient with a middle
-962c262 Docs and inventory at 0.25.0
