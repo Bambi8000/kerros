@@ -78,6 +78,7 @@ import {
 } from './slice.ts';
 import type { GapReport, Slice, SliceSet } from './slice.ts';
 import { buildVerticalSupports } from './verticalSupports.ts';
+import { buildStackSupports } from './supportBranches.ts';
 import { curveHeight, curveSketchError, flattenCurve } from './curves.ts';
 
 /**
@@ -361,7 +362,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
     selFrom: supportFeature?.params.firstLayer ?? 1,
     selTo: Number(supportFeature?.params.lastLayer) || rawSlices.slices.length }), rawSlices.slices);
   const sliced = supportFeature
-    ? buildVerticalSupports(rawSlices, sliceModel(field.sample, bounds, { ...layerOptions, kerf: 0 }), features,
+    ? buildStackSupports(rawSlices, sliceModel(field.sample, bounds, { ...layerOptions, kerf: 0 }), features,
       { ...job, layerIndices: supportLayerIndices }, slice => twistAt(supportTwist, slice.index, supportTwistTable), {
         trace: traceSheet,
         distance: (contours, reach) => {
@@ -369,7 +370,7 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
           return (x, y) => indexedDistance(index, x, y);
         },
         thin: (slice, threshold) => minFeatureGap(slice, threshold).tooThin,
-      }) : rawSlices;
+      }, buildVerticalSupports, groupContours) : rawSlices;
 
   // Window plugs come off the form as it was before any window was taken out of
   // it, on the same layer planes, so a plug and its hole are the same curve

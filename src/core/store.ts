@@ -1354,7 +1354,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
       const id = `f${s.nextFeatureNumber}`;
       return { features: [...s.features, { id, kind: 'verticalSupports', stage: 'RIG' as Stage,
         name: 'Vertical supports', enabled: true,
-        params: { fit: 'auto', count: 3, depth: 12, engagement: 4, clearance: 0.2, angle: 0,
+        params: { fit: 'auto', count: 3, branchCount: 1, depth: 12, engagement: 4, clearance: 0.2, angle: 0,
           px: bounds ? (bounds.min[0] + bounds.max[0]) / 2 : 0,
           py: bounds ? (bounds.min[1] + bounds.max[1]) / 2 : 0,
           firstLayer: 1, lastLayer: 0 } }], nextFeatureNumber: s.nextFeatureNumber + 1,

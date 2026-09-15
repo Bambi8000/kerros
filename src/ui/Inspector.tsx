@@ -2837,6 +2837,10 @@ export function VerticalSupportsInspector({ feature, slices, fresh, mode, error 
         </select></span>
       </label>
       {automatic && <div className="derived">Follows the cavity as the source changes. Fits the centre, layer range, depth and engagement; closed ends remain separate.</div>}
+      {automatic && <>
+        <NumberField label="Supports per branch" value={Number(feature.params.branchCount ?? 1)} min={1} max={6} step={1} onChange={v => setParam(feature.id, 'branchCount', v)} />
+        <div className="derived">Used for every trunk and branch section when the cavity forks. A two-way fork has {3 * Number(feature.params.branchCount ?? 1)} joints in its shared layer. Count below applies to an unbranched cavity. More supports do not establish a load rating or material suitability.</div>
+      </>}
       {[
         ['count', 'Count', '', 1, 12, 1], ['angle', 'Rotation', '°', undefined, undefined, 1],
         ...(!automatic ? [['depth', 'Depth into cavity', 'mm', 1, undefined, 0.5], ['engagement', 'Wall engagement', 'mm', 1, undefined, 0.5],
@@ -2866,6 +2870,15 @@ export function VerticalSupportsInspector({ feature, slices, fresh, mode, error 
             <details><summary>Fitted dimensions</summary><div className="derived">
               Centre {report.fit.centre.map(v => Number(v.toFixed(2))).join(' / ')} mm · Depth {range(report.fit.depth)} mm · Engagement {range(report.fit.engagement)} mm.
             </div></details>
+          </>}
+          {report.parts.length > 0 && report.branches && <>
+            <div className="derived">{report.branches.count} supports per section · {report.branches.sections.length} sections. Branch supports extend down to the shared trunk layer.</div>
+            {report.branches.junctions.map(j => <div className="derived" key={j.layer}>Shared layer {j.layer}: {j.contacts} joints ({j.children.length} branches and the trunk).</div>)}
+            <div className="derived">Insertion order: {report.branches.order.map(id => report.parts.find(p => p.part?.id === id)?.part?.label).join(' → ')}.</div>
+            <details><summary>Branch coverage</summary>
+              {report.branches.sections.map(s => <div className="derived" key={s.id}>{s.label}: layers {s.firstLayer}–{s.lastLayer}.</div>)}
+              {report.branches.excluded.map((e, i) => <div className="derived" key={i}>{e.section}, layer {e.layer}: {e.reason}.</div>)}
+            </details>
           </>}
           {report.issues.map((issue, i) => <div className="derived" key={i}>{issue.severity === 'error' ? 'Resolve before export: ' : ''}{issue.message}</div>)}
           {report.parts.length > 0 && <div className="derived">Space the selected layers at their planned heights, then slide each support outward from the cavity into its matching slots. Fit rods and separately attach end layers afterward. Dry-fit a coupon before cutting the full lamp; glue and final retention need a material test.</div>}

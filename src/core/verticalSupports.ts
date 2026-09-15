@@ -5,6 +5,18 @@ import type { AssemblyKernel, Box2 } from './assembly.ts';
 
 type Distance = (x: number, y: number) => number;
 type Report = NonNullable<SliceSet['verticalSupports']>;
+export interface VerticalSupportOptions {
+  minFeature: number; tolerance: number; layerIndices: number[];
+  /** A branch planner supplies one cavity chain and mandatory shared sheets. */
+  section?: {
+    centre: [number, number]; angles: number[]; requiredLayers: number[];
+    onTravel: (id: string, travel: number) => void;
+    /** Merge all branch notches before tracing a shared horizontal sheet once. */
+    onSheetCuts?: (layer: Slice, cuts: Distance[]) => void;
+    /** Used only by the branch planner; stops before any contour tracing. */
+    measureOnly?: boolean;
+  };
+}
 const RAD = Math.PI / 180;
 const number = (f: Feature, key: string, fallback: number) =>
   typeof f.params[key] === 'number' && Number.isFinite(f.params[key]) ? f.params[key] as number : fallback;
@@ -30,7 +42,7 @@ function contour(points: number[]): Contour {
 /** No feature means exact legacy output, including object identity. */
 export function buildVerticalSupports(
   set: SliceSet, nominal: SliceSet, features: Feature[],
-  options: { minFeature: number; tolerance: number; layerIndices: number[] },
+  options: VerticalSupportOptions,
   turnAt: (slice: Slice) => number, kernel: AssemblyKernel,
 ): SliceSet {
   const enabled = features.filter(f => f.enabled && f.kind === 'verticalSupports');
@@ -53,6 +65,11 @@ export function buildVerticalSupports(
   const bridge = Math.max(options.minFeature, set.kerf * 2, 0.5);
   if (count < 1 || count > 12 || (!automatic && (depth < bridge * 2 || engagement < bridge * 2)) || clearance < 0 || clearance > t / 2)
     return fail(automatic ? 'Use 1–12 supports and clearance between 0 and half the sheet thickness.' : `Use 1–12 supports, depth and engagement at least ${(bridge * 2).toFixed(2)} mm, and clearance between 0 and half the sheet thickness.`);
+  const angles = options.section?.angles ?? Array.from({ length: count }, (_, i) => number(feature, 'angle', 0) + i * 360 / count);
+  if (angles.length !== count || angles.some(a => !Number.isFinite(a))) return fail('Support angles do not match the requested count.');
+  const sector = options.section && count > 1
+    ? Math.min(...angles.flatMap((a, i) => angles.slice(i + 1).map(b => Math.abs(Math.sin((a - b) * RAD / 2)))))
+    : count > 1 ? Math.sin(Math.PI / count) : 1;
   if (layers.length < 2) return fail('Vertical supports need at least two nonempty layers in the selected range.');
   const separate = layers.filter(s => s.contours.filter(c => !c.isHole).length !== 1);
   if (!automatic && separate.length)
@@ -68,7 +85,9 @@ export function buildVerticalSupports(
     const holes = slice.contours.filter(c => c.isHole).map(hole => kernel.distance([hole], 12));
     return { slice, distance, holes, local: (x: number, y: number): [number, number] => [x * c + y * s, -x * s + y * c] };
   });
-  if (automatic) {
+  if (automatic && options.section) {
+    [cx, cy] = options.section.centre;
+  } else if (automatic) {
     const cavities = full.flatMap(input => input.slice.contours.filter(c => c.isHole).map(hole => ({ input, hole })));
     cavities.sort((a, b) => Math.abs(b.hole.area) - Math.abs(a.hole.area));
     if (!cavities.length) return fail('Automatic fit found no cavity enclosed by the sliced contours. Add a Shell, thicken an open wall or increase slicing resolution.');
@@ -82,7 +101,7 @@ export function buildVerticalSupports(
     const input = full.find(row => row.slice.index === layer.index)!;
     if (layer.contours.filter(c => !c.isHole).length !== 1) return 'the layer has separate pieces';
     if (!input.holes.some(hole => hole(...input.local(cx, cy)) < -bridge)) return 'the centre is closed or outside its cavity';
-    const angle = (number(feature, 'angle', 0) + ordinal * 360 / count) * RAD, c = Math.cos(angle), s = Math.sin(angle);
+    const angle = angles[ordinal] * RAD, c = Math.cos(angle), s = Math.sin(angle);
     const worldDistance = (u: number, v: number) => input.distance(...input.local(cx + c * u - s * v, cy + s * u + c * v));
     const b = boxOf(layer.contours);
     const limit = Math.max(...[b.minX, b.maxX].flatMap(x => [b.minY, b.maxY].map(y => Math.hypot(x, y)))) + Math.hypot(cx, cy) + 5;
@@ -131,7 +150,7 @@ export function buildVerticalSupports(
         const wall = row.walls[ordinal];
         return typeof wall === 'string' ? 0 : wall.innerMax + row.dimensions[ordinal].engagement - wall.innerMin;
       })) + clearance + step;
-      const minimumBack = (t / 2 + bridge) / (count > 1 ? Math.sin(Math.PI / count) : 1) + travel + step;
+      const minimumBack = (t / 2 + bridge) / sector + travel + step;
       for (const row of candidates) {
         const wall = row.walls[ordinal], dimensions = row.dimensions[ordinal];
         if (typeof wall === 'string') continue;
@@ -139,7 +158,12 @@ export function buildVerticalSupports(
         if (dimensions.depth < 2 * web) row.reason ||= 'the cavity is too narrow for insertion at this support count';
       }
     }
-    const first = candidates.findIndex(row => !row.reason), last = candidates.findLastIndex(row => !row.reason);
+    const first = candidates.findIndex(row => !row.reason);
+    let last = candidates.findLastIndex(row => !row.reason);
+    if (options.section?.measureOnly && first >= 0) {
+      const interrupted = candidates.findIndex((row, i) => i > first && !!row.reason);
+      if (interrupted >= 0) last = interrupted - 1;
+    }
     if (first < 0 || first === last) {
       const reason = candidates.find(row => row.reason && row.walls.every(wall => typeof wall !== 'string'))?.reason
         ?? candidates.find(row => row.reason)?.reason ?? 'the cavity is too short';
@@ -148,6 +172,10 @@ export function buildVerticalSupports(
     const chosen = candidates.slice(first, last + 1);
     const interrupted = chosen.find(row => row.reason);
     if (interrupted) return fail(`Automatic fit cannot span layer ${interrupted.layer.index}: ${interrupted.reason}. Adjust the source or use a Manual layer range; interior layers are never skipped.`);
+    for (const layer of options.section?.requiredLayers ?? []) {
+      const required = chosen.find(row => row.layer.index === layer);
+      if (!required) return fail(`Shared layer ${layer} cannot hold this branch joint: ${candidates.find(row => row.layer.index === layer)?.reason ?? 'the layer is missing'}. Change the source, rotation or support count.`);
+    }
     for (const row of chosen) row.dimensions.forEach((dimensions, ordinal) => fitted.set(`${ordinal}:${row.layer.index}`, dimensions));
     layers = chosen.map(row => row.layer);
     const dimensions = chosen.flatMap(row => row.dimensions);
@@ -156,10 +184,11 @@ export function buildVerticalSupports(
       engagement: [Math.min(...dimensions.map(d => d.engagement)), Math.max(...dimensions.map(d => d.engagement))],
       excluded: candidates.filter(row => row.reason).map(row => ({ layer: row.layer.index, reason: row.reason })) };
   }
+  if (options.section?.measureOnly) return { ...set, verticalSupports: report };
   const slots = new Map<number, Distance[]>();
   const tolerance = Math.min(options.tolerance, 0.02);
   for (let ordinal = 0; ordinal < count; ordinal++) {
-    const angle = number(feature, 'angle', 0) + ordinal * 360 / count;
+    const angle = angles[ordinal];
     const c = Math.cos(angle * RAD), s = Math.sin(angle * RAD);
     const id = `${feature.id}-support-${ordinal + 1}`;
     const stations: { layer: number; bottom: number; top: number; back: number; outer: number; split: number; entry: number }[] = [];
@@ -170,7 +199,7 @@ export function buildVerticalSupports(
       const dimensions = fitted.get(`${ordinal}:${layer.index}`) ?? { depth, engagement };
       const back = innerMin - dimensions.depth, outer = innerMax + dimensions.engagement, split = innerMax + dimensions.engagement / 2;
       if (outer > outerMin - bridge) return fail(`Support ${ordinal + 1}, layer ${layer.index}: the wall is too narrow for ${engagement.toFixed(2)} mm engagement and a ${bridge.toFixed(2)} mm outer bridge. Reduce engagement or thicken the wall.`);
-      const separation = count > 1 ? back * Math.sin(Math.PI / count) : back;
+      const separation = back * sector;
       if (back < bridge || separation < t / 2 + bridge)
         return fail(`Support ${ordinal + 1}, layer ${layer.index}: supports crowd the centre. Reduce depth or count, or enlarge the cavity.`);
       stations.push({ layer: layer.index, bottom: layer.zBottom - clearance / 2, top: layer.zBottom + t + clearance / 2, back, outer, split, entry: innerMin });
@@ -188,7 +217,7 @@ export function buildVerticalSupports(
     // sector. This conservative corridor also keeps it clear of the other spines.
     const travel = Math.max(...stations.map(row => row.outer - row.entry)) + clearance + step;
     const startBack = Math.min(...stations.map(row => row.back)) - travel;
-    if (startBack * (count > 1 ? Math.sin(Math.PI / count) : 1) < t / 2 + bridge)
+    if (startBack * sector < t / 2 + bridge)
       return fail(`Support ${ordinal + 1}: insufficient room in the cavity for outward insertion. Reduce depth, count or engagement, or enlarge the cavity.`);
     for (let i = 1; i < stations.length; i++) {
       if (stations[i].bottom - stations[i - 1].top < bridge)
@@ -232,11 +261,16 @@ export function buildVerticalSupports(
       part: { id, label: `V${ordinal + 1}`, kind: 'support', origin: [cx, cy, 0], u: [c, s, 0], v: [0, 0, 1], n: [s, -c, 0], thickness: t, kerf: set.kerf, material: 'stock' } };
     if (kernel.thin(plate, bridge)) return fail(`Support ${ordinal + 1}: the finished plate has a narrow bridge. ${automatic ? 'Increase layer spacing or shell thickness, or use Manual to adjust dimensions.' : 'Increase depth, engagement or layer spacing.'}`);
     report.parts.push(plate);
+    options.section?.onTravel(id, travel);
   }
   const slices = set.slices.map(slice => {
     const cuts = slots.get(slice.index);
     if (!cuts) return slice;
     const input = full.find(row => row.slice.index === slice.index)!;
+    if (options.section?.onSheetCuts) {
+      options.section.onSheetCuts(input.slice, cuts);
+      return slice;
+    }
     const box = boxOf(input.slice.contours);
     const raw = (x: number, y: number) => Math.max(input.distance(x, y), -Math.min(...cuts.map(cut => cut(x, y))));
     const nominalContours = kernel.trace(raw, box, step, 0, tolerance);

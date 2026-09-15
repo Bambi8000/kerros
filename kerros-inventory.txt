@@ -1,17 +1,17 @@
-KERROS INVENTORY  2026-09-14  version 0.37.0
+KERROS INVENTORY  2026-09-15  version 0.38.0
 
 --- source, lines each
-   38943 total
-    2959 src/ui/Inspector.tsx
+   39373 total
+    2972 src/ui/Inspector.tsx
     2325 src/core/store.ts
-    1750 src/core/pipeline.ts
+    1751 src/core/pipeline.ts
     1704 src/core/sdf.ts
     1484 tools/validate-nest.mjs
     1470 src/ui/Viewport.tsx
     1271 src/core/nest.ts
     1241 src/ui/SliceInspector.tsx
     1221 tools/validate-pipeline.mjs
-    1093 src/core/slice.ts
+    1101 src/core/slice.ts
     1087 src/ui/ProfilePanel.tsx
     1067 src/core/profile2d.ts
      857 src/core/assembly.ts
@@ -20,8 +20,8 @@ KERROS INVENTORY  2026-09-14  version 0.37.0
      772 tools/validate-window.mjs
      736 tools/validate-profile.mjs
      687 tools/validate-slice.mjs
+     646 src/core/job.ts
      644 src/ui/SheetView.tsx
-     638 src/core/job.ts
      557 src/core/project.ts
      527 src/core/window.ts
      489 src/core/rig.ts
@@ -34,15 +34,16 @@ KERROS INVENTORY  2026-09-14  version 0.37.0
      383 tools/validate-sculpt.mjs
      379 tools/validate-legs.mjs
      346 src/ui/Layout.tsx
-     336 src/ui/FeatureTree.tsx
+     338 src/ui/FeatureTree.tsx
      334 src/core/fixture.ts
      330 src/core/legs.ts
      316 src/ui/AssemblyViewport.tsx
+     290 src/core/verticalSupports.ts
      283 src/core/meshImport.ts
      283 src/ui/download.ts
      275 tools/validate-boss.mjs
-     256 src/core/verticalSupports.ts
      255 src/core/font.ts
+     252 src/core/supportBranches.ts
      251 tools/validate-fixture.mjs
      242 src/ui/useSheets.ts
      239 src/core/layers.ts
@@ -71,6 +72,7 @@ KERROS INVENTORY  2026-09-14  version 0.37.0
      131 src/ui/PartInspector.tsx
      129 tools/validate-curves.mjs
      113 tools/validate-twist.mjs
+     112 tools/validate-support-branches.mjs
      108 tools/validate-state.mjs
      107 tools/validate-rib-joints.mjs
      106 tools/validate-rib-angles.mjs
@@ -105,11 +107,12 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs && node tools/validate-free-plates.mjs && node tools/validate-vertical-supports.mjs && node tools/validate-curves.mjs
+check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs && node tools/validate-free-plates.mjs && node tools/validate-vertical-supports.mjs && node tools/validate-curves.mjs && node tools/validate-support-branches.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+f25a8a1 Add native Bezier profiles and layer-key morph drawing
 d69b839 Show current slice calculation status and recover failed requests
 77bc47e Auto-fit vertical supports to hollow horizontal stacks
 144f102 Add cross-lapped vertical supports for horizontal stacks
@@ -149,4 +152,3 @@ e325f7e Panel resolves ring thickness through ringThickness(), the same function
 2c5c920 Remove labelWidthOf, unused since findLabelSpot grew its own width
 f6818bf Remove CLEARANCE_HOLES, a dead duplicate of ROD_CLEARANCE nothing read
 9089d48 Audit at 0.26.0: five findings, none geometric, layer 3 checklist recorded
-a390be1 The validator count in the handoff was six batches out of date

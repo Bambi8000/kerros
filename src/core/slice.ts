@@ -90,6 +90,14 @@ export interface SliceSet {
   slices: Slice[];
   /** Separate upright cut parts; never change horizontal layer numbering. */
   verticalSupports?: {
+    /** Cavity sections joined through shared sheets; derived from current cuts. */
+    branches?: {
+      count: number;
+      sections: { id: string; label: string; parent?: string; centre: [number, number]; firstLayer: number; lastLayer: number }[];
+      junctions: { layer: number; parent: string; children: string[]; contacts: number }[];
+      order: string[];
+      excluded: { section: string; layer: number; reason: string }[];
+    };
     /** Derived automatic fit, never written over the saved manual settings. */
     fit?: {
       centre: [number, number]; firstLayer: number; lastLayer: number;

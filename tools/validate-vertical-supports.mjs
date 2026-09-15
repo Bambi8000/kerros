@@ -133,7 +133,7 @@ const blendedSphere={...sphere,params:{...sphere.params,r:40,px:0,py:0}};
 const blendedCapsule={id:'f4',kind:'capsule',stage:'SHAPE',name:'Capsule',enabled:true,params:defaultParams(findModule('capsule'))};
 const finalShell={...shell,id:'f5'};
 const doubleShell=run([blendedSphere,shell,blendedCapsule,finalShell,autoSupport],{minFeature:1});
-assert.ok(errors(doubleShell).some(i=>i.message.includes('separate pieces')));
+assert.ok(errors(doubleShell).some(i=>i.message.includes('cavities merge')),'the branch graph identifies the repeated-shell merge instead of treating it as a simple upward fork');
 const sharedCavity=run([blendedSphere,{...shell,enabled:false},blendedCapsule,finalShell,autoSupport],{minFeature:1});
 assert.deepEqual(errors(sharedCavity),[]);
 assert.equal(sharedCavity.set.verticalSupports.parts.length,autoSupport.params.count);

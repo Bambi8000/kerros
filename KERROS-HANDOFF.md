@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.37.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.38.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -23,11 +23,22 @@ recalculate geometry. This uses the existing distance-field morph and retains
 its measured gradient/kerf limitations; physical cuts remain untested. See
 FEATURES and `tools/validate-curves.mjs`.
 
-The reported two-branch lamp remains outside the one-centre vertical support
-fitter. Its disconnected interior layer is a geometric refusal, not a stalled
-calculation. Branch-specific supports and their attachment to the shared lower
-stack still need a separate design and implementation; this release does not
-silently skip those pieces or claim to support them.
+**Branched vertical supports** now join one continuous lower cavity to upward
+branches through a shared horizontal sheet. `Fit: Automatic` exposes `Supports
+per branch` (1–6): one gives three joints at a two-way fork, three gives nine.
+`Count` still controls an unbranched cavity. The trunk reaches the shared sheet
+and every child extends down to it; no interior sheet is skipped. The inspector,
+manifest and PDF name shared layers, joint counts, section coverage, omitted
+pieces and a sampled straight insertion order. More supports are a geometry
+choice, not a load rating or approval for glass or other brittle stock.
+
+This handles splits, not cavity merges. The earlier Sphere → Shell → Capsule →
+Shell example also contains a merge and still gets an explicit refusal; removing
+that intermediate Shell is a user design change, never an automatic correction.
+Disconnected cavity starts and ambiguous paths also refuse the group. Closed
+end pieces still require separate attachment. See FEATURES and
+`tools/validate-support-branches.mjs`; the three- and nine-joint shared sheet
+coupons remain physically untested.
 
 Numeric inspector fields now display at most two decimal places without
 rounding the model. In-progress edits remain editable until blur; external
@@ -38,7 +49,7 @@ Cut views now show a shared calculation status, completion time and an explicit
 continues to defer cuts until entering a cut view. The support inspector no
 longer offers navigation to Assembly while already there. A completed geometric
 refusal is labelled as such and Manual split-layer refusals name every affected
-layer. These changes do not add support for branched/disconnected layer pieces.
+layer. These status changes are separate from the branch fitter described above.
 Worker calculation failures now reach the UI instead of becoming successful
 empty results. `Retry calculation` submits current inputs; retry freshness,
 project/import ownership and cancellation guards keep old cuts out of export.
@@ -399,6 +410,8 @@ src/core/
   fixture.ts      E27 mount, cable channel, Wago chamber, frames   [no imports]
   pattern.ts      perforation generators, EdgeIndex                [no imports]
   rig.ts          rod clearances, spans, spacer ring planning      [no imports]
+  verticalSupports.ts  cavity-following stack spines and slots    [type imports]
+  supportBranches.ts   cavity forks, shared sheets, insertion     [type imports]
   layers.ts       which layers a per-slice feature applies to     [no imports]
   legs.ts         splayed leg holes: the swept ellipse hull        [no imports]
   profile2d.ts    2D outlines from SVG, indexed, as a field         [no imports]
@@ -607,7 +620,10 @@ about to happen when this handoff was written; ask before assuming.
   check the layer-height shoulders, slot clearance, inward staging room and
   outward insertion, including the automatically fitted curved shoulders and
   their locally varying engagement. Test retention and adhesive. Unselected end layers need
-  separate attachment; support plates do not establish a load rating.
+  separate attachment; support plates do not establish a load rating. Also cut
+  a shared-sheet fork with three joints and with nine joints, checking distinct
+  shoulders, remaining sheet webs and the recorded insertion order. Brittle
+  materials are not approved by increasing the support count.
 
 - **Upright assemblies.** Cut a two-rib/two-ring coupon and a two-rib wall
   coupon using the actual LED tube or profile. Measure kerf, slot and tab fit,

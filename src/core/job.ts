@@ -542,6 +542,14 @@ function verticalSupportManifest(set: SliceSet): string[] {
     'Fit rods and separately attach unselected end layers afterward.',
     'Dry-fit a cross-lap coupon in the actual stock. Glue and retention require a material test.'];
   if (report.fit) lines.push(`Automatic fit: layers ${report.fit.firstLayer}-${report.fit.lastLayer}; depth ${report.fit.depth.map(v => v.toFixed(2)).join('-')} mm; engagement ${report.fit.engagement.map(v => v.toFixed(2)).join('-')} mm.`);
+  if (report.branches) {
+    lines.push(`Branched fit: ${report.branches.count} supports per section. Shared sheets connect the trunk to its branches.`);
+    for (const junction of report.branches.junctions) lines.push(`Shared layer ${junction.layer}: ${junction.contacts} joints; ${junction.children.length} branches and the trunk.`);
+    for (const section of report.branches.sections) lines.push(`${section.label}: layers ${section.firstLayer}-${section.lastLayer}; centre ${section.centre.map(v => v.toFixed(2)).join(' / ')} mm.`);
+    lines.push(`Insertion order: ${report.branches.order.map(id => report.parts.find(p => p.part?.id === id)?.part?.label).join(', ')}.`);
+    for (const excluded of report.branches.excluded) lines.push(`${excluded.section}, layer ${excluded.layer}: ${excluded.reason}.`);
+    lines.push('Support count is a geometry setting, not a load rating or approval for brittle stock.');
+  }
   for (const slice of report.parts) {
     const part = slice.part!, contacts = report.contacts.filter(c => c.id === part.id);
     lines.push(`${part.label} ID ${part.id}: ${part.thickness} mm stock; angle ${contacts[0]?.angle.toFixed(2)} deg; centre ${part.origin.slice(0, 2).map(v => v.toFixed(2)).join(' / ')} mm.`,

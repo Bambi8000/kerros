@@ -763,13 +763,13 @@ action. Support counts and successful fits remain hidden while stale. A complete
 zero-support result explicitly says it was calculated and rejected, with the
 geometry issues below. Manual refusals name all disconnected layer numbers and
 suggest a narrower range or Automatic's search for a usable continuous range;
-branches still need separate attachment. The Sphere → Shell → Capsule → Shell
+branch fitting was added separately in 0.38.0, below. The Sphere → Shell → Capsule → Shell
 regression demonstrates how shelling already-hollow material can create separate
 pieces; combining the shapes before one final Shell restores a shared cavity in
 that fixture. No Shell operations are silently removed. A calculation error shows recovery
 instructions instead of an endless "Calculating" message.
 
-Automatic fits the centre to the bounding-box centre of the largest sliced
+For an unbranched cavity, Automatic fits the centre to the bounding-box centre of the largest sliced
 cavity, transformed by that layer's actual twist. It follows translated sources;
 it is not an interior-point optimiser for arbitrary concave or multiple cavities.
 All layer/support wall measurements are cached once. A usable band must have at
@@ -854,6 +854,73 @@ translated/resized sources, dense layers, changed counts/angles, full-slab
 nonintersection, explicit interior refusals and thin-wall failures. They also
 assert unchanged Manual output, persisted fit mode, stale-status hiding and
 worker/export transport of the derived fit.
+
+#### Shared-layer branch supports — 0.38.0
+
+`src/core/supportBranches.ts` plans upward forks before calling the same real
+spine-and-slot builder. Automatic detects multiple cavities, follows their
+projected interiors between adjacent physical layers and builds a single-root
+tree of cavity sections. Holes can fork before the outer sheet separates, so
+matching only disconnected outer contours would put the joint too high. Each
+section uses the centre of its largest cavity in world coordinates. This is a
+bounded sampled correspondence, not a general medial-axis or topology solver.
+
+`Supports per branch` persists `branchCount` (1–6, default/fallback 1). It applies
+to the trunk and each branch section; a two-way fork therefore has three joints
+at 1, six at 2, and nine at 3. The existing Count remains the setting for a
+single unbranched cavity and Manual retains its original contract. Rotation and
+clearance remain editable. Root spines are distributed around the trunk; child
+spines fan outward away from the parent centre. The narrowest angular separation
+sets each section's conservative inward staging corridor. Count is never reduced
+to make a fit pass, and more supports do not establish a load rating or suitability
+for glass or other brittle stock.
+
+The trunk reaches a shared horizontal sheet and the children extend down to that
+same sheet, giving exactly one common layer between adjacent sections. A trunk
+can become too narrow before the cavity actually splits. A measurement-only
+pass finds its last usable sheet and assigns all subsequent rows to the child
+sections. Mandatory shared sheets cannot be trimmed, and no interior row is
+skipped. Every section needs at least two usable layers. All slots belonging to
+one horizontal piece are combined before nominal tracing, redistancing and one
+kerf compensation. The original builder supplies the shoulder geometry and
+wall measurements; the planner does not reproduce its joint algorithm.
+
+Final checks cover the requested joint count at every fork, connected outlines,
+minimum bridges, each complete horizontal stock slab, support-to-support
+intersections and finite straight outward insertion from inside the cavity.
+Dependencies between support insertion paths produce a part order; a cycle is
+refused. These are sampled checks, not a proof of accessibility for tools or
+hands. Any failed branch refuses the entire group and leaves source cuts intact.
+Rods pass through the existing interference guard after these parts are built.
+
+One trunk splitting upward is supported. Merges, ambiguous projected paths,
+multiple disconnected cavity starts, more than eight cavities on a layer or
+more than 48 support plates produce explicit refusals. In particular, the older
+Sphere → Shell → Capsule → Shell fixture contains a cavity merge and still
+cannot use this fitter. It is not silently repaired by removing a Shell.
+Closed end pieces and other pieces without a joint are listed by layer and piece;
+they require separate attachment. Coverage is never inferred from an outline
+that merely looks continuous in Assembly.
+
+The derived `branches` report stores section centres/ranges, shared-layer joint
+counts, insertion order and excluded pieces. Inspector, manifest and PDF expose
+these; stale results hide successful coverage. The feature tree describes both
+requested counts instead of presenting the unbranched Count as a computed total.
+Every support has a unique cut-part ID and V label and follows the existing
+Assembly, Sheet, nesting and DXF route. Horizontal layer numbering is unchanged.
+
+`tools/validate-support-branches.mjs` exercises the real pipeline on a trunk with
+two shelled lobes. It checks three and nine distinct shared-sheet joints,
+full-stock opposing shoulders, continuous coverage, explicit closed ends,
+collision detection, thin-wall/count refusals, translated and twisted geometry,
+changed stock, one kerf offset, project persistence, current/stale inspector
+messages, worker parity and all manufacturing exports. The gap is chosen so the
+source itself has no thin bridge at the fork; a source-only check established
+that the earlier smaller-gap fixture did. On this machine, the 14-layer fixture
+at 140 samples took about 8.9 s with one support per section and 10.1 s with
+three. Combining shared-sheet cuts removed redundant tracing (previously about
+20–22 s). Physical three- and nine-joint coupons, glue, retention and insertion
+still need testing in the intended stock.
 
 ### Spacer rings — M4
 
