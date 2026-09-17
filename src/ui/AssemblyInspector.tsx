@@ -161,7 +161,14 @@ export function AssemblyInspector({ feature, set, pending, sourceFeatures }: { f
     </div>}
     {kind === 'support' && <div className="group"><div className="group-head">Horizontal support</div>
       {number('outerDiameter', 'Outer diameter')}{number('innerDiameter', 'Inner diameter')}{number('pz', 'Height from centre')}{number('px', 'Centre X')}{number('py', 'Centre Y')}
-      <p className="hint">Inner diameter 0 makes a disc. Complementary slots open along each rib’s insertion direction.</p>
+      {choose('jointStyle', 'Joint type', [['slots', 'Cross slots'], ['sockets', 'Closed sockets']], 'slots')}
+      {p.jointStyle === 'sockets' ? <>
+        {choose('socketSide', 'Install from', [['top', 'Above'], ['bottom', 'Below']], 'top')}
+        {number('socketWidth', 'Tab width', 8)}{number('socketRelief', 'Socket corner relief', 0.5, 'mm', 0.1)}
+        <p className="hint">{p.socketSide === 'bottom' ? 'Bottom end plate: trims ribs below its upper face.' : 'Top end plate: trims ribs above its lower face.'} Flush tabs enter enclosed through-holes; the outer rim stays intact. Install this plate after the ribs, then glue. These are through-cuts, not blind pockets.</p>
+        <p className="hint">Use at most one end plate from each side. Intermediate supports keep Cross slots. Move the end plate into enough rib material for the tab shoulders. Clearance comes from Assembly settings; kerf follows the stock.</p>
+      </> : <p className="hint">Complementary slots open along each rib’s insertion direction. Hold open-slot supports in place before fitting the ribs. Closed-socket end plates go on afterwards.</p>}
+      <p className="hint">Inner diameter 0 makes a disc. Joint type affects only this support; switching back restores its previous geometry.</p>
     </div>}
     {kind === 'backplate' && <>
       <div className="group"><div className="group-head">Backplate</div>

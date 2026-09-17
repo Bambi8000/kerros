@@ -7,9 +7,21 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.40.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.41.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+**Closed support sockets** are selected per horizontal support under `Joint type`.
+`Cross slots` remains the default. `Closed sockets` makes a top or bottom end
+plate: its rim stays intact, ribs are trimmed at its near face and fitted tabs
+finish flush with its outer face. Choose `Install from`, `Tab width` and optional
+`Socket corner relief`. Every enabled linked rib must fit; partial caps refuse
+without applying their joints. Keep intermediate rings open-slotted, assemble
+the ribs, then fit and glue the end plates. One cap from each side is supported;
+final collisions, protected joints and sampled insertion paths (including free
+plates) still block export. Switching back restores the source-derived geometry.
+See FEATURES and `validate-support-sockets.mjs`; cap fit, adhesive and insertion
+remain physically untested.
 
 **Radial side profiles** let a native Curve profile define the lamp's vertical
 outline. Choose `Use drawing as: Radial side profile`, edit in Slice, then
@@ -686,6 +698,9 @@ about to happen when this handoff was written; ask before assuming.
   insertion sequence, remaining bridges and wall clearance. Glued oblique
   shoulders meet at an edge rather than a laser-cut bevel. No load rating or
   LED retention follows from the geometric checks.
+  Also cut an end-plate coupon with enclosed sockets: check corner relief,
+  flush tab ends, remaining rim material, cap-last insertion from above/below
+  and adhesive retention, including the intended mixed stock thicknesses.
 - **Rib intersections.** Test complementary slots at the intended angle in
   both stock thicknesses, including relief radius, split, remaining bridges
   and wall-last insertion. Clearance cuts need the same fit test and do not

@@ -367,10 +367,85 @@ export function buildAssembly(
   const supports = parts.filter((p) => p.meta.kind === 'support');
   const backs = parts.filter((p) => p.meta.kind === 'backplate');
   const fit = Math.max(0, num(layout, 'jointClearance', 0.1));
+  const socketSupports = supports.filter(p => children.find(f => f.id === p.meta.id)?.params.jointStyle === 'sockets');
+  const openSupports = supports.filter(p => !socketSupports.includes(p));
+  const socketSign = (part: WorkPart) => children.find(f => f.id === part.meta.id)?.params.socketSide === 'bottom' ? -1 : 1;
+  const expectedRibs = children.filter(f => f.enabled && f.kind === 'assembly:rib' && !isFreePlate(f));
+  // Socket supports are end caps. Leave them off while assembling the ribs,
+  // then slide each cap onto flush-ended tabs along Z. Trim before cross slots
+  // so a later ring cannot claim contact with material the cap removed.
+  const repeatedCaps = [1, -1].flatMap(sign => {
+    const caps = socketSupports.filter(p => socketSign(p) === sign);
+    return caps.length > 1 ? caps : [];
+  });
+  if (repeatedCaps.length) say('error', repeatedCaps.map(p => p.meta.id), 'Use at most one closed-socket end plate from above and one from below. Use Cross slots for intermediate supports.');
+  for (const support of socketSupports) {
+    if (repeatedCaps.includes(support)) continue;
+    const f = children.find(f => f.id === support.meta.id)!, sign = socketSign(support);
+    const width = num(f, 'socketWidth', 8), relief = num(f, 'socketRelief', 0.5);
+    if (!(width >= minBridge && relief >= 0 && relief <= Math.min(width, ...ribs.map(r => r.meta.thickness)) / 2)) {
+      say('error', [f.id], 'Tab width must be at least the minimum bridge. Socket corner relief must be nonnegative and no larger than half the tab width or rib thickness.'); continue;
+    }
+    const trial = { ...support };
+    const plans: { rib: WorkPart; shoulder: number; end: number; tab: Distance; tabBox: Box2; cut: Distance; cutBox: Box2 }[] = [];
+    for (const rib of ribs) {
+      const shoulder = support.meta.origin[2] - sign * support.meta.thickness / 2 - rib.meta.origin[2];
+      const end = shoulder + sign * support.meta.thickness;
+      const seat = shoulder - sign * minBridge;
+      const opening = (x: number, along: number, across: number) => sheetLocal(support.meta, sheetWorld(rib.meta, x + along, shoulder, across)).slice(0, 2);
+      const half = width / 2 + fit, normal = rib.meta.thickness / 2 + fit;
+      const candidate = (x: number) => {
+        const body = { minX: x - width / 2 - minBridge, maxX: x + width / 2 + minBridge,
+          minY: Math.min(seat, seat - sign * minBridge), maxY: Math.max(seat, seat - sign * minBridge) };
+        if (samples(body, Math.max(rib.step, 0.35), (u, v) => rib.field(u, v) > -minBridge / 2)) return false;
+        // A circumscribing rectangle also protects the optional round corner relief.
+        const guard = [[-1, -1], [1, -1], [1, 1], [-1, 1]].flatMap(([a, b]) => opening(x, a * (half + relief), b * (normal + relief)));
+        return boundaryFits(guard, trial, minBridge);
+      };
+      let start: number | undefined, best: [number, number] | undefined;
+      const count = Math.max(1, Math.ceil((rib.box.maxX - rib.box.minX) / (rib.step / 2)));
+      const step = (rib.box.maxX - rib.box.minX) / count;
+      for (let i = 0; i <= count + 1; i++) {
+        const x = rib.box.minX + i * step;
+        if (i <= count && candidate(x)) start ??= x;
+        else if (start !== undefined) {
+          const finish = x - step;
+          if (!best || finish - start > best[1] - best[0]) best = [start, finish];
+          start = undefined;
+        }
+      }
+      if (!best) { say('error', [rib.meta.id, f.id], `No ${width} mm tab fits with a full shoulder and an enclosed socket. Move this end plate into the rib, enlarge the plate, reduce its inner diameter or reduce Tab width.`); continue; }
+      const mid = (best[0] + best[1]) / 2;
+      const tabBox = { minX: mid - width / 2, maxX: mid + width / 2, minY: Math.min(seat, end), maxY: Math.max(seat, end) };
+      const tab = rect(tabBox.minX, tabBox.minY, tabBox.maxX, tabBox.maxY);
+      const cut: Distance = (x, y) => {
+        const p = sheetLocal(rib.meta, sheetWorld(support.meta, x, y));
+        let d = rectDistance(p[0], p[2], mid, 0, half * 2, normal * 2);
+        if (relief > 0) for (const a of [-1, 1]) for (const b of [-1, 1]) d = Math.min(d, Math.hypot(p[0] - mid - a * half, p[2] - b * normal) - relief);
+        return d;
+      };
+      const cutBox = polyBox([[-1, -1], [1, -1], [1, 1], [-1, 1]].flatMap(([a, b]) => opening(mid, a * (half + relief), b * (normal + relief))));
+      plans.push({ rib, shoulder, end, tab, tabBox, cut, cutBox }); subtract(trial, cut);
+    }
+    // Do not make a plausible cap with one or more unattached ribs.
+    if (!expectedRibs.length || plans.length !== expectedRibs.length) {
+      say('error', [f.id, ...expectedRibs.filter(r => !plans.some(p => p.rib.meta.id === r.id)).map(r => r.id)], `Closed sockets: ${plans.length} of ${expectedRibs.length} enabled ribs could be fitted. No joints from this end plate were applied; resolve the named contacts.`); continue;
+    }
+    support.field = trial.field;
+    for (const { rib, shoulder, end, tab, tabBox, cut, cutBox } of plans) {
+      const before = rib.field;
+      rib.field = (x, y) => Math.max(before(x, y), sign * (y - shoulder)); unite(rib, tab);
+      if (sign > 0) rib.box.maxY = end; else rib.box.minY = end;
+      rib.zones.push({ field: tab, box: tabBox }); support.zones.push({ field: cut, box: cutBox });
+      joints.push({ id: `${rib.meta.id}:${support.meta.id}`, parts: [rib.meta.id, support.meta.id], instruction: `After fitting the ribs into any open-slot supports, fit ${support.meta.label} from ${sign > 0 ? 'above along -Z' : 'below along +Z'} onto the ${width} mm tab of ${rib.meta.label}. The tab finishes flush with the outer face. Dry-fit, then glue with an adhesive suitable for the stock.` });
+    }
+    say('info', [f.id], `Closed sockets: all ${plans.length} enabled ribs have flush tab joints. Ribs are trimmed ${sign > 0 ? 'above the lower' : 'below the upper'} face of ${support.meta.label}. Keep this end plate off until the ribs are assembled.`);
+  }
+  if (socketSupports.length) for (const rib of ribs) rib.source = rib.field;
   // A rib enters every ring along -U. The rib's notch opens toward -U;
   // the ring's complementary notch opens toward +U. All rings stay fixed.
   for (const rib of ribs) {
-    for (const support of supports) {
+    for (const support of openSupports) {
       const z = support.meta.origin[2] - rib.meta.origin[2];
       const along = (u: number) => sheetLocal(support.meta, sheetWorld(rib.meta, u, z));
       const x0 = rib.box.minX, x1 = rib.box.maxX;
@@ -388,6 +463,9 @@ export function buildAssembly(
       }
       const slotH = support.meta.thickness + fit * 2;
       const ribCut = rect(rib.box.minX - reach, z - slotH / 2, mid + fit, z + slotH / 2);
+      if (socketSupports.length && rib.zones.some(zone => samples(zone.box, Math.max(rib.step, 0.35), (x, y) => zone.field(x, y) < minBridge && ribCut(x, y) < minBridge))) {
+        say('error', [rib.meta.id, support.meta.id], 'This cross slot would damage an existing tab or support joint. Separate the supports or move the end plate.'); continue;
+      }
       subtract(rib, ribCut);
       const ringCut: Distance = (x, y) => {
         const p = sheetLocal(rib.meta, sheetWorld(support.meta, x, y));
@@ -396,7 +474,7 @@ export function buildAssembly(
       subtract(support, ringCut);
       rib.zones.push({ field: rect(lo, z - slotH, hi, z + slotH), box: { minX: lo, maxX: hi, minY: z - slotH, maxY: z + slotH } });
       support.zones.push({ field: (x, y) => { const p = sheetLocal(rib.meta, sheetWorld(support.meta, x, y)); return rectDistance(p[0], p[2], mid, 0, hi - lo, rib.meta.thickness + fit * 2); }, box: support.box });
-      joints.push({ id: `${rib.meta.id}:${support.meta.id}`, parts: [rib.meta.id, support.meta.id], instruction: `Hold ${support.meta.label} in place; slide ${rib.meta.label} along its negative U direction into the complementary half slots. Install all supports before the ribs.` });
+      joints.push({ id: `${rib.meta.id}:${support.meta.id}`, parts: [rib.meta.id, support.meta.id], instruction: `Hold ${support.meta.label} in place; slide ${rib.meta.label} along its negative U direction into the complementary half slots. ${socketSupports.length ? 'Install open-slot supports before the ribs; leave closed-socket end plates off until afterwards.' : 'Install all supports before the ribs.'}` });
     }
   }
 
@@ -767,16 +845,22 @@ export function buildAssembly(
     remainingRibCollision ||= ribPair;
     say('error', pair, 'Finished sheets intersect outside their clearances. Move the parts or revise their joints.', ribPair ? pair : undefined);
   }
+  const extent = (p: WorkPart, d: Vec3) => [p.box.minX, p.box.maxX].flatMap((x) => [p.box.minY, p.box.maxY].flatMap((y) => [-p.meta.thickness / 2, p.meta.thickness / 2].map((n) => dot3(sheetWorld(p.meta, x, y, n), d))));
+  const blocked = (a: WorkPart, b: WorkPart, d: Vec3) => {
+    const length = Math.max(0, Math.max(...extent(b, d)) - Math.min(...extent(a, d))) + Math.max(a.meta.thickness, b.meta.thickness);
+    const count = Math.max(24, Math.min(96, Math.ceil(length / Math.max(minBridge, Math.min(a.meta.thickness, b.meta.thickness)))));
+    // Do not step over a thin parallel sheet while removing an end plate.
+    const dn = dot3(d, b.meta.n);
+    if (Math.abs(dot3(a.meta.n, b.meta.n)) > 1 - 1e-8 && Math.abs(dn) > 1e-8) {
+      const station = dot3(add3(b.meta.origin, mul3(a.meta.origin, -1)), b.meta.n) / dn;
+      if (station > 0 && collision(a, b, mul3(d, station))) return true;
+    }
+    for (let i = 1; i <= count; i++) if (collision(a, b, mul3(d, length * i / count))) return true;
+    return false;
+  };
   if (crossJoints) {
     // Crossed ribs form a network before the wall plate is installed. Search
     // a deterministic disassembly sequence, then reverse it for assembly.
-    const extent = (p: WorkPart, d: Vec3) => [p.box.minX, p.box.maxX].flatMap((x) => [p.box.minY, p.box.maxY].flatMap((y) => [-p.meta.thickness / 2, p.meta.thickness / 2].map((n) => dot3(sheetWorld(p.meta, x, y, n), d))));
-    const blocked = (a: WorkPart, b: WorkPart, d: Vec3) => {
-      const length = Math.max(0, Math.max(...extent(b, d)) - Math.min(...extent(a, d))) + Math.max(a.meta.thickness, b.meta.thickness);
-      const count = Math.max(24, Math.min(96, Math.ceil(length / Math.max(minBridge, Math.min(a.meta.thickness, b.meta.thickness)))));
-      for (let i = 1; i <= count; i++) if (collision(a, b, mul3(d, length * i / count))) return true;
-      return false;
-    };
     const walls = backs.filter((b) => parts.includes(b));
     for (const back of walls) {
       const blockedBy = ribs.filter((rib) => blocked(back, rib, [0, -1, 0]));
@@ -808,7 +892,7 @@ export function buildAssembly(
     // mean there is no sequential assembly order, even if the final pose fits.
     const before = new Map<string, Set<string>>(ribs.map((r) => [r.meta.id, new Set<string>()]));
     for (const rib of ribs) {
-      for (const fixed of [...supports, ...backs.filter((p) => parts.includes(p)), ...ribs.filter((r) => r !== rib)]) {
+      for (const fixed of [...openSupports, ...backs.filter((p) => parts.includes(p)), ...ribs.filter((r) => r !== rib)]) {
         let blocked = false;
         for (let distance = Math.max(stockT, 1); distance <= reach; distance += Math.max(stockT, reach / 28)) {
           if (collision(rib, fixed, mul3(rib.meta.u, distance))) { blocked = true; break; }
@@ -826,6 +910,20 @@ export function buildAssembly(
     }
     if (order.length !== ribs.length) say('error', ribs.filter((r) => !order.includes(r.meta.id)).map((r) => r.meta.id), 'Rib insertion paths depend on each other in a cycle. Change placement or angles to allow sequential assembly.');
     else if (order.length && joints.length) say('info', order, `Dry-fit insertion order: ${order.map((id) => parts.find((p) => p.meta.id === id)!.meta.label).join(', ')}. Clearance and path checks are sampled; confirm the sequence with a small physical coupon.`);
+  }
+  if (socketSupports.length && socketSupports.every(cap => expectedRibs.length > 0 && expectedRibs.every(rib => joints.some(j => j.parts.includes(cap.meta.id) && j.parts.includes(rib.id))))) {
+    const remaining = [...socketSupports], removed: WorkPart[] = [];
+    while (remaining.length) {
+      const removable = remaining.find(cap => parts.every(fixed => fixed === cap || removed.includes(fixed) || !blocked(cap, fixed, [0, 0, socketSign(cap)])));
+      if (!removable) break;
+      removed.push(removable); remaining.splice(remaining.indexOf(removable), 1);
+    }
+    if (remaining.length) {
+      const obstacles = parts.filter(fixed => !removed.includes(fixed) && remaining.some(cap => fixed !== cap && blocked(cap, fixed, [0, 0, socketSign(cap)])));
+      say('error', [...remaining, ...obstacles].map(p => p.meta.id), 'A closed-socket end plate cannot slide onto the assembled parts from its chosen side. Move the named obstructing parts, change Install from or use Cross slots. Group motions are not checked.');
+    }
+    else say('info', removed.map(p => p.meta.id), `After the ribs and open-slot supports, install closed-socket end plates in this order: ${removed.reverse().map(p => `${p.meta.label} from ${socketSign(p) > 0 ? 'above (-Z)' : 'below (+Z)'}`).join(', ')}. Seat the shoulders, dry-fit and glue. Insertion checks are sampled; confirm with a physical coupon.`);
+    joints.sort((a, b) => Number(a.parts.some(id => socketSupports.some(p => p.meta.id === id))) - Number(b.parts.some(id => socketSupports.some(p => p.meta.id === id))));
   }
   if (ribs.length && !supports.length && !backs.length) say('warning', ribs.map((p) => p.meta.id), crossJoints ? 'No wall plate or horizontal supports are enabled. Rib cross joints do not establish a mounting or load rating.' : 'No supports are enabled. These are loose ribs with no generated attachment.');
 

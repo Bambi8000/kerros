@@ -3842,6 +3842,42 @@ insert each rib along negative U. Missing or disconnected overlap regions,
 collisions and blocked insertion paths name their parts. Different support
 heights or diameters do not silently preserve obsolete joints.
 
+Since 0.41.0, each horizontal support has its own `Joint type`: `Cross slots`
+(the default, including saved projects without the parameter) or `Closed sockets`.
+Closed sockets are enclosed through-holes, not blind pockets. They keep the
+outer rim intact and turn that support into an end plate. `Install from: Above`
+trims each rib above the plate's lower face; `Below` trims below its upper face.
+One rectangular tab per enabled linked rib passes through the actual plate
+thickness and ends flush with the outer face. `Tab width` defaults to 8 mm and
+`Socket corner relief` to 0.5 mm. The latter adds circular relief at each socket
+corner; zero keeps square corners. Joint clearance remains per side in Assembly
+settings and kerf follows each part's stock, applied once after redistancing.
+
+The tab centre is fitted to the longest feasible shoulder band along the rib.
+Its full shoulder must be in material and the socket, including relief, must
+clear the plate edge, centre opening and previously planned sockets by the
+minimum bridge. Requested tab width, stock and clearance are never reduced.
+All enabled linked rib IDs must acquire a joint, including ribs whose source
+plane returned no profile; if any fails, no joints from that end plate are
+applied. Diagnostics name the failed contacts and give the fitted/expected count.
+Source edits, moved or rotated upright ribs, plate size/height and material edits
+rebuild both mating parts. Changing back to Cross slots restores source-derived
+rib profiles and the previous slot construction; no trimming is baked into the
+project. The selection affects only that support.
+
+Use at most one closed end plate from above and one from below. Intermediate
+supports keep Cross slots. Closed caps are left off during rib insertion, then
+installed vertically onto the assembled ribs and glued. Open slots are planned
+after cap trimming and cannot remove protected tab material. LED/rod cuts and
+rib operations also retain the existing joint protection. Final sheet collision
+checks still run. A sampled straight cap-removal search, reversed for insertion,
+includes all other finished sheets and free plates; thin parallel obstacles are
+additionally tested at their exact crossing station. An unfitted cap never claims
+a successful insertion order. Group motions are not checked. Manifest and PDF
+list open-support joints before cap joints, with installation side and glue/fit
+instructions. Wall/ring and rib-cross/ring incompatibilities remain unchanged.
+Closed caps also work in linear layouts when the wall backplate is disabled.
+
 Since 0.30.0, new linear assemblies start with `Open frame` as
 the wall mount's Outline. The upper and lower rails follow the longest
 continuous band of material at each rib's shoulder. Their centre heights sit
@@ -4086,6 +4122,15 @@ manual holes in the filled centre. The state/export validator carries Minimal
 solid through save/open, nesting, DXF, manifest/PDF and the real worker.
 The open sphere fixture uses 72.2% less backplate area than the rectangle;
 this does not establish strength.
+`tools/validate-support-sockets.mjs` checks one actual enclosed contour per rib,
+intact rim, fitted tab width and flush ends, mixed open/closed supports, top and
+bottom caps, preserved centre openings, mixed stock, moved/rotated ribs, edited
+curved source profiles, linear layouts, rigid transforms and in-plane kerf.
+Oversized tabs, missing contacts, duplicate ends, nearby open slots, LED/tab
+conflicts and thin insertion obstacles refuse explicitly. It also covers legacy
+identity, save/open, reachable inspector controls, the actual worker, nesting,
+DXF, manifest and PDF instructions. Browser testing checks switching a selected
+support while retaining the other support's joint type.
 `tools/validate-rib-joints.mjs` covers multiple oblique crossings, unchanged wall
 attachments, actual full-thickness fit and slot width, mixed stock, split,
 opening directions, relief, kerf, reversible operations, a trapped three-rib
@@ -4126,6 +4171,9 @@ Before a complete lamp, cut a small two-rib/two-ring coupon and a two-rib wall
 coupon in the chosen stock. Use the actual LED tube/profile. Measure slot and
 tab fit (including a short rib's single tab), test the documented insertion sequence, inspect bridges and confirm
 wall clearance. The current software results are not physical acceptance.
+For closed sockets, also test an end-plate coupon in the intended stock: flush
+tab ends, relief corners, intact rim, cap-last insertion from above/below and
+adhesive retention. The geometric checks establish no load rating.
 
 ## Orthogonal Grid — **shipped** (0.39.0)
 

@@ -1,7 +1,7 @@
-KERROS INVENTORY  2026-09-17  version 0.40.0
+KERROS INVENTORY  2026-09-17  version 0.41.0
 
 --- source, lines each
-   40212 total
+   40443 total
     2972 src/ui/Inspector.tsx
     2343 src/core/store.ts
     1762 src/core/pipeline.ts
@@ -14,7 +14,7 @@ KERROS INVENTORY  2026-09-17  version 0.40.0
     1104 src/core/slice.ts
     1087 src/ui/ProfilePanel.tsx
     1067 src/core/profile2d.ts
-     858 src/core/assembly.ts
+     956 src/core/assembly.ts
      846 src/index.css
      805 tools/validate-sdf.mjs
      772 tools/validate-window.mjs
@@ -48,9 +48,9 @@ KERROS INVENTORY  2026-09-17  version 0.40.0
      252 src/core/supportBranches.ts
      251 tools/validate-fixture.mjs
      246 src/ui/CurveEditor.tsx
+     243 src/ui/AssemblyInspector.tsx
      242 src/ui/useSheets.ts
      239 src/core/layers.ts
-     236 src/ui/AssemblyInspector.tsx
      231 src/core/dxf.ts
      220 tools/validate-layers.mjs
      209 src/core/types.ts
@@ -73,6 +73,7 @@ KERROS INVENTORY  2026-09-17  version 0.40.0
      136 tools/validate-assembly-preview.mjs
      131 src/ui/PartInspector.tsx
      129 tools/validate-curves.mjs
+     126 tools/validate-support-sockets.mjs
      113 tools/validate-twist.mjs
      112 tools/validate-support-branches.mjs
      108 tools/validate-state.mjs
@@ -114,11 +115,12 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs && node tools/validate-free-plates.mjs && node tools/validate-vertical-supports.mjs && node tools/validate-curves.mjs && node tools/validate-support-branches.mjs && node tools/validate-grid.mjs && node tools/validate-radial-profile.mjs
+check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs && node tools/validate-free-plates.mjs && node tools/validate-vertical-supports.mjs && node tools/validate-curves.mjs && node tools/validate-support-branches.mjs && node tools/validate-grid.mjs && node tools/validate-radial-profile.mjs && node tools/validate-support-sockets.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+17d9b00 Add revolved curve side profiles for radial ribs
 2ff509b Fit grid plane spacing to current source bounds
 e09f4ad Support up to 64 horizontal grid planes with explicit count edits
 6aac4d4 Add XYZ grid assemblies with split horizontal cells
@@ -158,4 +160,3 @@ d86a951 Inventory after the audit batch
 1fc2c84 A docs check: handoff version must match package.json and section counts have floors, after a stale rewrite slipped through
 15684a2 Restore the 0.26.0 handoff over this morning's stale rewrite; drop the validator count from prose; workerAvailable joins the never-wired list
 2b8dbd2 Name an unknown RIG kind instead of handing it the rod panel; grabbable is an explicit kind list
-a89cd64 Say when jobs run without a worker; workerAvailable was written for this and never wired
