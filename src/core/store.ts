@@ -200,6 +200,7 @@ interface KerrosState {
   addShape: (moduleKey: string) => void;
   addAssembly: (kind: 'radial' | 'linear' | 'grid') => void;
   setGridCount: (id: string, axis: GridAxis, count: number) => void;
+  fitGridToSource: (id: string) => void;
   addAssemblyMember: (id: string, kind: AssemblyMember) => void;
   snapshotAssemblyPlate: (id: string, result: SliceSet, sources: Feature[], duplicate: boolean) => boolean;
   setFreePlatePose: (id: string, patch: Partial<Record<'plateX' | 'plateY' | 'plateZ' | 'plateRx' | 'plateRy' | 'plateRz', number>>) => void;
@@ -480,6 +481,8 @@ export const useKerros = create<KerrosState>((set, get) => ({
     for (let i = members.length; i < count; i++) features.push(gridMember(layout, axis, features, next++));
     return { features, nextFeatureNumber: next, selectedId: s.selectedId && removed.has(s.selectedId) ? id : s.selectedId };
   }),
+  fitGridToSource: (id) => set((s) => ({ features: s.features.map(f => f.id === id && f.kind === 'assembly:layout' && f.params.layout === 'grid'
+    ? { ...f, params: { ...f.params, fitX: true, fitY: true, fitZ: true } } : f) })),
   addRibOperation: (a, b, operation) => set((s) => {
     const first = s.features.find((f) => f.id === a && f.kind === 'assembly:rib' && f.enabled);
     const second = s.features.find((f) => f.id === b && f.kind === 'assembly:rib' && f.enabled);

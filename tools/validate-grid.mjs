@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { runSliceJob } from '../src/core/pipeline.ts';
-import { gridFeatures, gridMember, gridMembers, gridPosition, GRID_LIMITS, gridPlannedParts } from '../src/core/grid.ts';
+import { gridFeatures, gridMember, gridMembers, gridPosition, gridSpacing, GRID_LIMITS, gridPlannedParts } from '../src/core/grid.ts';
 import { sheetLocal } from '../src/core/assembly.ts';
 import { indexProfile, indexedDistance } from '../src/core/profile2d.ts';
 
@@ -133,6 +133,45 @@ assert.equal(refused.slices.length, 0);
 assert.ok(errors(refused).some(e => e.message.includes(`${gridPlannedParts(overBudget, overBudget[1])} cut parts`) && e.message.includes('1024-part limit')));
 console.log(`  ok    64 horizontal planes, ${tallSet.slices.length} attached/connected parts in ${((performance.now() - tallStart) / 1000).toFixed(1)} s, axis limits and explicit whole-grid budget`);
 
+const fitGrid = gridFeatures(2, bounds);
+while (gridMembers(fitGrid.features, fitGrid.features[0], 'z').length < 10) fitGrid.features.push(gridMember(fitGrid.features[0], 'z', fitGrid.features, fitGrid.next++));
+gridMembers(fitGrid.features, fitGrid.features[0], 'y')[0].params.offset = -200;
+const outsideFeatures = [source, ...fitGrid.features], outside = run(outsideFeatures);
+assert.equal(outside.slices.length, 0, 'reproduce a count increase and an offset moving sheets beyond the source');
+for (const axis of ['Y', 'Z']) assert.ok(errors(outside).some(e => e.message.startsWith(axis) && e.message.includes('Fit to source') && e.message.includes('mm')));
+const fitFeatures = structuredClone(outsideFeatures), fitLayout = fitFeatures[1];
+Object.assign(fitLayout.params, { fitX: true, fitY: true, fitZ: true });
+const fitted = run(fitFeatures); good(fitted);
+assert.equal(new Set(fitted.slices.filter(s => s.part.gridAxis === 'z').map(s => s.part.featureId)).size, 10);
+const explicit = structuredClone(fitFeatures);
+for (const axis of ['x', 'y', 'z']) {
+  const step = gridSpacing(fitFeatures, fitLayout, axis, bounds, options.thickness);
+  explicit[1].params[`spacing${axis.toUpperCase()}`] = step;
+  explicit[1].params[`fit${axis.toUpperCase()}`] = false;
+  for (const f of gridMembers(explicit, explicit[1], axis)) f.params.offset = 0;
+  for (const f of gridMembers(fitFeatures, fitLayout, axis)) {
+    const index = 'xyz'.indexOf(axis), p = gridPosition(f, fitFeatures, fitLayout, bounds, options.thickness);
+    assert.ok(Math.abs(p) + options.thickness / 2 < (bounds.max[index] - bounds.min[index]) / 2);
+    const part = fitted.slices.find(s => s.part.featureId === f.id || s.part.id === f.id).part;
+    assert.equal(part.origin[index], p, 'inspector placement and actual finished cuts use the same fit');
+  }
+}
+const explicitSet = run(explicit); good(explicitSet);
+assert.deepEqual(fitted.slices.map(s => s.contours), explicitSet.slices.map(s => s.contours));
+const shorter = structuredClone(fitFeatures); shorter[0].params.sz = 100;
+const shortened = run(shorter); good(shortened);
+assert.ok(Math.max(...shortened.slices.filter(s => s.part.gridAxis === 'z').map(s => s.z)) < Math.max(...fitted.slices.filter(s => s.part.gridAxis === 'z').map(s => s.z)), 'source edits automatically refit');
+const crowdedFit = structuredClone(fitFeatures);
+while (gridMembers(crowdedFit, crowdedFit[1], 'z').length < 64) crowdedFit.push(gridMember(crowdedFit[1], 'z', crowdedFit, fitGrid.next++));
+assert.ok(errors(run(crowdedFit)).some(e => e.message.includes('Reduce the plane count or enlarge the source')));
+const fitOff = structuredClone(fitFeatures), hiddenFit = gridMembers(fitOff, fitOff[1], 'z')[0]; hiddenFit.enabled = false;
+assert.equal(gridPosition(hiddenFit, fitOff, fitOff[1], bounds, options.thickness), gridPosition(hiddenFit, fitFeatures, fitLayout, bounds, options.thickness));
+hiddenFit.enabled = true;
+for (const axis of ['X', 'Y', 'Z']) fitOff[1].params[`fit${axis}`] = false;
+assert.equal(gridMembers(fitOff, fitOff[1], 'y')[0].params.offset, -200, 'fit never overwrites manual offsets');
+assert.deepEqual(errors(run(fitOff)), errors(outside), 'returning to Manual restores the original out-of-bounds design');
+console.log('  ok    count/offset overflow repaired by fitted spacing, matching cut frames, source refit, retained manual values and explicit density refusal');
+
 const server = await createServer({ configFile: false, server: { middlewareMode: true, watch: null, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' });
 try {
   const { useKerros } = await server.ssrLoadModule('/src/core/store.ts');
@@ -171,7 +210,11 @@ try {
   for (const sheet of nested.sheets) { const dxf = writeDxfR12(sheetToDxf(sheet)); assert.ok(dxf.includes('POLYLINE') && !/NaN|Infinity/.test(dxf)); }
   const previous = globalThis.self, replies = [];
   globalThis.self = { postMessage: message => replies.push(structuredClone(message)) };
-  try { await server.ssrLoadModule('/src/ui/kerros.worker.ts'); globalThis.self.onmessage({ data: { kind: 'slice', token: 71, job } }); assert.equal(replies.at(-1).kind, 'sliced'); assert.deepEqual(replies.at(-1).output.set, out); }
+  try {
+    await server.ssrLoadModule('/src/ui/kerros.worker.ts');
+    globalThis.self.onmessage({ data: { kind: 'slice', token: 71, job } }); assert.equal(replies.at(-1).kind, 'sliced'); assert.deepEqual(replies.at(-1).output.set, out);
+    globalThis.self.onmessage({ data: { kind: 'slice', token: 72, job: { ...options, features: fitFeatures } } }); assert.equal(replies.at(-1).kind, 'sliced'); assert.deepEqual(replies.at(-1).output.set, fitted);
+  }
   finally { globalThis.self = previous; }
   if (process.env.KERROS_VALIDATION_ARTIFACTS) {
     writeFileSync(`${process.env.KERROS_VALIDATION_ARTIFACTS}/kerros-grid.kerros.json`, serializeProject(state().projectData(), '0.39.0', '2026-09-17T00:00:00Z'));
@@ -192,6 +235,16 @@ try {
   assert.equal(gridMembers(state().features, layout, 'z').length, 0);
   state().setGridCount(layout.id, 'z', 12);
   assert.ok(gridMembers(state().features, layout, 'z').every(f => !retainedZ.some(old => old.id === f.id)));
+  const manualParams = structuredClone(state().features.find(f => f.id === layout.id).params);
+  let notifications = 0;
+  const unsubscribe = useKerros.subscribe(() => notifications++);
+  state().fitGridToSource(layout.id); unsubscribe(); assert.equal(notifications, 1, 'fit all axes is one model edit');
+  const fittedSaved = parseProject(serializeProject(state().projectData(), '0.39.2', '2026-09-17T00:00:00Z'));
+  state().applyProject(fittedSaved.data, fittedSaved.nextFeatureNumber);
+  for (const axis of ['X', 'Y', 'Z']) {
+    assert.equal(state().features.find(f => f.id === layout.id).params[`fit${axis}`], true);
+    assert.equal(state().features.find(f => f.id === layout.id).params[`spacing${axis}`], manualParams[`spacing${axis}`]);
+  }
   assert.ok(readFileSync('src/ui/FeatureTree.tsx', 'utf8').includes("addAssembly('grid')"));
   assert.ok(readFileSync('src/ui/AssemblyInspector.tsx', 'utf8').includes('<GridInspector'));
   console.log('  ok    real store, layout switching, saved identities, worker, material nesting, DXF, manifest, PDF and reachable UI');

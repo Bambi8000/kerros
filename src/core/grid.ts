@@ -41,9 +41,18 @@ export function gridPlannedParts(features: Feature[], layout: Feature): number {
   const [x, y, z] = (['x', 'y', 'z'] as const).map(axis => gridMembers(features, layout, axis).filter(f => f.enabled).length);
   return (x + 1) * (y + 1) * z + x + y;
 }
-export function gridPosition(feature: Feature, features: Feature[], layout: Feature): number {
+export function gridSpacing(features: Feature[], layout: Feature, axis: GridAxis, bounds?: Bounds, thickness = 0): number {
+  if (layout.params[`fit${axis.toUpperCase()}`] !== true) return number(layout, `spacing${axis.toUpperCase()}`, 30);
+  if (!bounds) throw new Error('Fitted grid spacing needs the current source bounds.');
+  const i = 'xyz'.indexOf(axis), count = gridMembers(features, layout, axis).length;
+  // Equal empty stations at both ends keep the outer sheets inside the
+  // source box. Stock thickness is reserved before dividing the usable span.
+  return Math.max(0, bounds.max[i] - bounds.min[i] - thickness) / (count + 1);
+}
+export function gridPosition(feature: Feature, features: Feature[], layout: Feature, bounds?: Bounds, thickness = 0): number {
   const axis = feature.params.axis as GridAxis, members = gridMembers(features, layout, axis);
-  return (members.findIndex(f => f.id === feature.id) - (members.length - 1) / 2) * number(layout, `spacing${axis.toUpperCase()}`, 30) + number(feature, 'offset');
+  const fitted = layout.params[`fit${axis.toUpperCase()}`] === true;
+  return (members.findIndex(f => f.id === feature.id) - (members.length - 1) / 2) * gridSpacing(features, layout, axis, bounds, thickness) + (fitted ? 0 : number(feature, 'offset'));
 }
 export function gridMember(layout: Feature, axis: GridAxis, features: Feature[], next: number): Feature {
   const members = gridMembers(features, layout, axis), ordinal = Math.max(-1, ...members.map(f => number(f, 'ordinal'))) + 1;
@@ -65,7 +74,7 @@ export function gridFeatures(next: number, bounds: Bounds): { features: Feature[
 export function buildGrid(features: Feature[], sample: (x: number, y: number, z: number) => number, bounds: Bounds, options: AssemblyOptions, kernel: GridKernel): SliceSet {
   const layout = features.find(f => f.enabled && f.kind === 'assembly:layout')!;
   const axes = (['x', 'y', 'z'] as const).map(axis => gridMembers(features, layout, axis).filter(f => f.enabled)
-    .map(feature => ({ feature, position: gridPosition(feature, features, layout) })).sort((a, b) => a.position - b.position));
+    .map(feature => ({ feature, position: gridPosition(feature, features, layout, bounds, options.thickness) })).sort((a, b) => a.position - b.position));
   const [xs, ys, zs] = axes;
   const centre = bounds.min.map((v, i) => (v + bounds.max[i]) / 2) as Vec3;
   const half = bounds.max.map((v, i) => (v - bounds.min[i]) / 2);
@@ -88,10 +97,14 @@ export function buildGrid(features: Feature[], sample: (x: number, y: number, z:
     if (count > GRID_LIMITS[axis]) fail([layout.id], `${axis.toUpperCase()} has ${count} planes; the limit is ${GRID_LIMITS[axis]}. Reduce the count, including disabled planes.`);
   }
   for (let axis = 0; axis < 3; axis++) {
-    if (number(layout, `spacing${'XYZ'[axis]}`, 30) <= t + 2 * fit) fail([layout.id], `${'XYZ'[axis]} spacing must exceed stock thickness plus twice the clearance.`);
+    const family = 'xyz'[axis] as GridAxis, spacing = gridSpacing(features, layout, family, bounds, t);
+    if (axes[axis].length > 1 && spacing <= t + 2 * fit) fail([layout.id], `${family.toUpperCase()} spacing is ${spacing.toFixed(2)} mm; it must exceed ${(t + 2 * fit).toFixed(2)} mm for this stock and clearance. ${layout.params[`fit${family.toUpperCase()}`] === true ? 'Reduce the plane count or enlarge the source.' : 'Increase spacing or reduce the count and choose Fit to source.'}`);
     for (let i = 0; i < axes[axis].length; i++) {
       const plane = axes[axis][i];
-      if (Math.abs(plane.position) + t / 2 > half[axis] + step) fail([plane.feature.id], 'The grid plane extends outside the source bounds. Reduce spacing or its offset.');
+      if (Math.abs(plane.position) + t / 2 > half[axis] + step) {
+        const limit = Math.max(0, half[axis] - t / 2);
+        fail([plane.feature.id], `${family.toUpperCase()}${plane.feature.id.slice(1)} (${plane.feature.name}) is at ${plane.position.toFixed(2)} mm from the source centre; the full sheet must fit between ${(-limit).toFixed(2)} and ${limit.toFixed(2)} mm. In Grid settings, choose Fit to source for ${family.toUpperCase()}, or reduce its spacing / this plane's Station offset.`);
+      }
       if (i && plane.position - axes[axis][i - 1].position <= t + 2 * fit) fail([plane.feature.id, axes[axis][i - 1].feature.id], 'Grid planes overlap or leave no clearance. Increase their separation.');
     }
   }
@@ -129,7 +142,7 @@ export function buildGrid(features: Feature[], sample: (x: number, y: number, z:
   if (unconnected.length) fail(unconnected.map(f => f.id), 'These upright planes have no connection to the main grid. Move their stations or revise the source.');
   const walls: Wall[] = base.slices.map(slice => {
     const feature = owners.get(slice.part!.id)!;
-    const position = gridPosition(feature, features, layout), axis = feature.params.axis as 'x' | 'y';
+    const position = gridPosition(feature, features, layout, bounds, t), axis = feature.params.axis as 'x' | 'y';
     // Uprights were placed at the source centre; work in centred grid coordinates.
     slice.part = { ...slice.part!, origin: axis === 'x' ? [position, 0, 0] : [0, position, 0], gridAxis: axis, label: labels.get(feature.id)! };
     const baseField = kernel.distance(slice.nominalContours!, reach), sockets: Wall['sockets'] = [];

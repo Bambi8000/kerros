@@ -1,9 +1,9 @@
-KERROS INVENTORY  2026-09-17  version 0.39.1
+KERROS INVENTORY  2026-09-17  version 0.39.2
 
 --- source, lines each
-   39884 total
+   39966 total
     2972 src/ui/Inspector.tsx
-    2339 src/core/store.ts
+    2342 src/core/store.ts
     1753 src/core/pipeline.ts
     1704 src/core/sdf.ts
     1484 tools/validate-nest.mjs
@@ -42,10 +42,11 @@ KERROS INVENTORY  2026-09-17  version 0.39.1
      283 src/ui/download.ts
      283 src/core/meshImport.ts
      275 tools/validate-boss.mjs
+     261 src/core/grid.ts
      255 src/core/font.ts
+     252 tools/validate-grid.mjs
      252 src/core/supportBranches.ts
      251 tools/validate-fixture.mjs
-     248 src/core/grid.ts
      242 src/ui/useSheets.ts
      239 src/ui/CurveEditor.tsx
      239 src/core/layers.ts
@@ -56,7 +57,6 @@ KERROS INVENTORY  2026-09-17  version 0.39.1
      203 tools/validate-surfacenets.mjs
      202 src/core/surfaceNets.ts
      200 tools/validate-vertical-supports.mjs
-     199 tools/validate-grid.mjs
      199 src/core/boss.ts
      192 src/ui/workerBridge.ts
      173 tools/validate-wall-frame.mjs
@@ -81,9 +81,9 @@ KERROS INVENTORY  2026-09-17  version 0.39.1
      103 src/ui/useSlices.ts
       99 src/ui/usePreview.ts
       92 src/ui/kerros.worker.ts
+      82 src/ui/GridInspector.tsx
       78 src-tauri/src/lib.rs
       70 tools/validate-hole-punch.mjs
-      69 src/ui/GridInspector.tsx
       67 src/ui/CurveInspector.tsx
       54 src/ui/NumberField.tsx
       53 src/core/assemblyFeatures.ts
@@ -117,6 +117,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+e09f4ad Support up to 64 horizontal grid planes with explicit count edits
 6aac4d4 Add XYZ grid assemblies with split horizontal cells
 e1c65f4 Add shared-layer joints for branched stack supports
 f25a8a1 Add native Bezier profiles and layer-key morph drawing
@@ -156,4 +157,3 @@ d86a951 Inventory after the audit batch
 2b8dbd2 Name an unknown RIG kind instead of handing it the rod panel; grabbable is an explicit kind list
 a89cd64 Say when jobs run without a worker; workerAvailable was written for this and never wired
 e325f7e Panel resolves ring thickness through ringThickness(), the same function the plan uses
-2c5c920 Remove labelWidthOf, unused since findLabelSpot grew its own width

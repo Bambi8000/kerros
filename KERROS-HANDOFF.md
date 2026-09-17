@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.39.1.** The MVP as originally scoped is
+**State at the time of writing: version 0.39.2.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -32,6 +32,15 @@ with Apply or Enter; typing intermediate digits does not rebuild or delete
 planes. The inspector shows enabled Z coverage and the planned part ceiling.
 Spacing remains explicit. Receiver connectivity is checked after all sockets,
 avoiding a complete upright retrace for each enclosed socket.
+
+Since 0.39.2, each Grid axis offers `Fit to source`, with `Fit all axes to source`
+as one action. Fitted spacing follows current source bounds, stock and count;
+Manual spacing and offsets are retained for switching back. Existing layouts
+remain Manual. The earlier count-only change could move outer sheets outside
+the source and return zero parts. Refusals now name the plane, actual station,
+allowed full-sheet range and repair control. Fit keeps stations inside the box;
+it does not guarantee material or joints at every station. Excessive density
+still refuses without reducing the requested count or stock.
 
 **Native curve profiles** now open a drawing editor in Slice. Add `Curve profile`
 under source tools, draw a closed Bézier path or ellipse/circle, then reshape

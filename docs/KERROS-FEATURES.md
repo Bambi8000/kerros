@@ -4118,10 +4118,33 @@ messages; the add-source prompt is reserved for an uncreated assembly.
 Plane counts use a draft number field committed with Apply or Enter. Empty,
 fractional or out-of-range drafts explain the valid range; they do not mutate
 the model. Intermediate digits cannot delete retained planes or enqueue work.
-The inspector reports the lowest and highest enabled Z station and their span
-relative to the source centre, including individual offsets. Spacing does not
-automatically fit the height. Plane links wrap into a bounded scrolling grid.
+The inspector reports the lowest and highest enabled station in each family,
+their span relative to the source centre, and the current source extent.
+Manual spacing includes individual offsets and does not automatically fit the
+height. Plane links wrap into a bounded scrolling grid.
 The planned part ceiling is visible, with a calculation-time hint above 256 parts.
+
+Since 0.39.2, `X/Y/Z placement` offers `Fit to source` independently of Manual
+spacing. `Fit all axes to source` changes all three in one store update and is
+available from an individual plane as well as the layout. No existing project
+is silently switched. The original manual spacing and offsets remain saved;
+offsets do not apply in Fit mode and become editable again in Manual mode.
+Fitted spacing is `(source extent - stock thickness) / (member count + 1)`,
+clamped at zero. The extra empty station at each end keeps the complete outer
+slab within the source box. A single plane sits at the centre; zero Z planes
+still means no horizontal parts. Disabled planes retain their station slots.
+The inspector and builder use the same placement helpers with the current
+composed source bounds. Count, stock, source and imported-source changes derive
+new placement without rewriting the saved manual settings. Whole-grid moves
+and rotation still change only assembled placement.
+
+Fit is a distribution within the source bounding box, not a material or joint
+search. A carved/curved profile can still miss a plane or leave insufficient
+material for a socket. Excessive density reports the actual spacing, the stock
+plus clearance requirement, and asks for fewer planes or a larger source; it
+never reduces count, thickness or clearance. Manual out-of-bounds errors now
+include the plane label/name, station, full-stock allowed range and the relevant
+Fit control, instead of an anonymous refusal with no dimensions.
 
 Horizontal IDs combine their Z-plane ID and four bounding upright IDs (or the
 outer boundary). They are derived cells, not saved contour vertices. Labels
@@ -4210,6 +4233,11 @@ It also builds 64 horizontal planes in a 100 × 100 × 536 mm rounded-box source
 580 attached, connected parts, with no errors (about 12 seconds locally).
 Over-limit saved planes and the total piece budget refuse explicitly; expanded
 counts retain IDs/offsets through save/open, and removed IDs stay retired.
+The fit regression reproduces count/offset overflow, repairs it into ten real
+horizontal planes, compares finished contours against explicit manual stations,
+checks source resizing, hidden stations, density refusal and restoration of
+Manual values, and passes fitted features through the real worker. Store checks
+pin the atomic all-axis action and persisted Fit choices.
 It also covers kerf, rigid transforms, curved source changes, a preserved light
 cavity, the small default sphere, disabled stations, missing attachments,
 unsupported topology/tools, the actual store and persistent IDs, layout switching,

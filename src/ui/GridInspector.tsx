@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { Feature } from '../core/types';
 import type { SliceSet } from '../core/slice';
-import { gridMembers, gridPosition, gridPlannedParts, GRID_LIMITS, type GridAxis } from '../core/grid';
-import { useKerros } from '../core/store';
+import { gridMembers, gridPosition, gridSpacing, gridPlannedParts, GRID_LIMITS, type GridAxis } from '../core/grid';
+import { useKerros, composeField, isFieldFeature } from '../core/store';
 import { NumberField } from './NumberField';
 
 function PlaneCount({ axis, count, onApply }: { axis: GridAxis; count: number; onApply: (count: number) => void }) {
@@ -21,26 +21,39 @@ function PlaneCount({ axis, count, onApply }: { axis: GridAxis; count: number; o
 
 export function GridInspector({ feature, layout, set, pending, children }: { feature: Feature; layout: Feature; set: SliceSet | null; pending: boolean; children: ReactNode }) {
   const state = useKerros();
+  const { features, material, seed, importRevision } = state;
+  const bounds = useMemo(() => {
+    // Imported volumes live outside the feature tree; their revision invalidates bounds.
+    void importRevision;
+    return composeField(features.filter(isFieldFeature), material.kerf, seed, material.thickness, { spacerHeight: 0 }).bounds;
+  }, [features, material.kerf, material.thickness, seed, importRevision]);
+  const position = (f: Feature) => bounds ? gridPosition(f, features, layout, bounds, material.thickness) : null;
   const field = (f: Feature, key: string, label: string, fallback = 0, unit = 'mm', step = 1) => <NumberField label={label} value={Number(f.params[key] ?? fallback)} unit={unit} step={step} onChange={value => state.setParam(f.id, key, value)} />;
   const parts = set?.slices.filter(s => s.part?.id === feature.id || s.part?.featureId === feature.id) ?? [];
   const planned = gridPlannedParts(state.features, layout);
-  const heights = gridMembers(state.features, layout, 'z').filter(f => f.enabled).map(f => gridPosition(f, state.features, layout));
   return <div className="inspector assembly-inspector">
     <div className="group"><div className="group-head">Grid · X / Y / Z</div>
       <label className="field"><span className="field-label">Name</span><input value={feature.name} onChange={e => state.renameFeature(feature.id, e.target.value)} /></label>
       {feature.id !== layout.id && <button className="btn" onClick={() => state.selectFeature(layout.id)}>Grid settings</button>}
+      <button className="btn" disabled={!bounds} onClick={() => state.fitGridToSource(layout.id)}>Fit all axes to source</button>
+      <p className="hint">Fit spaces each family inside the current source bounds and follows count, stock and source changes. Manual spacing and offsets are retained for switching back. Joints still need enough material.</p>
       {!layout.enabled && <p className="warn">This layout is disabled. Choose Grid in the tree footer to activate it.</p>}
       {feature.id !== layout.id && !feature.enabled && <p className="warn">This plane is disabled and produces no parts.</p>}
     </div>
     {feature.id === layout.id ? <>
-      {(['x', 'y', 'z'] as const).map(axis => <div className="group" key={axis}><div className="group-head">{axis.toUpperCase()} · {axis === 'z' ? 'Horizontal cells' : 'Upright planes'}</div>
+      {(['x', 'y', 'z'] as const).map(axis => {
+        const upper = axis.toUpperCase(), fitted = layout.params[`fit${upper}`] === true;
+        const stations = gridMembers(features, layout, axis).filter(f => f.enabled).flatMap(f => { const p = position(f); return p === null ? [] : [p]; });
+        const extent = bounds ? bounds.max['xyz'.indexOf(axis)] - bounds.min['xyz'.indexOf(axis)] : null;
+        return <div className="group" key={axis}><div className="group-head">{upper} · {axis === 'z' ? 'Horizontal cells' : 'Upright planes'}</div>
         <PlaneCount key={`${layout.id}:${axis}`} axis={axis} count={gridMembers(state.features, layout, axis).length} onApply={count => state.setGridCount(layout.id, axis, count)} />
-        {field(layout, `spacing${axis.toUpperCase()}`, `${axis.toUpperCase()} spacing`, 30)}
-        {axis === 'z' && <p className="derived">{heights.length ? `Z coverage: ${Math.min(...heights).toFixed(1)} to ${Math.max(...heights).toFixed(1)} mm from the source centre (${(Math.max(...heights) - Math.min(...heights)).toFixed(1)} mm span).` : 'No horizontal planes enabled.'}</p>}
-        {axis === 'z' && <p className="hint">Apply the count with Enter or Apply. Z spacing sets the distance between planes; adjust it or a plane's Station offset to reach upper details. Count changes do not fit the source height automatically.</p>}
+        <label className="field"><span className="field-label">{upper} placement</span><select value={fitted ? 'fit' : 'manual'} onChange={e => state.setParam(layout.id, `fit${upper}`, e.target.value === 'fit')}><option value="manual">Manual spacing</option><option value="fit">Fit to source</option></select></label>
+        {fitted ? <p className="derived">{bounds ? `Fitted ${upper} spacing: ${gridSpacing(features, layout, axis, bounds, material.thickness).toFixed(2)} mm.` : 'Add or restore the source to fit these planes.'}</p> : field(layout, `spacing${upper}`, `${upper} spacing`, 30)}
+        <p className="derived">{stations.length ? `${upper} coverage: ${Math.min(...stations).toFixed(1)} to ${Math.max(...stations).toFixed(1)} mm from the source centre (${(Math.max(...stations) - Math.min(...stations)).toFixed(1)} mm span).` : 'No enabled stations in the current source.'}{extent !== null && ` Source span: ${extent.toFixed(1)} mm.`}</p>
+        {axis === 'z' && <p className="hint">Apply the count with Enter or Apply. Fit to source distributes more planes through the available height. Manual spacing extends the range when the count increases.</p>}
         <div className="assembly-scope grid-plane-links">{gridMembers(state.features, layout, axis).map(f => <button key={f.id} className="btn" onClick={() => state.selectFeature(f.id)}>{axis.toUpperCase()}{f.id.slice(1)}{f.enabled ? '' : ' (off)'}</button>)}</div>
-      </div>)}
-      <div className="group"><p className="hint">Each family is centred on the source. Count changes redistribute its stations; retained planes keep their IDs and offsets. Disable a plane in the tree to omit it without moving the others. Source edits rebuild the profiles and all joints.</p></div>
+      </div>; })}
+      <div className="group"><p className="hint">Each family is centred on the source. Count changes redistribute its stations; retained planes keep their IDs. Manual offsets apply only in Manual spacing. Disable a plane in the tree to omit it without moving the others. Source edits rebuild the profiles and all joints.</p></div>
       <div className="group"><p className={planned > GRID_LIMITS.parts ? 'warn' : 'hint'}>Up to {planned} cut parts before empty cells are removed; limit {GRID_LIMITS.parts}.{planned > GRID_LIMITS.parts ? ' Reduce X, Y or Z planes to generate cut parts.' : planned > 256 ? ' Large grids take longer to calculate.' : ''}</p></div>
       <div className="group"><div className="group-head">Joints</div>
         {field(layout, 'jointClearance', 'Clearance per side', 0.1, 'mm', 0.05)}
@@ -56,8 +69,8 @@ export function GridInspector({ feature, layout, set, pending, children }: { fea
       </div>
     </> : <>
       <div className="group"><div className="group-head">{String(feature.params.axis).toUpperCase()} plane</div>
-        {field(feature, 'offset', 'Station offset')}
-        <p className="derived">Position from source centre: {gridPosition(feature, state.features, layout).toFixed(2)} mm.</p>
+        {layout.params[`fit${String(feature.params.axis).toUpperCase()}`] === true ? <p className="hint">This family uses Fit to source. Switch its placement to Manual spacing in Grid settings to edit individual offsets.</p> : field(feature, 'offset', 'Station offset')}
+        <p className="derived">{position(feature) === null ? 'No source bounds available.' : `Position from source centre: ${position(feature)!.toFixed(2)} mm.`}</p>
         <p className="hint">This regenerates the source profile and its joints. Grid planes stay perpendicular; use the whole-grid rotation to turn the arrangement.</p>
       </div>
       <div className="group"><div className="group-head">{pending ? 'Rebuilding cells…' : `${parts.length} cut ${parts.length === 1 ? 'part' : 'parts'}`}</div>
