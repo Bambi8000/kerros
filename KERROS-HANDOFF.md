@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.41.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.42.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -68,7 +68,7 @@ it does not guarantee material or joints at every station. Excessive density
 still refuses without reducing the requested count or stock.
 
 **Native curve profiles** now open a drawing editor in Slice. Add `Curve profile`
-under source tools, draw a closed Bézier path or ellipse/circle, then reshape
+under source tools, draw a closed path with Straight line, Bézier pen or ellipse/circle, then reshape
 anchors and handles. Repeat the base through the height, or copy drawings to
 actual layers such as 1, 5 and 10 and morph between those keys. Native controls
 are saved in the project; imported SVG profiles keep their external-file contract.
@@ -78,6 +78,12 @@ Undo/Redo and project ownership guards protect edits. Selecting a key does not
 recalculate geometry. This uses the existing distance-field morph and retains
 its measured gradient/kerf limitations; physical cuts remain untested. See
 FEATURES and `tools/validate-curves.mjs`.
+Since 0.42.0, `Straight line` clicks create exact straight edges; Shift constrains
+the next endpoint horizontally or vertically. Switch between it and `Bézier pen`
+without discarding the unfinished path. Close on the first point, with Enter or
+`Close path`; only closed shapes are applied. A straight edge clears only its
+own two handles, preserving adjacent curves. This works in layer profiles,
+morph keys and radial side profiles, with the existing save/open and Undo/Redo.
 
 **Branched vertical supports** now join one continuous lower cavity to upward
 branches through a shared horizontal sheet. `Fit: Automatic` exposes `Supports

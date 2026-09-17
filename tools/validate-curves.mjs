@@ -2,7 +2,7 @@
 /** Authored controls, real morph fields, durable keys and reachable drawing UI. */
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
-import { ellipseCurve, flattenCurve, moveCurveNode, splitCurve, curveNodeMode, copyCurveSketch, curveBounds, resizeCurveLoops, curveSketchError, curveHeight } from '../src/core/curves.ts';
+import { alignCurvePoint, ellipseCurve, flattenCurve, moveCurveNode, splitCurve, curveNodeMode, copyCurveSketch, curveBounds, resizeCurveLoops, curveSketchError, curveHeight, straightenCurveSegment } from '../src/core/curves.ts';
 import { distanceToRing, indexProfile, indexedDistance, easeMorph } from '../src/core/profile2d.ts';
 import { profileVolume, runSliceJob } from '../src/core/pipeline.ts';
 import { planLayers } from '../src/core/slice.ts';
@@ -30,6 +30,20 @@ const overshoot = [{point:[0,0],incoming:[0,0],outgoing:[80,0],smooth:false},{po
 assert.ok(curveBounds([overshoot]).maxX>50, 'collinear control overshoot is not flattened to a short straight segment');
 assert.throws(()=>flattenCurve(circle,0));assert.throws(()=>curveBounds([]));
 console.log(`  ok    adaptive Bézier flattening, preserved subdivision, live handles, corners and reshaping; circle deviation ${worstCircle.toFixed(4)} mm`);
+
+const lineAndArcs=straightenCurveSegment(circle,0), lineRing=flattenCurve(lineAndArcs);
+assert.deepEqual(lineRing.slice(0,4),[...circle[0].point,...circle[1].point],'a straight segment has no bowed intermediate samples');
+const arcStart=ring.findIndex((v,i)=>i%2===0&&v===circle[1].point[0]&&ring[i+1]===circle[1].point[1]);
+assert.deepEqual(lineRing.slice(2),ring.slice(arcStart),'the adjoining arcs retain their exact flattened geometry');
+assert.deepEqual(lineAndArcs[0].incoming,circle[0].incoming);assert.deepEqual(lineAndArcs[1].outgoing,circle[1].outgoing);
+assert.notDeepEqual(circle[0].outgoing,[0,0],'the original drawing is immutable');
+assert.deepEqual(moveCurveNode(lineAndArcs,0,'incoming',[50,-20])[0].outgoing,[0,0],'moving the retained curve handle cannot bend its straight neighbour');
+const closedStraight=straightenCurveSegment(lineAndArcs,lineAndArcs.length-1);
+assert.deepEqual(closedStraight.at(-1).outgoing,[0,0]);assert.deepEqual(closedStraight[0].incoming,[0,0]);
+let polygon=circle;for(let i=0;i<polygon.length;i++)polygon=straightenCurveSegment(polygon,i);
+assert.deepEqual(flattenCurve(polygon),circle.flatMap(n=>n.point),'a fully straight closed drawing keeps only its anchors');
+for(const [from,to,want] of [[[3,7],[20,9],[20,7]],[[3,7],[-2,-30],[3,-30]],[[3,7],[3,7],[3,7]]])assert.deepEqual(alignCurvePoint(from,to),want);
+console.log('  ok    exact straight edges, curved neighbours, straight closure, handle isolation and horizontal/vertical constraints');
 
 const sketch = {base:[ellipseCurve(0,0,40,40)],keys:[],nextKey:1};
 const feature = {id:'f1',kind:'profile',stage:'SHAPE',name:'Drawn profile',enabled:true,sketch,
@@ -71,6 +85,17 @@ const invalid=copyCurveSketch(sketch);invalid.base[0][0].point[0]=NaN;assert.mat
 assert.throws(()=>profileVolume({...feature,sketch:invalid}),/coordinates/);
 console.log('  ok    repeated layers and exact keys at 1/5/10, real distance morph/easing, full source height, inner loops and one kerf shift');
 
+const mixedDrawing={...feature,sketch:{...copyCurveSketch(sketch),base:[lineAndArcs]}};
+const mixedVolume=profileVolume(mixedDrawing), expectedMixed=indexProfile({rings:[lineRing],fill:'holes'},1,.06,30);
+for(let x=-30;x<=45;x+=5)for(let y=-45;y<=25;y+=7)assert.ok(Math.abs(mixedVolume.sample(x,y,0)-indexedDistance(expectedMixed,x,y))<1e-9);
+const polygonDrawing={...feature,sketch:{...copyCurveSketch(sketch),base:[polygon]}};
+assert.ok(run(polygonDrawing).set.slices.every(s=>s.contours.length===1),'straight drawings produce closed cutting contours');
+const lineMorph={...morph,sketch:copyCurveSketch(morph.sketch)};lineMorph.sketch.keys[1].loops=[lineAndArcs];
+assert.ok(Math.abs(profileVolume(lineMorph).sample(30,10,lineMorph.sketch.keys[1].z)-mixedVolume.sample(30,10,0))<1e-9,'a mixed line/curve key reproduces its authored shape');
+const lineSave=parseProject(serializeProject({features:[mixedDrawing],machineId:'laser-730',materialId:'plexi-3'},'test','2026-09-17'));
+assert.equal(lineSave.ok,true);assert.deepEqual(lineSave.data.features[0].sketch,mixedDrawing.sketch);
+console.log('  ok    line/curve profiles reach the real field, cut layers, morph keys and project persistence');
+
 const server=await createServer({configFile:false,server:{middlewareMode:true,watch:null,hmr:false,ws:false},optimizeDeps:{noDiscovery:true,include:[]},appType:'custom'});
 try {
   const {useKerros}=await server.ssrLoadModule('/src/core/store.ts');
@@ -110,7 +135,7 @@ try {
   for(const text of ['Repeat one profile','Morph between keys','Copy drawing to layer','Layer 5','Transition'])assert.ok(inspector.includes(text),text);
   const stale=renderToStaticMarkup(createElement(CurveInspector,{feature:f,slices:morphed.set,fresh:false}));assert.ok(stale.includes('Wait for the current layers'));
   const editor=renderToStaticMarkup(createElement(CurveEditor,{feature:f,slices:morphed.set}));
-  for(const text of ['Bézier pen','Ellipse / circle','Curve drawing canvas','Loop 1 point 1','Undo','Insert point after'])assert.ok(editor.includes(text),text);
+  for(const text of ['Straight line','Bézier pen','Ellipse / circle','Curve drawing canvas','Loop 1 point 1','Undo','Insert point after'])assert.ok(editor.includes(text),text);
   // Server rendering reads the store's initial snapshot (an empty project).
   // The creation action must therefore be reachable even before any selection.
   assert.ok(renderToStaticMarkup(createElement(FeatureTree)).includes('>Curve profile</button>'));

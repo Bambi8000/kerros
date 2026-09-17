@@ -2883,6 +2883,26 @@ point removal and loop removal. Right-drag pans; Fit and zoom buttons frame the
 drawing. Arrow keys move points 1 mm, or 5 mm with Shift. Other morph keys appear
 faintly as guides. `View cuts` returns to the ordinary cut view.
 
+Since 0.42.0, `Straight line` creates a closed polygon one clicked point at a
+time. The next edge has a dashed cursor preview; Shift constrains its endpoint
+to the nearer horizontal or vertical axis. Dragging in this tool does not create
+handles. Switch between Straight line and Bézier pen during a path to combine
+straight edges and curves. Closing uses the active tool: a line closes straight,
+while the pen retains its closing handles. Click the first point, press Enter or
+choose `Close path` after at least three points. Open lines are drafts, not cut
+profiles. Escape cancels; switching to Select points or Ellipse also cancels and
+says so. Line/pen switching retains the selected replacement loop or Add loop /
+hole choice. Layer profiles, morph keys and radial side profiles share the tool.
+
+Straight edges use the existing cubic representation with zero outgoing and
+incoming handles at that edge only. Their end anchors become corners so dragging
+an adjacent curve handle does not mirror a handle back onto the straight edge.
+Neighbouring curves and anchor positions are preserved. No project format change
+is needed. Dimension fields remain in place but disabled while a path is open,
+and the help row reserves space, keeping the canvas stationary during drawing.
+Arrow/Delete keys cannot edit the previously selected applied point behind a
+draft. Existing Undo/Redo records the entire path as one edit on closure.
+
 Pointer movement changes only the local preview. A completed gesture commits
 once, and a pen path commits only on closure. Undo/Redo retain up to 30 edits in
 the current editor/key session; Escape cancels an unfinished edit. Lost pointer
@@ -2905,6 +2925,10 @@ reachable UI, worker parity, nesting, DXF and PDF. Browser checks exercise real
 point/handle drags, pen closure, ellipse creation, Undo, key selection and the
 resulting shaped stack. Existing morph gradient and topology-pinch kerf limits
 below still apply; these drawings have not been physically cut.
+Straight-line checks cover exact flattened segments, unchanged adjacent arcs,
+closure, independent handles, axis constraints, real fields/cuts, mixed morph
+keys and persistence. Browser checks also exercise line/pen switching, a closed
+polygon, Shift, Escape and Undo/Redo.
 
 ### Radial side profiles — 0.40.0
 

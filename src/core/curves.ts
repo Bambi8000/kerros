@@ -127,6 +127,20 @@ export function curveNodeMode(loop: CurveLoop, at: number, smooth: boolean): Cur
   return copy;
 }
 
+/** Straighten only this edge, preserving the neighbouring curves and anchors. */
+export function straightenCurveSegment(loop: CurveLoop, at: number): CurveLoop {
+  const copy = copyCurveLoops([loop])[0], next = (at + 1) % copy.length;
+  if (!copy[at] || !copy[next] || copy.length < 2) return copy;
+  copy[at].outgoing = [0, 0]; copy[next].incoming = [0, 0];
+  copy[at].smooth = false; copy[next].smooth = false;
+  return copy;
+}
+
+/** Constrain a new line endpoint to the nearer horizontal or vertical axis. */
+export function alignCurvePoint(from: CurvePoint, to: CurvePoint): CurvePoint {
+  return Math.abs(to[0] - from[0]) >= Math.abs(to[1] - from[1]) ? [to[0], from[1]] : [from[0], to[1]];
+}
+
 /** Reshape the authored geometry; the distance field itself is never scaled. */
 export function resizeCurveLoops(loops: CurveLoop[], width: number, height: number): CurveLoop[] {
   const bounds = curveBounds(loops), sx = Math.max(width, 0.1) / bounds.width, sy = Math.max(height, 0.1) / bounds.height;

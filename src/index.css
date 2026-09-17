@@ -620,8 +620,8 @@ select {
 .curve-canvas-wrap circle[role='button'] { cursor: grab; }
 .curve-canvas-wrap svg:focus-visible { outline: 1px solid var(--k-cut); outline-offset: -2px; }
 .curve-bottom { border-top: 1px solid var(--k-line); border-bottom: 0; }
-.curve-help { font-size: 11px; line-height: 1.5; color: var(--k-text-faint); margin-top: 8px; }
-.curve-dimensions { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; }
+.curve-help { font-size: 11px; line-height: 1.5; min-height: 4.5em; color: var(--k-text-faint); margin-top: 8px; }
+.curve-dimensions { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0 0; padding: 0; border: 0; min-width: 0; }
 .curve-dimensions .field { width: 205px; grid-template-columns: 105px minmax(0, 1fr); margin: 0; }
 .curve-key-row { display: flex; gap: 5px; margin-bottom: 6px; }
 .curve-key-row .btn:first-child { flex: 1; min-width: 0; text-align: left; }
