@@ -81,6 +81,7 @@ import type { GapReport, Slice, SliceSet } from './slice.ts';
 import { buildVerticalSupports } from './verticalSupports.ts';
 import { buildStackSupports } from './supportBranches.ts';
 import { curveHeight, curveSketchError, flattenCurve } from './curves.ts';
+import { radialProfile } from './radialProfile.ts';
 
 /**
  * Every import here names its file with a `.ts` extension.
@@ -1220,6 +1221,14 @@ export function profileVolume(feature: Feature, needed = 0) {
   if (feature.sketch) {
     const sketch = feature.sketch, error = curveSketchError(sketch);
     if (error) throw new Error(`${feature.name}: ${error}`);
+    if (feature.params.profileMode === 'radial') {
+      try {
+        const volume = radialProfile(sketch.base.map(loop => flattenCurve(loop)), Number(feature.params.axisX ?? 0));
+        return { ...volume, min: volume.min.map(v => v - round) as [number, number, number],
+          max: volume.max.map(v => v + round) as [number, number, number], reach: Infinity,
+          sample: (x: number, y: number, z: number) => volume.sample(x, y, z) - round };
+      } catch (error) { throw new Error(`${feature.name}: ${error instanceof Error ? error.message : String(error)}`); }
+    }
     const height = curveHeight(sketch, Number(feature.params.height));
     const drawings = feature.params.curveMode === 'morph' && sketch.keys.length
       ? sketch.keys.slice().sort((a, b) => a.z - b.z) : [{ z: 0, loops: sketch.base }];

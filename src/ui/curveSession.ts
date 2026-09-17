@@ -5,6 +5,7 @@ import type { SliceSet } from '../core/slice';
 
 /** A sheet-height key is meaningful only when the drawing plane is horizontal. */
 export function curveLayerTarget(feature: Feature, features: Feature[], set: SliceSet | null, layer: number) {
+  if (feature.params.profileMode === 'radial') return { z: null, reason: 'Layer keys are retained but inactive in Radial side profile. Switch to Layer profiles to edit them.' };
   if (!set || set.assembly) return { z: null, reason: 'Calculate horizontal layers to place a key on a sheet.' };
   const slice = set.slices[Math.round(layer) - 1];
   if (!slice) return { z: null, reason: 'Choose an existing layer.' };

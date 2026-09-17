@@ -7,9 +7,22 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.39.2.** The MVP as originally scoped is
+**State at the time of writing: version 0.40.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+**Radial side profiles** let a native Curve profile define the lamp's vertical
+outline. Choose `Use drawing as: Radial side profile`, edit in Slice, then
+`Preview radial ribs`. Drawing Y becomes height and distance to `Axis X` becomes
+radius. Only the right side revolves; the shaded left side stays editable and
+saved. The base drawing feeds every radial source plane. Existing extrusion height,
+Repeat/Morph mode and keys survive switching back but are inactive in this mode.
+Rib depth, clear centre, placement and support rings keep their existing controls;
+other enabled source shapes still contribute. Ring sizes/heights may need fitting
+to a changed outline. This is a source volume, so Model, horizontal cuts and
+upright cuts all share it. The distance index excludes the artificial clipping
+edge at the axis, avoiding a false inner wall. See FEATURES and
+`validate-radial-profile.mjs`; curve-derived rib joints remain physically untested.
 
 **Grid** adds three orthogonal sheet families: X/Y upright planes and split Z
 cells. The user approved splitting the horizontal sheets. All profiles follow

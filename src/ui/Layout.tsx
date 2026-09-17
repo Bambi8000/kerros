@@ -270,7 +270,7 @@ export function Layout() {
           }
         >
           {curveEditing ? (
-            <CurveEditor key={`${curveEditorId}:${curveKeyId ?? 'base'}`} feature={selectedFeature!} slices={sliceFresh ? slices : null} />
+            <CurveEditor key={`${curveEditorId}:${curveKeyId ?? 'base'}:${selectedFeature!.params.profileMode ?? 'layers'}:${selectedFeature!.params.axisX ?? 0}`} feature={selectedFeature!} slices={sliceFresh ? slices : null} />
           ) : assembly && mode === 'stack' ? (
             <AssemblyViewport set={slices} pending={slicePending} sourceFeatures={sliceSourceFeatures} />
           ) : assembly && mode === 'slice' ? (

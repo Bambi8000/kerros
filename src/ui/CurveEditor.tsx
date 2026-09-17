@@ -35,9 +35,11 @@ function fitBox(loops: CurveLoop[]): Box {
 
 /** Local drawing preview during a gesture; one guarded project edit on release. */
 export function CurveEditor({ feature, slices }: { feature: Feature; slices: SliceSet | null }) {
-  const features = useKerros(s => s.features), keyId = useKerros(s => s.curveKeyId), project = useKerros(s => s.projectRevision);
+  const features = useKerros(s => s.features), selectedKey = useKerros(s => s.curveKeyId), project = useKerros(s => s.projectRevision);
   const update = useKerros(s => s.setCurveSketch), close = useKerros(s => s.closeCurveEditor);
-  const sketch = feature.sketch!, key = sketch.keys.find(k => k.id === keyId), source = key?.loops ?? sketch.base;
+  const radial = feature.params.profileMode === 'radial', axisX = Number(feature.params.axisX ?? 0);
+  const keyId = radial ? null : selectedKey;
+  const sketch = feature.sketch!, key = radial ? undefined : sketch.keys.find(k => k.id === keyId), source = key?.loops ?? sketch.base;
   const svg = useRef<SVGSVGElement>(null), gesture = useRef<Gesture | null>(null);
   const draftRef = useRef<CurveLoop[] | null>(null), penRef = useRef<CurveLoop | null>(null);
   const [draft, setDraft] = useState<CurveLoop[] | null>(null), [pen, setPen] = useState<CurveLoop | null>(null);
@@ -71,7 +73,7 @@ export function CurveEditor({ feature, slices }: { feature: Feature; slices: Sli
   };
   const commit = (next: CurveLoop[], expected = sketch) => {
     const live = useKerros.getState();
-    if (live.projectRevision !== project || live.curveEditorId !== feature.id || live.curveKeyId !== keyId) return false;
+    if (live.projectRevision !== project || live.curveEditorId !== feature.id || live.curveKeyId !== selectedKey) return false;
     const changed = copyCurveSketch(expected);
     if (keyId) {
       const target = changed.keys.find(k => k.id === keyId);
@@ -164,8 +166,8 @@ export function CurveEditor({ feature, slices }: { feature: Feature; slices: Sli
   const zoom = (factor: number) => setBox(b => ({ x: b.x + b.w * (1 - factor) / 2, y: b.y + b.h * (1 - factor) / 2, w: b.w * factor, h: b.h * factor }));
   let bounds: ReturnType<typeof curveBounds> | null = null;
   try { bounds = curveBounds(source); } catch { /* An invalid loaded drawing can be replaced with Ellipse or Pen. */ }
-  const title = key ? `Editing ${curveKeyLabel(feature, features, slices, key.z)}` : 'Editing base profile · repeats through the full height';
-  const ghost = sketch.keys.filter(k => k.id !== keyId).flatMap(k => k.loops);
+  const title = radial ? 'Radial side profile · radius → · height ↑' : key ? `Editing ${curveKeyLabel(feature, features, slices, key.z)}` : 'Editing base profile · repeats through the full height';
+  const ghost = radial ? [] : sketch.keys.filter(k => k.id !== keyId).flatMap(k => k.loops);
   return <div className="curve-editor" onKeyDown={event => {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); event.stopPropagation(); undo(event.shiftKey); }
@@ -187,7 +189,7 @@ export function CurveEditor({ feature, slices }: { feature: Feature; slices: Sli
         <button className="btn" onClick={() => setBox(fitBox(loops))}>Fit drawing</button>
         <button className="btn" aria-label="Zoom in drawing" onClick={() => zoom(0.8)}>+</button>
         <button className="btn" aria-label="Zoom out drawing" onClick={() => zoom(1.25)}>−</button>
-        <button className="btn" onClick={close}>View cut layers</button>
+        <button className="btn" onClick={close}>View cuts</button>
       </div>
     </div>
     <div className="curve-canvas-wrap">
@@ -201,6 +203,10 @@ export function CurveEditor({ feature, slices }: { feature: Feature; slices: Sli
           <line x1={0} x2={0} y1={-box.y} y2={-box.y - box.h} stroke="#554536" strokeWidth={unit} />
           {ghost.map((loop, i) => <path key={i} d={curvePath(loop)} fill="none" stroke="#66817b" strokeWidth={unit} opacity={0.3} pointerEvents="none" />)}
           <path d={loops.map(loop => curvePath(loop)).join(' ')} fill="#d0b690" fillOpacity={0.16} fillRule="evenodd" stroke="#e6bd82" strokeWidth={1.6 * unit} pointerEvents="none" />
+          {radial && <g pointerEvents="none">
+            <rect x={box.x} y={-box.y - box.h} width={Math.max(0, Math.min(box.w, axisX - box.x))} height={box.h} fill="#141211" opacity={0.65} />
+            <line x1={axisX} x2={axisX} y1={-box.y} y2={-box.y - box.h} stroke="#82b4a0" strokeWidth={2 * unit} strokeDasharray={`${6 * unit} ${4 * unit}`} />
+          </g>}
           {tool === 'select' && loops.map((loop, li) => loop.map((node, ni) => {
             const chosen = selected?.loop === li && selected.node === ni;
             return <g key={`${li}:${ni}`}>
@@ -215,6 +221,7 @@ export function CurveEditor({ feature, slices }: { feature: Feature; slices: Sli
           }))}
           {pen && <g pointerEvents="none"><path d={curvePath(pen, false)} fill="none" stroke="#ffad69" strokeWidth={2 * unit} />{pen.map((node, i) => <circle key={i} cx={node.point[0]} cy={node.point[1]} r={5 * unit} fill={i === 0 ? '#82b4a0' : '#ffad69'} />)}</g>}
         </g>
+        {radial && <text x={Math.max(box.x + 8 * unit, Math.min(axisX + 8 * unit, box.x + box.w - 120 * unit))} y={box.y + 20 * unit} fill="#82b4a0" fontSize={12 * unit} pointerEvents="none">Rotation axis · Z</text>}
       </svg>
     </div>
     <div className="curve-toolbar curve-bottom">
@@ -229,11 +236,11 @@ export function CurveEditor({ feature, slices }: { feature: Feature; slices: Sli
       </div>
       <div className="curve-dimensions">
         {currentNode && <><NumberField label="Point X" value={currentNode.point[0]} unit="mm" onChange={v => editNode((loop, at) => moveCurveNode(loop, at, 'point', [v, currentNode.point[1]]))} />
-          <NumberField label="Point Y" value={currentNode.point[1]} unit="mm" onChange={v => editNode((loop, at) => moveCurveNode(loop, at, 'point', [currentNode.point[0], v]))} /></>}
+          <NumberField label={radial ? 'Point height' : 'Point Y'} value={currentNode.point[1]} unit="mm" onChange={v => editNode((loop, at) => moveCurveNode(loop, at, 'point', [currentNode.point[0], v]))} /></>}
         {bounds && <><NumberField label="Drawing width" value={bounds.width} unit="mm" min={0.1} onChange={v => { const next = resizeCurveLoops(source, v, bounds!.height); setDrawing(next); commit(next); }} />
           <NumberField label="Drawing height" value={bounds.height} unit="mm" min={0.1} onChange={v => { const next = resizeCurveLoops(source, bounds!.width, v); setDrawing(next); commit(next); }} /></>}
       </div>
-      <div className="curve-help" role="status">{message || (tool === 'pen' ? 'Click for corners; drag for smooth handles. Close on the first point or use Close path. Esc cancels.' : tool === 'ellipse' ? 'Drag a bounding rectangle. Hold Shift for a circle. Replaces the selected loop unless Add loop / hole is checked.' : 'Drag points or handles. Arrow keys move a selected point 1 mm, Shift 5 mm. Right-drag pans. Other keys appear faintly. Grid: 10 mm. Drawing coordinates are local to this profile.')}</div>
+      <div className="curve-help" role="status">{message || (tool === 'pen' ? 'Click for corners; drag for smooth handles. Close on the first point or use Close path. Esc cancels.' : tool === 'ellipse' ? 'Drag a bounding rectangle. Hold Shift for a circle. Replaces the selected loop unless Add loop / hole is checked.' : radial ? 'The right side of the axis generates the lamp; the shaded left side is retained but unused. Move Axis X in the inspector. Drag points or handles; right-drag pans. Grid: 10 mm.' : 'Drag points or handles. Arrow keys move a selected point 1 mm, Shift 5 mm. Right-drag pans. Other keys appear faintly. Grid: 10 mm. Drawing coordinates are local to this profile.')}</div>
     </div>
   </div>;
 }

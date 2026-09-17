@@ -2881,7 +2881,7 @@ uses a bounding drag, with Shift for a circle. `Add loop / hole` retains existin
 loops. Point selection exposes handles, numeric X/Y, Smooth/Corner, subdivision,
 point removal and loop removal. Right-drag pans; Fit and zoom buttons frame the
 drawing. Arrow keys move points 1 mm, or 5 mm with Shift. Other morph keys appear
-faintly as guides. `View cut layers` returns to the ordinary cut view.
+faintly as guides. `View cuts` returns to the ordinary cut view.
 
 Pointer movement changes only the local preview. A completed gesture commits
 once, and a pen path commits only on closure. Undo/Redo retain up to 30 edits in
@@ -2905,6 +2905,53 @@ reachable UI, worker parity, nesting, DXF and PDF. Browser checks exercise real
 point/handle drags, pen closure, ellipse creation, Undo, key selection and the
 resulting shaped stack. Existing morph gradient and topology-pinch kerf limits
 below still apply; these drawings have not been physically cut.
+
+### Radial side profiles — 0.40.0
+
+A native Curve profile now offers `Use drawing as: Layer profiles / Radial side
+profile`. Layer profiles is the backward-compatible default. Radial mode uses
+the base drawing as a vertical meridian: drawing Y is local Z and drawing X
+minus `Axis X` is radius. Only the area to the right of the axis revolves around
+local Z. The editor marks the axis and shades the unused left side without
+deleting it. A centred circle becomes a sphere; a circle wholly to the right
+becomes a torus. Moving Axis X changes the rotational shape, not the drawing's
+saved coordinates. Width/height still reshape authored controls before indexing.
+
+The inspector's `Preview radial ribs` creates or activates the existing radial
+layout. Every linked rib samples the same revolved outer profile; rib depth,
+clear centre, placement, material and complementary ring slots retain their
+existing behaviour. Ring heights and diameters are not silently refitted when
+the source changes. The inspector explains that these may need adjustment.
+Other enabled source features continue to combine in tree order and can break
+rotational symmetry. Full source transforms remain rigid transforms; this mode
+does not rotate an extruded outline onto just one rib plane.
+
+`src/core/radialProfile.ts` clips the flattened closed-loop boundary to positive
+radius and builds a segment BVH. Nearest-boundary distance and even-odd sign are
+evaluated at `(hypot(x, y), z)`. The generated clipping edge on the axis is
+deliberately absent: it is not a surface of the revolved solid. Including it, or
+using the negative side of an asymmetric drawing for distance, would create a
+false inner shell. Distances are Euclidean to the polygonal meridian with no
+interior reach clamp; the existing 0.02 mm Bézier flattening tolerance applies.
+Inner loops remain cavities. A drawing with no positive-radius area refuses
+with an Axis X repair instruction; no empty success is reported.
+
+`profileMode` and `axisX` are saved feature params; no project-format migration
+is needed. Existing extrusion height, rounding, Repeat/Morph choice and all
+keys are retained. Radial mode edits only the base and hides layer-key controls;
+the inspector explicitly calls saved keys inactive. Switching back restores
+their existing effect. Radial bounds come from the active meridian, never from
+extrusion height or inactive keys. Worker, Model, Slice/Part, Assembly, Sheet,
+DXF and PDF use the same pipeline source and finished cuts.
+
+`tools/validate-radial-profile.mjs` checks exact cylinder distance (including an
+asymmetric left side and the axis), sphere/torus curves, holes, gradients,
+rejection messages, saved keys, rigid transforms, twelve matching rib outlines,
+two ring supports and all 24 joints, source edits, one kerf shift, save/open,
+store creation, reachable editor/axis controls, worker parity, nesting, DXF and
+PDF. Browser checks cover mode selection, axis display, height and point edits,
+Undo and returning to the calculated radial assembly. Material fit still needs
+a physical coupon.
 
 ## Morphing between key profiles — **shipped**
 

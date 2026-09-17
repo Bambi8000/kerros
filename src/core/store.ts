@@ -1098,7 +1098,8 @@ export const useKerros = create<KerrosState>((set, get) => ({
   editCurveProfile: (id, keyId = null) => set(s => {
     const feature = s.features.find(f => f.id === id && f.kind === 'profile' && f.sketch);
     if (!feature) return s;
-    const target = keyId ?? (feature.params.curveMode === 'morph' ? feature.sketch!.keys[0]?.id ?? null : null);
+    const target = feature.params.profileMode === 'radial' ? null
+      : keyId ?? (feature.params.curveMode === 'morph' ? feature.sketch!.keys[0]?.id ?? null : null);
     return { selectedId: id, curveEditorId: id, curveKeyId: feature.sketch!.keys.some(k => k.id === target) ? target : null,
       mode: 'slice', panel: 'inspector' };
   }),

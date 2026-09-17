@@ -18,6 +18,7 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
   if (f.kind.startsWith('assembly:')) return `${f.id} · ${f.kind.slice(9)}${f.kind === 'assembly:layout' ? ` · ${f.params.layout}` : ''}`;
   if (f.kind === 'holePunch') return `hole · Ø${f.params.diameter} mm · z ${Number(f.params.pz).toFixed(2)} mm`;
   if (f.kind === 'profile') {
+    if (f.sketch && f.params.profileMode === 'radial') return 'drawn side profile · revolved around Z';
     if (f.sketch) return f.params.curveMode === 'morph' && f.sketch.keys.length
       ? `drawn morph · ${f.sketch.keys.length} ${f.sketch.keys.length === 1 ? 'key' : 'keys'}` : 'drawn profile · repeated layers';
     const keys = usableProfileKeys(f);
