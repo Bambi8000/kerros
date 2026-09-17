@@ -3872,7 +3872,7 @@ Closed sockets are enclosed through-holes, not blind pockets. They keep the
 outer rim intact and turn that support into an end plate. `Install from: Above`
 trims each rib above the plate's lower face; `Below` trims below its upper face.
 One rectangular tab per enabled linked rib passes through the actual plate
-thickness and ends flush with the outer face. `Tab width` defaults to 8 mm and
+thickness and ends flush with the outer face by default. `Tab width` defaults to 8 mm and
 `Socket corner relief` to 0.5 mm. The latter adds circular relief at each socket
 corner; zero keeps square corners. Joint clearance remains per side in Assembly
 settings and kerf follows each part's stock, applied once after redistancing.
@@ -3888,6 +3888,33 @@ Source edits, moved or rotated upright ribs, plate size/height and material edit
 rebuild both mating parts. Changing back to Cross slots restores source-derived
 rib profiles and the previous slot construction; no trimming is baked into the
 project. The selection affects only that support.
+
+Since 0.43.0, `Tab size: Match rib thickness` uses each rib's actual material
+thickness as its tab width, making a square cross-section in plan. The support's
+actual thickness sets the flush tab height, so mixed stock need not produce a
+cube. `Custom width` retains the editable width and is the default for existing
+projects. Neither mode reduces stock or requested tab width to force a fit.
+`Tabs per rib` offers a fixed 1–4 (default 1) or `Automatic (1–4)`. Centres spread
+evenly across the widest continuous feasible shoulder band; one stays centred.
+Minimum centre spacing includes the complete socket width, clearance, corner
+relief, minimum bridge and two samples of slack. Automatic also spaces centres
+at least three tab widths apart, selecting up to four according to available
+span. Narrow shoulders can use one while wider ribs use more. Exact counts
+refuse if any rib cannot fit them; no partial cap joints are applied.
+
+Each rib is trimmed once and all its tabs are then added and individually
+protected. Existing cap insertion, collision, kerf and export paths consume the
+same finished geometry. The inspector reports the total fitted tabs; manifest
+and PDF instructions give the actual count and width for each rib. A regression
+fixture with pointed tips reproduces visible cap overlap but no usable cross
+slot, then fits single square tabs successfully. Cross-slot refusals now point
+to Closed sockets for end plates, without silently changing the joint type.
+A cap still needs a complete shoulder in the source rib; visual intersection
+alone does not establish an attachment.
+Socket supports refine their tracing step to resolve small corner clearances
+(at most twice clearance plus relief, with a 0.05 mm sampling floor). The new
+mixed-stock regression measures tab corners against the actual socket contours;
+the previous coarse cells could consume clearance when relief was zero.
 
 Use at most one closed end plate from above and one from below. Intermediate
 supports keep Cross slots. Closed caps are left off during rib insertion, then
@@ -4155,6 +4182,10 @@ conflicts and thin insertion obstacles refuse explicitly. It also covers legacy
 identity, save/open, reachable inspector controls, the actual worker, nesting,
 DXF, manifest and PDF instructions. Browser testing checks switching a selected
 support while retaining the other support's joint type.
+Stock-sized tab checks measure actual contour widths and full-thickness socket
+fit with mixed rib/cap stock, automatic one/two/four-tab results, exact counts,
+atomic refusal, shallow pointed tips, reported totals and protection of additional
+tabs. Multiple tabs also reach project save/open, the worker and export checks.
 `tools/validate-rib-joints.mjs` covers multiple oblique crossings, unchanged wall
 attachments, actual full-thickness fit and slot width, mixed stock, split,
 opening directions, relief, kerf, reversible operations, a trapped three-rib
@@ -4197,7 +4228,8 @@ tab fit (including a short rib's single tab), test the documented insertion sequ
 wall clearance. The current software results are not physical acceptance.
 For closed sockets, also test an end-plate coupon in the intended stock: flush
 tab ends, relief corners, intact rim, cap-last insertion from above/below and
-adhesive retention. The geometric checks establish no load rating.
+adhesive retention, including stock-sized square tabs and multiple tabs on one
+rib. The geometric checks establish no load rating.
 
 ## Orthogonal Grid — **shipped** (0.39.0)
 

@@ -7,15 +7,23 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.42.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.43.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
 **Closed support sockets** are selected per horizontal support under `Joint type`.
 `Cross slots` remains the default. `Closed sockets` makes a top or bottom end
 plate: its rim stays intact, ribs are trimmed at its near face and fitted tabs
-finish flush with its outer face. Choose `Install from`, `Tab width` and optional
-`Socket corner relief`. Every enabled linked rib must fit; partial caps refuse
+finish flush with its outer face. Choose `Install from`, `Tab size`, `Tabs per rib`
+and optional `Socket corner relief`. Since 0.43.0, `Match rib thickness` makes
+square tabs in plan using each rib's actual stock. `Automatic (1–4)` fits more
+tabs across wider shoulders; a fixed count must fit every rib. The cap thickness
+sets tab height, including mixed stock. Existing projects retain one custom-width
+tab (8 mm by default). The inspector reports the fitted total and assembly
+instructions give each rib's count and width. Shallow tip overlap can be unsuitable
+for Cross slots; its refusal now points to Closed sockets for end plates. Tabs
+still require a full shoulder below/above the cap, never an unattached extension.
+Every enabled linked rib must fit; partial caps refuse
 without applying their joints. Keep intermediate rings open-slotted, assemble
 the ribs, then fit and glue the end plates. One cap from each side is supported;
 final collisions, protected joints and sampled insertion paths (including free
@@ -707,6 +715,8 @@ about to happen when this handoff was written; ask before assuming.
   Also cut an end-plate coupon with enclosed sockets: check corner relief,
   flush tab ends, remaining rim material, cap-last insertion from above/below
   and adhesive retention, including the intended mixed stock thicknesses.
+  Include stock-sized square tabs and multiple tabs on one rib; additional tabs
+  have no established strength rating.
 - **Rib intersections.** Test complementary slots at the intended angle in
   both stock thicknesses, including relief radius, split, remaining bridges
   and wall-last insertion. Clearance cuts need the same fit test and do not

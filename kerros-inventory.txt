@@ -1,7 +1,7 @@
-KERROS INVENTORY  2026-09-17  version 0.42.0
+KERROS INVENTORY  2026-09-17  version 0.43.0
 
 --- source, lines each
-   40502 total
+   40594 total
     2972 src/ui/Inspector.tsx
     2343 src/core/store.ts
     1762 src/core/pipeline.ts
@@ -14,7 +14,7 @@ KERROS INVENTORY  2026-09-17  version 0.42.0
     1104 src/core/slice.ts
     1087 src/ui/ProfilePanel.tsx
     1067 src/core/profile2d.ts
-     956 src/core/assembly.ts
+     981 src/core/assembly.ts
      846 src/index.css
      805 tools/validate-sdf.mjs
      772 tools/validate-window.mjs
@@ -48,7 +48,7 @@ KERROS INVENTORY  2026-09-17  version 0.42.0
      252 tools/validate-grid.mjs
      252 src/core/supportBranches.ts
      251 tools/validate-fixture.mjs
-     243 src/ui/AssemblyInspector.tsx
+     247 src/ui/AssemblyInspector.tsx
      242 src/ui/useSheets.ts
      239 src/core/layers.ts
      231 src/core/dxf.ts
@@ -59,6 +59,7 @@ KERROS INVENTORY  2026-09-17  version 0.42.0
      200 tools/validate-vertical-supports.mjs
      199 src/core/boss.ts
      192 src/ui/workerBridge.ts
+     189 tools/validate-support-sockets.mjs
      173 tools/validate-wall-frame.mjs
      169 src/core/curves.ts
      162 tools/validate-free-plates.mjs
@@ -73,7 +74,6 @@ KERROS INVENTORY  2026-09-17  version 0.42.0
      137 tools/validate-pdf.mjs
      136 tools/validate-assembly-preview.mjs
      131 src/ui/PartInspector.tsx
-     126 tools/validate-support-sockets.mjs
      113 tools/validate-twist.mjs
      112 tools/validate-support-branches.mjs
      108 tools/validate-state.mjs
@@ -120,6 +120,7 @@ tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+8eea6fc Add straight line drawing to curve profiles
 16664bc Add closed socket joints for support end plates
 17d9b00 Add revolved curve side profiles for radial ribs
 2ff509b Fit grid plane spacing to current source bounds
@@ -159,4 +160,3 @@ ccc83f2 Docs and inventory at 0.27.0: morphing between key profiles
 a743617 Morph keys on a profile: distances mixed by height, sliced over the keys' own span
 d86a951 Inventory after the audit batch
 1fc2c84 A docs check: handoff version must match package.json and section counts have floors, after a stale rewrite slipped through
-15684a2 Restore the 0.26.0 handoff over this morning's stale rewrite; drop the validator count from prose; workerAvailable joins the never-wired list

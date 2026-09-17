@@ -96,6 +96,63 @@ const protectedSet=run(damaged);assert.ok(errors(protectedSet).some(i=>i.ids.inc
 assert.deepEqual(part(protectedSet,ribId).contours,part(set,ribId).contours,'a channel cannot drill away a cap tab');
 console.log('  ok    oversized tabs, missing contact, duplicate ends, joint conflicts and blocked insertion refuse explicitly');
 
+// Read tab widths from the actual cut edges, not from the fitter's plans.
+const tabBands=(rib,cap)=>{
+  const z=sheetLocal(rib.part,cap.part.origin)[1],crossings=[];
+  for(const c of rib.nominalContours)for(let i=0;i<c.points.length;i+=2){
+    const j=(i+2)%c.points.length,[x,y]=c.points.slice(i,i+2),[xx,yy]=c.points.slice(j,j+2);
+    if((y>z)!==(yy>z))crossings.push(x+(xx-x)*(z-y)/(yy-y));
+  }
+  crossings.sort((a,b)=>a-b);assert.equal(crossings.length%2,0);
+  return crossings.filter((_,i)=>i%2===0).map((x,i)=>[x,crossings[i*2+1]]);
+};
+const square=structuredClone(mixed);
+Object.assign(feature(square,topId).params,{socketSizing:'stock',socketCount:'auto',socketRelief:0});
+const squareSet=run(square);assert.deepEqual(errors(squareSet),[]);
+const squareCap=part(squareSet,topId),squareDistance=distance(squareCap);
+let totalTabs=0;
+for(const rib of squareSet.slices.filter(s=>s.part.kind==='rib')){
+  const bands=tabBands(rib,squareCap),d=distance(rib),z=sheetLocal(rib.part,squareCap.part.origin)[1];
+  assert.ok(bands.length>=1&&bands.length<=4);totalTabs+=bands.length;
+  for(const [a,b] of bands){
+    near(b-a,rib.part.thickness,.05);
+    assert.ok(d((a+b)/2,z+squareCap.part.thickness/2+.2)>0,'tabs stop at the outer cap face');
+    assert.ok(d((a+b)/2,z+squareCap.part.thickness/2-.2)<0,'tabs reach through the actual cap stock');
+    for(const x of [a+.05,(a+b)/2,b-.05])for(const n of [-rib.part.thickness/2,0,rib.part.thickness/2]){
+      const q=sheetLocal(squareCap.part,sheetWorld(rib.part,x,z,n));
+      assert.ok(squareDistance(q[0],q[1])>0,'every tab fits inside its actual enclosed socket');
+    }
+  }
+  for(let i=1;i<bands.length;i++)assert.ok(bands[i][0]-bands[i-1][1]>options.minFeature,'separate tabs leave an intact bridge');
+  const joint=squareSet.assembly.joints.find(j=>j.parts.includes(topId)&&j.parts.includes(rib.part.id));
+  assert.ok(joint.instruction.includes(`${rib.part.thickness} mm square tab`));
+}
+assert.ok(totalTabs>ribSlices.length,'wide ribs get multiple tabs');
+assert.equal(squareCap.nominalContours.filter(c=>c.isHole).length,totalTabs);
+assert.ok(squareSet.assembly.issues.some(i=>i.message.includes(`(${totalTabs} tabs total)`)));
+const fixed=structuredClone(capped);Object.assign(feature(fixed,topId).params,{socketSizing:'stock',socketCount:'2'});
+const fixedSet=run(fixed);assert.deepEqual(errors(fixedSet),[]);
+assert.equal(part(fixedSet,topId).nominalContours.filter(c=>c.isHole).length,ribSlices.length*2);
+const wide=structuredClone(fixed);feature(wide,topId).params.socketCount='auto';feature(wide,created.id).params.ribDepth=40;
+const wideSet=run(wide);assert.deepEqual(errors(wideSet),[]);
+assert.equal(part(wideSet,topId).nominalContours.filter(c=>c.isHole).length,ribSlices.length*4);
+// A tapered tip visibly overlaps the cap, yet a cross slot cannot fit there.
+const peak=structuredClone(capped);peak[0].sketch.base=[nodes([[0,-100],[60,-100],[68,90],[50,100],[32,90],[0,90]])];
+Object.assign(feature(peak,topId).params,{jointStyle:'slots',pz:99});
+assert.ok(errors(run(peak)).some(i=>/No usable cross-slot.*Closed sockets/.test(i.message)));
+Object.assign(feature(peak,topId).params,{jointStyle:'sockets',socketSizing:'stock',socketCount:'auto'});
+const peakSet=run(peak);assert.deepEqual(errors(peakSet),[]);
+assert.equal(part(peakSet,topId).nominalContours.filter(c=>c.isHole).length,ribSlices.length,'narrow shoulders automatically retain one tab');
+feature(peak,topId).params.socketCount='4';
+const refusedCount=run(peak);assert.ok(errors(refusedCount).some(i=>/Requested 4 tabs.*only [1-3] fit/.test(i.message)));
+assert.equal(refusedCount.assembly.joints.filter(j=>j.parts.includes(topId)).length,0,'an exact count never silently falls back');
+assert.equal(part(refusedCount,topId).nominalContours.filter(c=>c.isHole).length,0,'a failed cap applies no partial sockets');
+const squareDamage=structuredClone(square),multiChannel=structuredClone(channel),squareRib=part(squareSet,ribId),lastBand=tabBands(squareRib,squareCap).at(-1);
+const lastCentre=sheetWorld(squareRib.part,(lastBand[0]+lastBand[1])/2,sheetLocal(squareRib.part,squareCap.part.origin)[1]);
+Object.assign(multiChannel.params,{px:lastCentre[0],py:lastCentre[1],pz:lastCentre[2],yaw:Math.atan2(squareRib.part.n[1],squareRib.part.n[0])*180/Math.PI});squareDamage.push(multiChannel);
+assert.ok(errors(run(squareDamage)).some(i=>i.ids.includes(multiChannel.id)&&/joint/.test(i.message)),'every additional tab is protected');
+console.log('  ok    square stock-sized tabs, mixed thickness, automatic 1/2/4 fitting, exact counts, shallow tips and multiple protected joints');
+
 const server=await createServer({configFile:false,server:{middlewareMode:true,watch:null,hmr:false,ws:false},optimizeDeps:{noDiscovery:true,include:[]},appType:'custom'});
 try{
   const {useKerros}=await server.ssrLoadModule('/src/core/store.ts');
@@ -107,20 +164,26 @@ try{
   state().applyProject(saved.data,saved.nextFeatureNumber);assert.deepEqual(state().features,capped);assert.deepEqual(run(state().features),set);
   const inspector=renderToStaticMarkup(createElement(AssemblyInspector,{feature:feature(capped,topId),set,pending:false}));
   for(const text of ['Joint type','Cross slots','Closed sockets','Install from','Tab width','Socket corner relief','trims ribs above'])assert.ok(inspector.includes(text),text);
+  const savedSquare=parseProject(serializeProject({...data,features:square},'test','2026-09-17'));assert.equal(savedSquare.ok,true);assert.deepEqual(savedSquare.data.features,square);
+  state().applyProject(savedSquare.data,savedSquare.nextFeatureNumber);
+  const squareInspector=renderToStaticMarkup(createElement(AssemblyInspector,{feature:feature(square,topId),set:squareSet,pending:false}));
+  for(const text of ['Tab size','Match rib thickness','Tabs per rib','Automatic (1–4)','Square tabs in plan'])assert.ok(squareInspector.includes(text),text);
+  assert.ok(!squareInspector.includes('Tab width</span>'),'inactive custom width is hidden for stock-sized tabs');
   const {buildParts,sheetToDxf,manifestText,assemblyDocument}=await server.ssrLoadModule('/src/core/job.ts');
   const {nestByMaterial}=await server.ssrLoadModule('/src/core/nest.ts');
   const {writeDxfR12}=await server.ssrLoadModule('/src/core/dxf.ts');
   const {writePdf}=await server.ssrLoadModule('/src/core/pdf.ts');
-  const parts=buildParts(set,[]),nested=nestByMaterial(parts,{sheetWidth:720,sheetHeight:400,gap:4,labelHeight:3,trueShape:false,cell:2});
-  assert.equal(parts.length,set.slices.length);assert.equal(nested.unplaced.length,0);
+  const parts=buildParts(squareSet,[]),nested=nestByMaterial(parts,{sheetWidth:720,sheetHeight:400,gap:4,labelHeight:3,trueShape:false,cell:2});
+  assert.equal(parts.length,squareSet.slices.length);assert.equal(nested.unplaced.length,0);
   for(const sheet of nested.sheets)assert.ok(!/NaN|Infinity/.test(writeDxfR12(sheetToDxf(sheet))));
-  const input={set,sheets:nested.sheets,spacers:[],machineName:'Test',materialName:'Test',thickness:3,kerf:.15,spacerHeight:6,spacerAchieved:6,ringThickness:3,version:'test',projectName:'Closed sockets'};
+  const input={set:squareSet,sheets:nested.sheets,spacers:[],machineName:'Test',materialName:'Test',thickness:3,kerf:.15,spacerHeight:6,spacerAchieved:6,ringThickness:3,version:'test',projectName:'Closed sockets'};
   assert.match(manifestText(input),/fit S\d+ from above along -Z/);
+  assert.match(manifestText(input),/2 3 mm square tabs/);
   const pdf=writePdf(assemblyDocument(input));assert.ok(pdf.startsWith('%PDF'));
   const changedInstructions=structuredClone(input);changedInstructions.set.assembly.joints.find(j=>j.parts.includes(topId)).instruction='Different assembly instruction';
   assert.notEqual(writePdf(assemblyDocument(changedInstructions)),pdf,'PDF consumes the actual cap instructions');
   const oldSelf=globalThis.self,replies=[];globalThis.self={postMessage(reply){replies.push(structuredClone(reply));}};
-  try{await server.ssrLoadModule('/src/ui/kerros.worker.ts');globalThis.self.onmessage({data:{kind:'slice',token:1,job:{...options,features:capped}}});assert.deepEqual(replies.at(-1).output.set,set);}finally{globalThis.self=oldSelf;}
+  try{await server.ssrLoadModule('/src/ui/kerros.worker.ts');globalThis.self.onmessage({data:{kind:'slice',token:1,job:{...options,features:square}}});assert.deepEqual(replies.at(-1).output.set,squareSet);}finally{globalThis.self=oldSelf;}
   console.log('  ok    durable per-support mode, reachable controls, worker parity, nesting, DXF, manifest and PDF instructions');
 }finally{await server.close();}
 console.log('OK    closed support sockets and end-plate insertion');

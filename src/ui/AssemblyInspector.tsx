@@ -164,7 +164,11 @@ export function AssemblyInspector({ feature, set, pending, sourceFeatures }: { f
       {choose('jointStyle', 'Joint type', [['slots', 'Cross slots'], ['sockets', 'Closed sockets']], 'slots')}
       {p.jointStyle === 'sockets' ? <>
         {choose('socketSide', 'Install from', [['top', 'Above'], ['bottom', 'Below']], 'top')}
-        {number('socketWidth', 'Tab width', 8)}{number('socketRelief', 'Socket corner relief', 0.5, 'mm', 0.1)}
+        {choose('socketSizing', 'Tab size', [['custom', 'Custom width'], ['stock', 'Match rib thickness']], 'custom')}
+        {p.socketSizing === 'stock' ? <p className="hint">Square tabs in plan: width equals each rib’s actual stock thickness. Tab height follows this support’s thickness, finishing flush with its outer face.</p> : number('socketWidth', 'Tab width', 8)}
+        {choose('socketCount', 'Tabs per rib', [['1', '1'], ['auto', 'Automatic (1–4)'], ['2', '2'], ['3', '3'], ['4', '4']], '1')}
+        <p className="hint">Tabs spread across the widest continuous shoulder. Automatic fits more on wider ribs and reports the total below. A fixed count must fit every rib. Socket spacing preserves material between openings.</p>
+        {number('socketRelief', 'Socket corner relief', 0.5, 'mm', 0.1)}
         <p className="hint">{p.socketSide === 'bottom' ? 'Bottom end plate: trims ribs below its upper face.' : 'Top end plate: trims ribs above its lower face.'} Flush tabs enter enclosed through-holes; the outer rim stays intact. Install this plate after the ribs, then glue. These are through-cuts, not blind pockets.</p>
         <p className="hint">Use at most one end plate from each side. Intermediate supports keep Cross slots. Move the end plate into enough rib material for the tab shoulders. Clearance comes from Assembly settings; kerf follows the stock.</p>
       </> : <p className="hint">Complementary slots open along each rib’s insertion direction. Hold open-slot supports in place before fitting the ribs. Closed-socket end plates go on afterwards.</p>}
