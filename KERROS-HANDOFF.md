@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.39.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.39.1.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -25,6 +25,13 @@ plates or wall/ring supports. Parts reach the real worker, Part/Assembly/Sheet,
 DXF, manifest and PDF. Layout buttons preserve other layouts while disabling
 them. See FEATURES, `docs/KERROS-GRID-PLAN.md` and `validate-grid.mjs`.
 Fit, adhesive and the XYZ assembly sequence remain physically untested.
+
+Grid now accepts 0–64 horizontal Z planes and 1–8 planes in each upright family,
+with a conservative ceiling of 1,024 planned cut parts. Enter a count and commit
+with Apply or Enter; typing intermediate digits does not rebuild or delete
+planes. The inspector shows enabled Z coverage and the planned part ceiling.
+Spacing remains explicit. Receiver connectivity is checked after all sockets,
+avoiding a complete upright retrace for each enclosed socket.
 
 **Native curve profiles** now open a drawing editor in Slice. Add `Curve profile`
 under source tools, draw a closed Bézier path or ellipse/circle, then reshape
@@ -253,6 +260,10 @@ source pushes and saves a build artifact; publishing remains a separate
 maintainer step documented in README, with no cross-repository token stored in
 CI. `GITHUB_PAGES=true` selects `/kerros-web/`; local and native builds use the
 root. Project files stay in the browser and are saved by download.
+On 2026-09-17 the owner explicitly authorized current and future Kerros source
+and documentation releases to `Bambi8000/kerros`, and compiled browser releases
+to `Bambi8000/kerros-web`. Routine verified updates to these existing public
+repositories do not need another release-specific permission question.
 
 ## What Kerros is
 

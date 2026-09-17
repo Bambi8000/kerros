@@ -47,7 +47,7 @@ import {
 import { localiseFixture } from './fixture';
 import { assemblyFeatures, assemblyMember, ribOperation } from './assemblyFeatures';
 import type { AssemblyMember, RibOperation } from './assemblyFeatures';
-import { gridFeatures, gridMember, gridMembers } from './grid';
+import { gridFeatures, gridMember, gridMembers, GRID_LIMITS } from './grid';
 import type { GridAxis } from './grid';
 import { rodFromFeature, rodPose, fitRodToBounds } from './rig';
 import { ribAngleKey, snapshotPlate, isFreePlate } from './assembly';
@@ -473,7 +473,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
   setGridCount: (id, axis, requested) => set((s) => {
     const layout = s.features.find(f => f.id === id && f.params.layout === 'grid');
     if (!layout || !Number.isFinite(requested) || !['x', 'y', 'z'].includes(axis)) return s;
-    const count = Math.max(axis === 'z' ? 0 : 1, Math.min(8, Math.round(requested)));
+    const count = Math.max(axis === 'z' ? 0 : 1, Math.min(GRID_LIMITS[axis], Math.round(requested)));
     const members = gridMembers(s.features, layout, axis), removed = new Set(members.slice(count).map(f => f.id));
     const features = s.features.filter(f => !removed.has(f.id));
     let next = s.nextFeatureNumber;

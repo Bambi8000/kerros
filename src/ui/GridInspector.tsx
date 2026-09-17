@@ -1,14 +1,30 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { Feature } from '../core/types';
 import type { SliceSet } from '../core/slice';
-import { gridMembers, gridPosition } from '../core/grid';
+import { gridMembers, gridPosition, gridPlannedParts, GRID_LIMITS, type GridAxis } from '../core/grid';
 import { useKerros } from '../core/store';
 import { NumberField } from './NumberField';
+
+function PlaneCount({ axis, count, onApply }: { axis: GridAxis; count: number; onApply: (count: number) => void }) {
+  const [draft, setDraft] = useState<{ count: number; text: string } | null>(null);
+  const text = draft?.count === count ? draft.text : String(count);
+  const next = Number(text), min = axis === 'z' ? 0 : 1, max = GRID_LIMITS[axis];
+  const valid = text.trim() !== '' && Number.isInteger(next) && next >= min && next <= max;
+  return <form onSubmit={event => { event.preventDefault(); if (valid && next !== count) onApply(next); setDraft(null); }}>
+    <label className="field"><span className="field-label">{axis.toUpperCase()} planes</span><span className="field-input">
+      <input type="number" min={min} max={max} step={1} required value={text} onChange={event => setDraft({ count, text: event.target.value })} />
+    </span></label>
+    <div className="assembly-scope"><span className="hint">{min}–{max} planes</span><button className="btn" type="submit" aria-label={`Apply ${axis.toUpperCase()} plane count`} disabled={!valid || next === count}>Apply</button></div>
+    {!valid && <p className="warn">Enter a whole number from {min} to {max}.</p>}
+  </form>;
+}
 
 export function GridInspector({ feature, layout, set, pending, children }: { feature: Feature; layout: Feature; set: SliceSet | null; pending: boolean; children: ReactNode }) {
   const state = useKerros();
   const field = (f: Feature, key: string, label: string, fallback = 0, unit = 'mm', step = 1) => <NumberField label={label} value={Number(f.params[key] ?? fallback)} unit={unit} step={step} onChange={value => state.setParam(f.id, key, value)} />;
   const parts = set?.slices.filter(s => s.part?.id === feature.id || s.part?.featureId === feature.id) ?? [];
+  const planned = gridPlannedParts(state.features, layout);
+  const heights = gridMembers(state.features, layout, 'z').filter(f => f.enabled).map(f => gridPosition(f, state.features, layout));
   return <div className="inspector assembly-inspector">
     <div className="group"><div className="group-head">Grid · X / Y / Z</div>
       <label className="field"><span className="field-label">Name</span><input value={feature.name} onChange={e => state.renameFeature(feature.id, e.target.value)} /></label>
@@ -18,11 +34,14 @@ export function GridInspector({ feature, layout, set, pending, children }: { fea
     </div>
     {feature.id === layout.id ? <>
       {(['x', 'y', 'z'] as const).map(axis => <div className="group" key={axis}><div className="group-head">{axis.toUpperCase()} · {axis === 'z' ? 'Horizontal cells' : 'Upright planes'}</div>
-        <NumberField label={`${axis.toUpperCase()} planes`} value={gridMembers(state.features, layout, axis).length} min={axis === 'z' ? 0 : 1} max={8} onChange={count => state.setGridCount(layout.id, axis, count)} />
+        <PlaneCount key={`${layout.id}:${axis}`} axis={axis} count={gridMembers(state.features, layout, axis).length} onApply={count => state.setGridCount(layout.id, axis, count)} />
         {field(layout, `spacing${axis.toUpperCase()}`, `${axis.toUpperCase()} spacing`, 30)}
-        <div className="assembly-scope">{gridMembers(state.features, layout, axis).map(f => <button key={f.id} className="btn" onClick={() => state.selectFeature(f.id)}>{axis.toUpperCase()}{f.id.slice(1)}{f.enabled ? '' : ' (off)'}</button>)}</div>
+        {axis === 'z' && <p className="derived">{heights.length ? `Z coverage: ${Math.min(...heights).toFixed(1)} to ${Math.max(...heights).toFixed(1)} mm from the source centre (${(Math.max(...heights) - Math.min(...heights)).toFixed(1)} mm span).` : 'No horizontal planes enabled.'}</p>}
+        {axis === 'z' && <p className="hint">Apply the count with Enter or Apply. Z spacing sets the distance between planes; adjust it or a plane's Station offset to reach upper details. Count changes do not fit the source height automatically.</p>}
+        <div className="assembly-scope grid-plane-links">{gridMembers(state.features, layout, axis).map(f => <button key={f.id} className="btn" onClick={() => state.selectFeature(f.id)}>{axis.toUpperCase()}{f.id.slice(1)}{f.enabled ? '' : ' (off)'}</button>)}</div>
       </div>)}
       <div className="group"><p className="hint">Each family is centred on the source. Count changes redistribute its stations; retained planes keep their IDs and offsets. Disable a plane in the tree to omit it without moving the others. Source edits rebuild the profiles and all joints.</p></div>
+      <div className="group"><p className={planned > GRID_LIMITS.parts ? 'warn' : 'hint'}>Up to {planned} cut parts before empty cells are removed; limit {GRID_LIMITS.parts}.{planned > GRID_LIMITS.parts ? ' Reduce X, Y or Z planes to generate cut parts.' : planned > 256 ? ' Large grids take longer to calculate.' : ''}</p></div>
       <div className="group"><div className="group-head">Joints</div>
         {field(layout, 'jointClearance', 'Clearance per side', 0.1, 'mm', 0.05)}
         {field(layout, 'tabWidth', 'Horizontal tab width', 8)}

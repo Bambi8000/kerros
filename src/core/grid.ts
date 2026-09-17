@@ -4,9 +4,10 @@ import type { Bounds, Contour, Slice, SliceSet } from './slice.ts';
 import type { AssemblyKernel, AssemblyOptions, Box2, Vec3 } from './assembly.ts';
 
 export type GridAxis = 'x' | 'y' | 'z';
+export const GRID_LIMITS = { x: 8, y: 8, z: 64, parts: 1024 } as const;
 type Distance = (u: number, v: number) => number;
 type Part = NonNullable<Slice['part']>;
-type Wall = { feature: Feature; axis: 'x' | 'y'; position: number; slice: Slice; field: Distance; box: Box2 };
+type Wall = { feature: Feature; axis: 'x' | 'y'; position: number; slice: Slice; field: Distance; box: Box2; sockets: { box: Box2; field: Distance }[] };
 export interface GridKernel extends AssemblyKernel {
   uprights: (features: Feature[], sample: (x: number, y: number, z: number) => number, bounds: Bounds, options: AssemblyOptions, kernel: AssemblyKernel) => SliceSet;
 }
@@ -35,6 +36,10 @@ function allInside(field: Distance, b: Box2, margin: number, step: number): bool
 export function gridMembers(features: Feature[], layout: Feature, axis: GridAxis) {
   return features.filter(f => f.kind === 'assembly:grid' && f.params.groupId === layout.id && f.params.axis === axis)
     .sort((a, b) => number(a, 'ordinal') - number(b, 'ordinal'));
+}
+export function gridPlannedParts(features: Feature[], layout: Feature): number {
+  const [x, y, z] = (['x', 'y', 'z'] as const).map(axis => gridMembers(features, layout, axis).filter(f => f.enabled).length);
+  return (x + 1) * (y + 1) * z + x + y;
 }
 export function gridPosition(feature: Feature, features: Feature[], layout: Feature): number {
   const axis = feature.params.axis as GridAxis, members = gridMembers(features, layout, axis);
@@ -76,7 +81,12 @@ export function buildGrid(features: Feature[], sample: (x: number, y: number, z:
   if (!(fit >= 0 && tabWidth >= 2 * bridge && options.thickness >= 0.2)) fail([layout.id], 'Grid needs nonnegative clearance, stock at least 0.2 mm thick and tab width at least twice the minimum bridge.');
   if (relief < step || relief > tabWidth / 2) fail([layout.id], `Socket corner relief must be at least ${step.toFixed(2)} mm at this resolution and no more than half the tab width.`);
   if (!xs.length || !ys.length) fail([layout.id], 'Grid needs at least one enabled X plane and one enabled Y plane.');
-  if ((xs.length + 1) * (ys.length + 1) * zs.length + xs.length + ys.length > 256 || axes.some(a => a.length > 8)) fail([layout.id], 'Grid exceeds the 256-part planning limit or eight planes per family. Reduce the plane counts.');
+  const planned = gridPlannedParts(features, layout);
+  if (planned > GRID_LIMITS.parts) fail([layout.id], `Grid plans up to ${planned} cut parts, exceeding the ${GRID_LIMITS.parts}-part limit. Reduce X, Y or Z planes; empty cells also count toward this limit.`);
+  for (const axis of ['x', 'y', 'z'] as const) {
+    const count = gridMembers(features, layout, axis).length;
+    if (count > GRID_LIMITS[axis]) fail([layout.id], `${axis.toUpperCase()} has ${count} planes; the limit is ${GRID_LIMITS[axis]}. Reduce the count, including disabled planes.`);
+  }
   for (let axis = 0; axis < 3; axis++) {
     if (number(layout, `spacing${'XYZ'[axis]}`, 30) <= t + 2 * fit) fail([layout.id], `${'XYZ'[axis]} spacing must exceed stock thickness plus twice the clearance.`);
     for (let i = 0; i < axes[axis].length; i++) {
@@ -122,7 +132,19 @@ export function buildGrid(features: Feature[], sample: (x: number, y: number, z:
     const position = gridPosition(feature, features, layout), axis = feature.params.axis as 'x' | 'y';
     // Uprights were placed at the source centre; work in centred grid coordinates.
     slice.part = { ...slice.part!, origin: axis === 'x' ? [position, 0, 0] : [0, position, 0], gridAxis: axis, label: labels.get(feature.id)! };
-    return { feature, axis, position, slice, field: kernel.distance(slice.nominalContours!, reach), box: boxOf(slice.nominalContours!) };
+    const baseField = kernel.distance(slice.nominalContours!, reach), sockets: Wall['sockets'] = [];
+    const field: Distance = (u, v) => {
+      let d = baseField(u, v);
+      for (const socket of sockets) {
+        // Outside this expanded AABB the socket's distance is greater than
+        // -d, so subtracting it cannot change max(d, -socketDistance).
+        const margin = Math.max(0, -d), b = socket.box;
+        if (u < b.minX - margin || u > b.maxX + margin || v < b.minY - margin || v > b.maxY + margin) continue;
+        d = Math.max(d, -socket.field(u, v));
+      }
+      return d;
+    };
+    return { feature, axis, position, slice, field, box: boxOf(slice.nominalContours!), sockets };
   });
   const finish = (meta: Part, field: Distance, box: Box2): Slice | undefined => {
     const nominal = kernel.trace(field, expand(box, step * 2), step, 0, tol);
@@ -184,16 +206,16 @@ export function buildGrid(features: Feature[], sample: (x: number, y: number, z:
         const field: Distance = (x, y) => Math.min(body(x, y), tabs[0](x, y));
         const tabBox = { ...box, [low]: Math.min(box[low], tip), [high]: Math.max(box[high], tip) };
         const tileContours = kernel.trace(field, expand(tabBox, step * 2), step, 0, tol);
-        const holes = sockets.map(b => socketDistance(b, relief)), oldWall = wall.field;
-        const wallField: Distance = (u, v) => Math.max(oldWall(u, v), -holes[0](u, v));
-        const wallContours = kernel.trace(wallField, expand(wall.box, step * 2), step, 0, tol);
-        if (tileContours.filter(c => !c.isHole).length !== 1 || wallContours.filter(c => !c.isHole).length !== 1) continue;
+        // The expanded socket region was checked inside existing material.
+        // Trace each finished receiver once below, after all sockets, where
+        // disconnected outlines still block export. Retracing the entire tall
+        // upright for every interior socket makes large Z counts quadratic.
+        if (tileContours.filter(c => !c.isHole).length !== 1) continue;
         selected = { wall, field, box: tabBox, sockets, direction: `${sign > 0 ? '-' : '+'}${wall.axis.toUpperCase()}` };
         break;
       }
       if (selected) {
-        const old = selected.wall.field, holes = selected.sockets.map(b => socketDistance(b, relief));
-        selected.wall.field = (u, v) => Math.max(old(u, v), -holes[0](u, v));
+        for (const socket of selected.sockets) selected.wall.sockets.push({ box: expand(socket, relief), field: socketDistance(socket, relief) });
         const cut = finish(meta, selected.field, selected.box); if (cut) cuts.push(cut);
         report.joints.push({ id: `${meta.id}:${selected.wall.feature.id}`, parts: [meta.id, selected.wall.feature.id],
           instruction: `${label}: lower into its cell from above, then slide ${selected.direction} into ${selected.wall.slice.part!.label}; ${selected.sockets.length} glued tab(s). Fit horizontal cells bottom to top after the upright grid. The opposite-edge gap provides insertion travel. Dry-fit before gluing.` });

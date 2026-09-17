@@ -828,6 +828,8 @@ select {
 .assembly-scope { display: flex; gap: 6px; margin-bottom: 12px; }
 .assembly-scope .btn { flex: 1; }
 .assembly-scope .is-active { border-color: #df714b; color: #ffc2a5; background: #513226; }
+.grid-plane-links { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); max-height: 176px; overflow-y: auto; }
+.grid-plane-links .btn { min-width: 0; }
 .assembly-angle-scope { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .assembly-angle-scope .btn { min-width: 0; padding-left: 4px; padding-right: 4px; }
 .assembly-status { padding: 15px; border-top: 1px solid var(--k-line); }

@@ -4102,14 +4102,26 @@ IDs are not recycled after save/open. Whole-grid translation and Z rotation
 change only placement, preserving local cut outlines. Grid planes cannot tilt.
 Profiles always sample the current source, including carved cavities.
 
-Each family supports up to eight planes; the conservative planning ceiling is
-256 possible pieces, including empty cells. X and Y require an enabled member;
-Z can be zero. Spacing and offsets must leave separated full-thickness slabs
+Since 0.39.1, Z supports 0–64 planes and X/Y each support 1–8. The conservative
+planning ceiling is 1,024 possible pieces, including empty cells, calculated as
+`(enabled X + 1) * (enabled Y + 1) * enabled Z + enabled X + enabled Y`.
+The store, core and inspector share the limits. Plane limits include disabled
+members; the piece ceiling uses enabled members. Over-limit project data names
+the requested amount and refuses before tracing. X and Y require an enabled member.
+Spacing and offsets must leave separated full-thickness slabs
 inside source bounds. Unknown axes, missing source material and unsupported
 members report explicit errors. Source, stock, spacing, offsets and count changes
 use the same worker/freshness path as other cut geometry.
 An empty result with an assembly report directs the user to its settings and
 messages; the add-source prompt is reserved for an uncreated assembly.
+
+Plane counts use a draft number field committed with Apply or Enter. Empty,
+fractional or out-of-range drafts explain the valid range; they do not mutate
+the model. Intermediate digits cannot delete retained planes or enqueue work.
+The inspector reports the lowest and highest enabled Z station and their span
+relative to the source centre, including individual offsets. Spacing does not
+automatically fit the height. Plane links wrap into a bounded scrolling grid.
+The planned part ceiling is visible, with a calculation-time hint above 256 parts.
 
 Horizontal IDs combine their Z-plane ID and four bounding upright IDs (or the
 outer boundary). They are derived cells, not saved contour vertices. Labels
@@ -4144,7 +4156,14 @@ twice the joint clearance. Circular relief at its four corners defaults to
 0.5 mm, must be at least one trace step and at most half the tab width. The
 surrounding region must lie in existing upright material, preserving earlier
 cross slots and sockets with the requested minimum bridge and sampling margin.
-Both candidate outlines must remain connected before accepting the joint.
+The candidate tile must remain connected before accepting the joint. Each socket
+is enclosed by the sampled material margin above. Since 0.39.1, each finished
+upright is traced and checked for connected material after all its sockets,
+instead of retracing its entire height for every interior socket. A disconnected
+receiver still blocks export; the final kerf and narrow-feature checks remain.
+Socket fields also use an expanded bounding box to skip a distance evaluation
+only when it cannot change the subtraction's current value. This replaces the
+growing closure chain without approximating the signed result.
 
 Horizontal body edges stay `clearance + step` from upright faces, keeping
 marching-squares rounding of concave tab roots out of the full receiver slab.
@@ -4187,6 +4206,10 @@ to form end panels where the source provides a usable profile and joints.
 `tools/validate-grid.mjs` imports the real modules. It checks a dense XYZ fixture
 with 54 connected parts, independently samples finished full-stock slab
 intersections and horizontal insertion paths, and checks every real tab/socket.
+It also builds 64 horizontal planes in a 100 × 100 × 536 mm rounded-box source:
+580 attached, connected parts, with no errors (about 12 seconds locally).
+Over-limit saved planes and the total piece budget refuse explicitly; expanded
+counts retain IDs/offsets through save/open, and removed IDs stay retired.
 It also covers kerf, rigid transforms, curved source changes, a preserved light
 cavity, the small default sphere, disabled stations, missing attachments,
 unsupported topology/tools, the actual store and persistent IDs, layout switching,

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { runSliceJob } from '../src/core/pipeline.ts';
-import { gridFeatures, gridMember, gridMembers, gridPosition } from '../src/core/grid.ts';
+import { gridFeatures, gridMember, gridMembers, gridPosition, GRID_LIMITS, gridPlannedParts } from '../src/core/grid.ts';
 import { sheetLocal } from '../src/core/assembly.ts';
 import { indexProfile, indexedDistance } from '../src/core/profile2d.ts';
 
@@ -112,6 +112,27 @@ const splitShell = [...sphere, { id: 'f90', kind: 'shell', stage: 'CARVE', name:
 assert.equal(run(splitShell).assembly.cuttable, false, 'unsupported multi-band upright joints refuse instead of filling the cavity');
 console.log('  ok    stable hidden stations, crowded cells, missing tabs, invalid clearance, unsupported tools and topology refusals');
 
+const tall = gridFeatures(2, { min: [-50, -50, -268], max: [50, 50, 268] });
+tall.features[0].params.spacingZ = 8;
+while (gridMembers(tall.features, tall.features[0], 'z').length < GRID_LIMITS.z) tall.features.push(gridMember(tall.features[0], 'z', tall.features, tall.next++));
+const tallFeatures = [{ ...source, params: { ...source.params, sx: 100, sy: 100, sz: 536 } }, ...tall.features];
+const tallStart = performance.now(), tallSet = run(tallFeatures); good(tallSet);
+const tallCells = tallSet.slices.filter(s => s.part.gridAxis === 'z');
+assert.equal(new Set(tallCells.map(s => s.part.featureId)).size, 64, 'all requested horizontal planes produce cut cells');
+assert.equal(tallSet.slices.length, gridPlannedParts(tall.features, tall.features[0]));
+assert.ok(tallSet.slices.every(s => s.nominalContours.filter(c => !c.isHole).length === 1), 'finished receivers stay connected with many sockets');
+assert.ok(tallCells.every(s => tallSet.assembly.joints.some(j => j.parts.includes(s.part.id))), 'every horizontal cell is attached');
+assert.equal(new Set(tallSet.slices.map(s => s.part.id)).size, tallSet.slices.length);
+const tooMany = [...tallFeatures, gridMember(tall.features[0], 'z', tall.features, tall.next)];
+assert.ok(errors(run(tooMany)).some(e => /Z has 65 planes; the limit is 64/.test(e.message)));
+const overBudget = structuredClone(tallFeatures);
+let nextBudget = tall.next;
+for (const axis of ['x', 'y']) for (let i = 0; i < 3; i++) overBudget.push(gridMember(overBudget[1], axis, overBudget, nextBudget++));
+const refused = run(overBudget);
+assert.equal(refused.slices.length, 0);
+assert.ok(errors(refused).some(e => e.message.includes(`${gridPlannedParts(overBudget, overBudget[1])} cut parts`) && e.message.includes('1024-part limit')));
+console.log(`  ok    64 horizontal planes, ${tallSet.slices.length} attached/connected parts in ${((performance.now() - tallStart) / 1000).toFixed(1)} s, axis limits and explicit whole-grid budget`);
+
 const server = await createServer({ configFile: false, server: { middlewareMode: true, watch: null, hmr: false, ws: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' });
 try {
   const { useKerros } = await server.ssrLoadModule('/src/core/store.ts');
@@ -156,6 +177,21 @@ try {
     writeFileSync(`${process.env.KERROS_VALIDATION_ARTIFACTS}/kerros-grid.kerros.json`, serializeProject(state().projectData(), '0.39.0', '2026-09-17T00:00:00Z'));
     writeFileSync(`${process.env.KERROS_VALIDATION_ARTIFACTS}/kerros-grid.pdf`, pdf, 'binary');
   }
+  const retainedZ = gridMembers(state().features, layout, 'z');
+  state().setParam(retainedZ[0].id, 'offset', 2);
+  state().setGridCount(layout.id, 'z', 24);
+  assert.equal(gridMembers(state().features, layout, 'z').length, 24);
+  assert.deepEqual(gridMembers(state().features, layout, 'z').slice(0, retainedZ.length).map(f => f.id), retainedZ.map(f => f.id));
+  const largeSaved = parseProject(serializeProject(state().projectData(), '0.39.1', '2026-09-17T00:00:00Z'));
+  state().applyProject(largeSaved.data, largeSaved.nextFeatureNumber);
+  assert.equal(gridMembers(state().features, layout, 'z').length, 24);
+  assert.equal(state().features.find(f => f.id === retainedZ[0].id).params.offset, 2);
+  state().setGridCount(layout.id, 'z', 99);
+  assert.equal(gridMembers(state().features, layout, 'z').length, 64);
+  state().setGridCount(layout.id, 'z', 0);
+  assert.equal(gridMembers(state().features, layout, 'z').length, 0);
+  state().setGridCount(layout.id, 'z', 12);
+  assert.ok(gridMembers(state().features, layout, 'z').every(f => !retainedZ.some(old => old.id === f.id)));
   assert.ok(readFileSync('src/ui/FeatureTree.tsx', 'utf8').includes("addAssembly('grid')"));
   assert.ok(readFileSync('src/ui/AssemblyInspector.tsx', 'utf8').includes('<GridInspector'));
   console.log('  ok    real store, layout switching, saved identities, worker, material nesting, DXF, manifest, PDF and reachable UI');
