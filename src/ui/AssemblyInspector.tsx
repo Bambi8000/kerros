@@ -4,6 +4,7 @@ import type { SliceSet } from '../core/slice';
 import { assemblyNumber as num, sheetWorld, ribAngleGroup, ribAngleTargets, ribAngleValue, ribPlacementAngles, isFreePlate } from '../core/assembly';
 import { useKerros } from '../core/store';
 import { NumberField } from './NumberField';
+import { GridInspector } from './GridInspector';
 
 function RibCollisionActions({ pair }: { pair: [string, string] }) {
   const state = useKerros();
@@ -29,7 +30,7 @@ export function AssemblyStatus({ set, pending }: { set: SliceSet | null; pending
       <p className="hint">Dry-fit a small coupon first. Geometry checks do not establish joint strength or hardware suitability.</p>
       {report.issues.map((issue, i) => <div key={i} className={`assembly-issue ${issue.severity}`}>
         <span>{issue.message}</span>
-        <div>{issue.ids.map((id) => <button className="part-link" key={id} onClick={() => select(id)}>{set.slices.find((s) => s.part?.id === id)?.part?.label ?? id}</button>)}</div>
+        <div>{issue.ids.map((id) => <button className="part-link" key={id} onClick={() => select(set.slices.find(s => s.part?.id === id)?.part?.featureId ?? id)}>{set.slices.find((s) => s.part?.id === id)?.part?.label ?? id}</button>)}</div>
         {issue.ribCollision && <RibCollisionActions key={issue.ribCollision.join(':')} pair={issue.ribCollision} />}
       </div>)}
     </>}
@@ -39,6 +40,7 @@ export function AssemblyInspector({ feature, set, pending, sourceFeatures }: { f
   const state = useKerros();
   const [notice, setNotice] = useState('');
   const layout = feature.kind === 'assembly:layout' ? feature : state.features.find((f) => f.id === feature.params.groupId);
+  if (layout?.params.layout === 'grid') return <GridInspector feature={feature} layout={layout} set={set?.assembly?.id === layout.id ? set : null} pending={pending}>{layout.enabled && <AssemblyStatus set={set} pending={pending} />}</GridInspector>;
   const free = isFreePlate(feature);
   const kind = free ? 'plate' : feature.kind.slice('assembly:'.length);
   const members = state.features.filter((f) => f.params.groupId === layout?.id);

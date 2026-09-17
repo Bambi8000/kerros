@@ -3623,7 +3623,10 @@ The approved scope remains in [KERROS-ASSEMBLY-PLAN.md](KERROS-ASSEMBLY-PLAN.md)
 The original version supports upright ribs with XYZ translation and rotation in
 plan. Since 0.34.0, independent free plates also support arbitrary tilt and
 cloning; automatic rib joints retain their upright constraint. Choose a source shape, then `Radial ribs` or
-`Linear ribs` in the tree. Only one assembly layout can be active. Disabling it
+`Linear ribs` in the tree, or the orthogonal `Grid` described below. Only one
+assembly layout can be active. Layout buttons activate or create the requested
+kind, preserving other layouts and their members but disabling those layouts.
+Selecting the already-active layout does not rebuild it. Disabling it
 restores the horizontal workflow. Existing horizontal fixtures, paint, punches
 and patterns are listed as excluded while an upright assembly is enabled.
 
@@ -4076,3 +4079,118 @@ Before a complete lamp, cut a small two-rib/two-ring coupon and a two-rib wall
 coupon in the chosen stock. Use the actual LED tube/profile. Measure slot and
 tab fit (including a short rib's single tab), test the documented insertion sequence, inspect bridges and confirm
 wall clearance. The current software results are not physical acceptance.
+
+## Orthogonal Grid — **shipped** (0.39.0)
+
+The user selected three perpendicular sheet families and explicitly accepted
+splitting horizontal sheets. The construction plan is recorded in
+[KERROS-GRID-PLAN.md](KERROS-GRID-PLAN.md). `Grid · X / Y / Z` creates a distinct
+assembly layout with two X planes, two Y planes and three Z planes. X/Y spacing
+starts at 40% of the corresponding source extent; Z spacing starts at 15%.
+The less dense start fits the default 80 mm sphere in 3 mm stock; it is not a
+promise that every source or stock can accept these joints.
+
+### Source planes, identity and controls
+
+`assembly:grid` records store axis, persistent ordinal and station offset. X and
+Y name the **normal** of each upright plane, and Z names horizontal planes.
+Stations are centred using `(index - (count - 1) / 2) * spacing + offset`.
+Unlike manual rib placement, changing a Grid count redistributes its stations;
+the inspector states this. Retained IDs and offsets survive. Disabled members
+retain their station slots; removing a plane changes the distribution. Deleted
+IDs are not recycled after save/open. Whole-grid translation and Z rotation
+change only placement, preserving local cut outlines. Grid planes cannot tilt.
+Profiles always sample the current source, including carved cavities.
+
+Each family supports up to eight planes; the conservative planning ceiling is
+256 possible pieces, including empty cells. X and Y require an enabled member;
+Z can be zero. Spacing and offsets must leave separated full-thickness slabs
+inside source bounds. Unknown axes, missing source material and unsupported
+members report explicit errors. Source, stock, spacing, offsets and count changes
+use the same worker/freshness path as other cut geometry.
+An empty result with an assembly report directs the user to its settings and
+messages; the add-source prompt is reserved for an uncreated assembly.
+
+Horizontal IDs combine their Z-plane ID and four bounding upright IDs (or the
+outer boundary). They are derived cells, not saved contour vertices. Labels
+such as `Z9.1.2` show the current cell column/row; X/Y labels use feature IDs.
+Clicking a cell selects its owning plane and remembers the specific part index.
+The plane inspector lists all its cut pieces. Part's selector and keyboard
+stepping retain individual-cell inspection. Grid family colours distinguish
+X, Y and Z; Grid selection does not offer a nonfunctional placement gizmo.
+
+### Joints and assembly
+
+`grid.ts` has no value imports. The pipeline injects the actual tracer, indexed
+distance, gap checker and existing `buildAssembly` upright builder. That builder
+now also accepts a Y-normal source station; legacy ribs without it retain their
+old geometry. Grid supplies fixed orthogonal rib frames and automatic crossing
+records. X slots open upward; Y slots downward. Missed intersections generate no
+joint, but a disconnected upright network is an error. The original one-band
+contact, connected-outline, full-stock collision and sampled individual-part
+insertion checks remain in force. In particular, a hollow source whose upright
+crossings have several separated material bands is explicitly refused. Grid
+does not fill its cavity or silently discard detached pieces to make it fit.
+
+At each Z plane, the actual source profile is clipped into cells between full
+upright slabs. Each nonempty connected cell receives one glued tab along a
+bordering upright, trying X boundaries before Y. Opposing cells prefer opposite
+ends of the available contact; every accepted socket is reserved before fitting
+the next cell. Tabs never occupy an already-used socket. Tab width is explicit
+(default 8 mm); stock, width and clearance are not shrunk to force a fit.
+
+The receiving slot has the actual tab width and horizontal stock thickness plus
+twice the joint clearance. Circular relief at its four corners defaults to
+0.5 mm, must be at least one trace step and at most half the tab width. The
+surrounding region must lie in existing upright material, preserving earlier
+cross slots and sockets with the requested minimum bridge and sampling margin.
+Both candidate outlines must remain connected before accepting the joint.
+
+Horizontal body edges stay `clearance + step` from upright faces, keeping
+marching-squares rounding of concave tab roots out of the full receiver slab.
+This **body gap** is separate from fitted socket clearance. When a cell has an
+opposite upright, its body retreats an additional
+`stock thickness + body gap + max(step, 0.1 mm)`. The resulting visible gap
+allows the tab to clear its receiver while the cell is lowered from above, then
+slid into place. Actual body and opposite-edge gap dimensions are reported in
+the inspector and assembly document. It is not a continuous full horizontal
+sheet with invisible seams.
+
+Assemble the upright network first using its recorded sampled order. Install
+horizontal cells from the lowest Z plane upward: lower each piece inside its
+cell with its tab clear of the receiver, then slide in the named local X/Y
+direction. The orthogonal cell bounds and insertion gaps provide this path;
+the checks do not establish glue strength or mounting. Empty cells are counted,
+and unattachable cells remain visible with a named error. A disconnected cut or
+unresolved joint blocks manufacturing export. The existing narrow-feature scan
+reports warnings for source edges and socket relief; it can also detect close
+edges around a relief recess, and is not a strength calculation.
+
+### Shared outputs, limits and acceptance
+
+Finished nominal profiles are re-distanced in their own plane before exactly
+one kerf iso-shift. Assembly, Part, nesting, DXF, manifest and PDF consume those
+same parts. The vector PDF includes every tile drawing and its joint instruction;
+long derived IDs stay in the manifest rather than overprinting drawing labels.
+Save/open persists plane settings; actual worker transport rebuilds all cuts.
+Selecting an already-active layout is read-only, while choosing another layout
+preserves the previous design and disables it. Enabling multiple layouts by
+hand is still an explicit error.
+
+Grid currently refuses enabled rods, LED channels, free plates and wall/ring
+support members. Source carving is available for the light cavity. Existing
+horizontal-layer tools remain explicitly excluded, as in upright assemblies.
+Arbitrary tilted joints, multi-band upright contacts, mixed per-plane stock and
+mounting hardware are outside this construction. Boundary planes may be moved
+to form end panels where the source provides a usable profile and joints.
+
+`tools/validate-grid.mjs` imports the real modules. It checks a dense XYZ fixture
+with 54 connected parts, independently samples finished full-stock slab
+intersections and horizontal insertion paths, and checks every real tab/socket.
+It also covers kerf, rigid transforms, curved source changes, a preserved light
+cavity, the small default sphere, disabled stations, missing attachments,
+unsupported topology/tools, the actual store and persistent IDs, layout switching,
+save/open, worker, nesting, DXF, manifest and vector PDF. These are software
+checks. Cut a small XYZ coupon in the intended stock to test complete assembly,
+fit, corner relief, insertion gaps and the single-tab adhesive joint before a
+full lamp. No load rating is implied.

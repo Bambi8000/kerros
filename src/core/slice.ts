@@ -73,6 +73,9 @@ export interface Slice {
   part?: {
     id: string;
     label: string;
+    /** A derived grid cell selects its persistent source plane. */
+    featureId?: string;
+    gridAxis?: 'x' | 'y' | 'z';
     kind: 'rib' | 'support' | 'backplate' | 'plate';
     origin: [number, number, number];
     u: [number, number, number];

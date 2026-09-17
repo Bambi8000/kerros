@@ -307,12 +307,13 @@ export function buildAssembly(
   const placementAngles = ribPlacementAngles(features, layout);
   for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:rib' && !isFreePlate(f))) {
     const sourceAngle = num(f, 'sourceAngle') * Math.PI / 180;
-    const baseU: Vec3 = radial ? [Math.cos(sourceAngle), Math.sin(sourceAngle), 0] : [0, 1, 0];
+    const sourceY = !radial && f.params.sourceAxis === 'y';
+    const baseU: Vec3 = radial ? [Math.cos(sourceAngle), Math.sin(sourceAngle), 0] : sourceY ? [1, 0, 0] : [0, 1, 0];
     const pivot = radial ? num(layout, 'pivotRadius', radius * 0.7) : 0;
     const station = num(f, 'station');
-    const src: Vec3 = radial ? add3(centre, mul3(baseU, pivot)) : add3(centre, [num(f, 'sourceX'), 0, 0]);
+    const src: Vec3 = radial ? add3(centre, mul3(baseU, pivot)) : add3(centre, sourceY ? [0, num(f, 'sourceX'), 0] : [num(f, 'sourceX'), 0, 0]);
     const angle = placementAngles.get(f.id)! * Math.PI / 180;
-    const origin: Vec3 = radial ? mul3(baseU, pivot) : [station * num(layout, 'spacing', 12), 0, 0];
+    const origin: Vec3 = radial ? mul3(baseU, pivot) : sourceY ? [0, station * num(layout, 'spacing', 12), 0] : [station * num(layout, 'spacing', 12), 0, 0];
     origin[0] += num(f, 'px'); origin[1] += num(f, 'py'); origin[2] = num(f, 'pz');
     const box: Box2 = { minX: radial ? -pivot : -radius, maxX: radial ? radius * 1.45 - pivot : radius, minY: -height / 2, maxY: height / 2 };
     const raw: Distance = (x, y) => {

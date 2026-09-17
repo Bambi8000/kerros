@@ -575,7 +575,7 @@ function uprightManifest(input: ManifestInput): string[] {
   const report = input.set.assembly!;
   const lines = [`KERROS ASSEMBLY v${input.version}`, `Machine: ${input.machineName}`, `Parts: ${input.set.slices.length}. Cutting sheets: ${input.sheets.length}.`, '',
     report.cuttable ? 'Geometry checks passed at the selected sample resolution.' : 'CHECKS FAILED - REVIEW ONLY. Do not cut this assembly.',
-    'Dry-fit a small two-rib coupon before a full build. Verify measured kerf, joint fit, insertion order and LED clearance in the actual stock.',
+    input.set.slices.some(s => s.part?.gridAxis) ? 'Dry-fit a small XYZ grid coupon before a full build. Verify stock, kerf, tabs, insertion gaps and the complete assembly order.' : 'Dry-fit a small two-rib coupon before a full build. Verify measured kerf, joint fit, insertion order and LED clearance in the actual stock.',
     'Tabs require an adhesive suitable for the stock. Openings do not establish LED retention, hardware suitability or a load rating.', '', 'PARTS / ASSEMBLY COORDINATES (mm, Z up)'];
   for (const slice of input.set.slices) {
     const p = slice.part!;
@@ -636,7 +636,7 @@ function uprightDocument(input: AssemblyInput): PdfPage[] {
       const mx = (box.minX + box.maxX) / 2, my = (box.minY + box.maxY) / 2;
       for (const contour of slice.contours) p.push(contour.points.map((v, index) => index % 2 ? cy + (v - my) * scale : cx + (v - mx) * scale), 0.25, 0, true);
       const part = slice.part!;
-      const label = `${part.label} ID ${part.id} / ${part.thickness} MM`;
+      const label = part.gridAxis ? `${part.label} / ${part.thickness} MM` : `${part.label} ID ${part.id} / ${part.thickness} MM`;
       write(p, label, cx - textWidth(label, 3.5) / 2, cy - cellH / 2 + 10, 3.5);
     });
     pages.push({ width: PAGE_W, height: PAGE_H, polylines: lines });

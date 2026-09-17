@@ -125,7 +125,7 @@ export function Layout() {
       const clamped = Math.min(Math.max(currentLayer, 1), layerCount);
       const stepTo = (index: number) => {
         setCurrentLayer(index);
-        if (assembly) useKerros.getState().selectFeature(slices?.slices[index - 1]?.part?.id ?? null);
+        if (assembly) { const part = slices?.slices[index - 1]?.part; useKerros.getState().selectFeature(part?.featureId ?? part?.id ?? null); }
       };
       if (event.key === 'ArrowUp' || event.key === ']') {
         stepTo(Math.min(clamped + 1, layerCount));

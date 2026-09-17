@@ -236,6 +236,7 @@ export function FeatureTree() {
           <button className="btn" disabled={!features.some((f) => f.enabled && f.stage === 'SHAPE')} title="Create upright radial ribs with horizontal ring supports" onClick={() => addAssembly('radial')}>Radial ribs</button>
           <button className="btn" disabled={!features.some((f) => f.enabled && f.stage === 'SHAPE')} title="Create parallel upright ribs with a wall backplate" onClick={() => addAssembly('linear')}>Linear ribs</button>
         </div>
+        <div className="add-row"><button className="btn" disabled={!features.some(f => f.enabled && f.stage === 'SHAPE')} title="Create an orthogonal X/Y grid with split horizontal Z plates. Other layouts are kept but disabled." onClick={() => addAssembly('grid')}>Grid · X / Y / Z</button></div>
         <details className="source-tools" open={!assembly}>
           <summary>Source shapes and layer tools</summary>
         <div className="add-row">

@@ -3,6 +3,13 @@
 Kerros designs sliced lamps: build a form, cut it into material layers, add
 assembly features, nest the parts and export laser-ready DXF files.
 
+For a three-direction lattice, add a source shape and choose **Grid · X / Y / Z**
+in the feature-tree footer. Set each family's plane count and spacing in the
+inspector; select a plane to change its offset or inspect its cut parts. X/Y
+uprights use cross slots and horizontal Z cells use glued tabs. Horizontal
+pieces include visible assembly gaps. Read the assembly checks and dry-fit an
+XYZ coupon before cutting a full lamp. See `docs/KERROS-GRID-PLAN.md` for scope.
+
 ## Browser release
 
 GitHub Pages: **https://bambi8000.github.io/kerros-web/**.

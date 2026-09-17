@@ -47,6 +47,8 @@ import {
 import { localiseFixture } from './fixture';
 import { assemblyFeatures, assemblyMember, ribOperation } from './assemblyFeatures';
 import type { AssemblyMember, RibOperation } from './assemblyFeatures';
+import { gridFeatures, gridMember, gridMembers } from './grid';
+import type { GridAxis } from './grid';
 import { rodFromFeature, rodPose, fitRodToBounds } from './rig';
 import { ribAngleKey, snapshotPlate, isFreePlate } from './assembly';
 import type { RibAngleScope } from './assembly';
@@ -196,7 +198,8 @@ interface KerrosState {
   seed: number;
 
   addShape: (moduleKey: string) => void;
-  addAssembly: (kind: 'radial' | 'linear') => void;
+  addAssembly: (kind: 'radial' | 'linear' | 'grid') => void;
+  setGridCount: (id: string, axis: GridAxis, count: number) => void;
   addAssemblyMember: (id: string, kind: AssemblyMember) => void;
   snapshotAssemblyPlate: (id: string, result: SliceSet, sources: Feature[], duplicate: boolean) => boolean;
   setFreePlatePose: (id: string, patch: Partial<Record<'plateX' | 'plateY' | 'plateZ' | 'plateRx' | 'plateRy' | 'plateRz', number>>) => void;
@@ -453,18 +456,29 @@ export const useKerros = create<KerrosState>((set, get) => ({
   seed: 1,
 
   addAssembly: (kind) => set((s) => {
-    const existing = s.features.find((f) => f.kind === 'assembly:layout');
-    if (existing) return { selectedId: existing.id, panel: 'inspector', mode: 'stack' };
+    const existing = s.features.find((f) => f.kind === 'assembly:layout' && f.params.layout === kind);
+    if (existing?.enabled && !s.features.some(f => f.kind === 'assembly:layout' && f.enabled && f.id !== existing.id)) return { selectedId: existing.id, panel: 'inspector', mode: 'stack' };
+    if (existing) return { features: s.features.map(f => f.kind === 'assembly:layout' ? { ...f, enabled: f.id === existing.id } : f), selectedId: existing.id, panel: 'inspector', mode: 'stack' };
     const bounds = composeFieldWith(s.features.filter(isFieldFeature), s.material.kerf, s.seed, s.material.thickness, s.stack, mainVolumes()).bounds;
     if (!bounds) return s;
-    const created = assemblyFeatures(kind, s.nextFeatureNumber, bounds);
-    return { features: [...s.features, ...created.features], nextFeatureNumber: created.next, selectedId: created.id, panel: 'inspector', mode: 'stack' };
+    const created = kind === 'grid' ? gridFeatures(s.nextFeatureNumber, bounds) : assemblyFeatures(kind, s.nextFeatureNumber, bounds);
+    return { features: [...s.features.map(f => f.kind === 'assembly:layout' ? { ...f, enabled: false } : f), ...created.features], nextFeatureNumber: created.next, selectedId: created.id, panel: 'inspector', mode: 'stack' };
   }),
   addAssemblyMember: (id, kind) => set((s) => {
     const layout = s.features.find((f) => f.id === id && f.kind === 'assembly:layout');
     if (!layout) return s;
     const feature = assemblyMember(kind, layout, s.features, s.nextFeatureNumber);
     return { features: [...s.features, feature], nextFeatureNumber: s.nextFeatureNumber + 1, selectedId: feature.id, panel: 'inspector' };
+  }),
+  setGridCount: (id, axis, requested) => set((s) => {
+    const layout = s.features.find(f => f.id === id && f.params.layout === 'grid');
+    if (!layout || !Number.isFinite(requested) || !['x', 'y', 'z'].includes(axis)) return s;
+    const count = Math.max(axis === 'z' ? 0 : 1, Math.min(8, Math.round(requested)));
+    const members = gridMembers(s.features, layout, axis), removed = new Set(members.slice(count).map(f => f.id));
+    const features = s.features.filter(f => !removed.has(f.id));
+    let next = s.nextFeatureNumber;
+    for (let i = members.length; i < count; i++) features.push(gridMember(layout, axis, features, next++));
+    return { features, nextFeatureNumber: next, selectedId: s.selectedId && removed.has(s.selectedId) ? id : s.selectedId };
   }),
   addRibOperation: (a, b, operation) => set((s) => {
     const first = s.features.find((f) => f.id === a && f.kind === 'assembly:rib' && f.enabled);

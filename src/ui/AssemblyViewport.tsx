@@ -54,7 +54,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
     camera.position.set(240, -360, 250);
     const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     element.appendChild(renderer.domElement);
-    renderer.domElement.setAttribute('aria-label', 'Assembly preview. Select a part, rod or LED channel to move or rotate it.');
+    renderer.domElement.setAttribute('aria-label', 'Assembly preview. Select a part, rod or LED channel to inspect it.');
     scene.add(new THREE.HemisphereLight(0xfff4e3, 0x555566, 2.3));
     const key = new THREE.DirectionalLight(0xffffff, 3); key.position.set(200, -300, 400); scene.add(key);
     const fill = new THREE.DirectionalLight(0xe0d5c2, 1.5); fill.position.set(-200, 200, 150); scene.add(fill);
@@ -164,8 +164,10 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
       ray.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2), camera);
       const hit = ray.intersectObjects([...parts.children, ...channels.children], true).find((hit) => hit.object.userData.featureId);
       if (hit) {
-        const store = useKerros.getState(); store.selectFeature(String(hit.object.userData.featureId));
-        const index = current.current?.slices.find((s) => s.part?.id === hit.object.userData.featureId)?.index;
+        const store = useKerros.getState();
+        const slice = current.current?.slices.find(s => s.part?.id === hit.object.userData.featureId);
+        store.selectFeature(slice?.part?.featureId ?? String(hit.object.userData.featureId));
+        const index = slice?.index;
         if (index) store.setCurrentLayer(index);
       }
     };
@@ -200,7 +202,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
         const shape = new THREE.Shape(); path(group.outer.points, shape);
         for (const hole of group.holes) { const inner = new THREE.Path(); path(hole.points, inner); shape.holes.push(inner); }
         const geometry = new THREE.ExtrudeGeometry(shape, { depth: part.thickness, bevelEnabled: false, steps: 1 });
-        const color = part.id === selectedId ? '#e89155' : part.kind === 'rib' ? '#d9c9ac' : '#778c91';
+        const color = part.id === selectedId || part.featureId === selectedId ? '#e89155' : part.gridAxis === 'y' ? '#b4b8a1' : part.kind === 'rib' ? '#d9c9ac' : '#778c91';
         const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0, side: THREE.DoubleSide }));
         mesh.applyMatrix4(matrix); mesh.userData.featureId = part.id; e.parts.add(mesh);
         const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 25), new THREE.LineBasicMaterial({ color: part.id === selectedId ? '#ffc389' : '#403831', transparent: true, opacity: 0.7 }));
@@ -272,9 +274,9 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
     for (const object of e.parts.children) {
       const part = set?.slices.find((s) => s.part?.id === object.userData.featureId)?.part;
       if (!part) continue;
-      const selected = part.id === selectedId, grouped = targets.has(part.id) && angleScope !== 'selected';
+      const selected = part.id === selectedId || part.featureId === selectedId, grouped = targets.has(part.id) && angleScope !== 'selected';
       if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshStandardMaterial) {
-        object.material.color.set(selected ? '#e89155' : grouped ? '#d5a36a' : part.kind === 'rib' ? '#d9c9ac' : '#778c91');
+        object.material.color.set(selected ? '#e89155' : grouped ? '#d5a36a' : part.gridAxis === 'y' ? '#b4b8a1' : part.kind === 'rib' ? '#d9c9ac' : '#778c91');
         const waitingSupport = anglePreview && part.kind !== 'rib' && part.kind !== 'plate';
         object.material.transparent = waitingSupport; object.material.opacity = waitingSupport ? 0.3 : 1;
         object.material.depthWrite = !waitingSupport;
@@ -289,6 +291,7 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
   useEffect(() => {
     const e = engine.current; if (!e || e.dragging) return;
     let part = set?.slices.find((s) => s.part?.id === selectedId)?.part;
+    if (part?.gridAxis) { e.transform.detach(); return; }
     if (part && frames?.has(part.id)) part = frames.get(part.id);
     if (gizmoMode === 'rotate' && part?.kind === 'rib') {
       const targets = ribAngleTargets(useKerros.getState().features, selectedId ?? '', angleScope);
@@ -311,6 +314,6 @@ export function AssemblyViewport({ set: incoming, sourceFeatures, pending }: { s
   return <section className="assembly-canvas">
     <div ref={host} className="assembly-three" />
     <div className="assembly-overlay"><strong>Assembly</strong><span>{anglePreview ? dragging ? 'Placement preview' : 'Placement preview · checking cuts…' : pending ? 'Rebuilding…' : `${set?.slices.length ?? 0} parts`}</span><button className="btn" onClick={() => engine.current?.fit()}>Fit view</button></div>
-    <div className="assembly-caption">{anglePreview ? 'Live placement using the last cut outlines. Joints, supports and cut checks update after editing.' : !set?.slices.length ? pending ? 'Building the first assembly preview…' : 'Add a source shape, then create Radial ribs or Linear ribs.' : report?.channels.some((c) => c.id === selectedId) ? `${features.find((f) => f.id === selectedId)?.kind === 'rod' ? 'Rod' : 'LED channel'} · M to move · R to rotate · drag a handle · cuts update on release` : 'Click a part, rod or LED channel to select · drag to orbit · scroll to zoom'}<br />{report && !pending && !dragging && !report.cuttable && 'Some parts need attention. Read the assembly checks in the inspector.'}</div>
+    <div className="assembly-caption">{anglePreview ? 'Live placement using the last cut outlines. Joints, supports and cut checks update after editing.' : !set?.slices.length ? pending ? 'Building the first assembly preview…' : report ? 'No parts were produced. Check the assembly settings and messages in the inspector.' : 'Add a source shape, then create Grid, Radial ribs or Linear ribs.' : set.slices.some(s => s.part?.gridAxis) ? 'Click a grid part to inspect its plane · edit spacing and offsets in the inspector · drag to orbit' : report?.channels.some((c) => c.id === selectedId) ? `${features.find((f) => f.id === selectedId)?.kind === 'rod' ? 'Rod' : 'LED channel'} · M to move · R to rotate · drag a handle · cuts update on release` : 'Click a part, rod or LED channel to select · drag to orbit · scroll to zoom'}<br />{report && !pending && !dragging && !report.cuttable && 'Some parts need attention. Read the assembly checks in the inspector.'}</div>
   </section>;
 }

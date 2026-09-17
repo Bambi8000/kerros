@@ -7,9 +7,24 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.38.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.39.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+**Grid** adds three orthogonal sheet families: X/Y upright planes and split Z
+cells. The user approved splitting the horizontal sheets. All profiles follow
+the current source; counts, spacing and per-plane offsets rebuild their joints.
+X/Y use the existing upright cross-slot and insertion solver. Horizontal cells
+use one glued tab in a bordering upright, with distinct sockets for opposing
+cells, square-corner relief and a visible opposite-edge insertion gap. Build
+uprights first and lower/slide horizontal cells bottom to top. Empty cells are
+counted; disconnected or unattachable parts block export. Source cavities are
+preserved, but multi-band upright crossings can still refuse; Grid never fills
+a cavity to make it fit. Grid does not yet combine with rods, LED routes, free
+plates or wall/ring supports. Parts reach the real worker, Part/Assembly/Sheet,
+DXF, manifest and PDF. Layout buttons preserve other layouts while disabling
+them. See FEATURES, `docs/KERROS-GRID-PLAN.md` and `validate-grid.mjs`.
+Fit, adhesive and the XYZ assembly sequence remain physically untested.
 
 **Native curve profiles** now open a drawing editor in Slice. Add `Curve profile`
 under source tools, draw a closed Bézier path or ellipse/circle, then reshape
@@ -412,6 +427,7 @@ src/core/
   rig.ts          rod clearances, spans, spacer ring planning      [no imports]
   verticalSupports.ts  cavity-following stack spines and slots    [type imports]
   supportBranches.ts   cavity forks, shared sheets, insertion     [type imports]
+  grid.ts         orthogonal planes, split cells and glued tabs [type imports]
   layers.ts       which layers a per-slice feature applies to     [no imports]
   legs.ts         splayed leg holes: the swept ellipse hull        [no imports]
   profile2d.ts    2D outlines from SVG, indexed, as a field         [no imports]
@@ -616,6 +632,11 @@ file, check this first.
 Everything here is validated in code and unproven in material. Test cuts were
 about to happen when this handoff was written; ask before assuming.
 
+- **Orthogonal Grid.** Cut an XYZ coupon in the selected stock. Check the
+  upright cross slots, horizontal tab/socket relief, opposite-cell tab positions,
+  visible insertion gaps and bottom-to-top cell insertion. The single glued
+  cell tab needs a retention/adhesive test; geometry supplies no load rating.
+
 - **Vertical stack supports.** Cut a two-layer cross-lap coupon in the stock,
   check the layer-height shoulders, slot clearance, inward staging room and
   outward insertion, including the automatically fitted curved shoulders and
@@ -666,6 +687,7 @@ about to happen when this handoff was written; ask before assuming.
 2. **Cross-slicing (fin / eggcrate mode)**: the upright subset of phases A-C
    shipped in 0.29.0; upright rib cross joints and one-rib clearance cuts
    shipped in 0.31.0. Free placement and plate snapshots shipped in 0.34.0.
+   Three-direction Grid with split, tabbed horizontal cells shipped in 0.39.0.
    Automatic joints for tilted plates, group assembly motions and crossing
    networks with horizontal rings remain future work. The original phase breakdown
    below records the rationale.

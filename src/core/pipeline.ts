@@ -49,6 +49,7 @@ import { legSections, sectionsDistance } from './legs.ts';
 import { bossField } from './boss.ts';
 import { extrudeMorph, extrudeProfile, indexProfile, indexedDistance, profileBounds } from './profile2d.ts';
 import { activeAssembly, buildAssembly, channelAngles, prismOpening } from './assembly.ts';
+import { buildGrid } from './grid.ts';
 import type { MorphEasing, MorphEntry } from './profile2d.ts';
 import { parseTwistOverrides, twistAt, untwistPoint } from './twist.ts';
 import { paintDistance, strokesBounds, strokesByPlane } from './paint.ts';
@@ -290,7 +291,8 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
         ...channelAngles(pose.u, pose.v, angle), length: pose.length, diameter: rodDiameter(rod), clearance: 0,
         through: false, ribTarget: true, supportTarget: true, backplateTarget: true, plateTarget: true } };
     });
-    const set = buildAssembly(assemblyFeatures, field.solid, bounds, job, {
+    const set = (layout.params.layout === 'grid' ? buildGrid : buildAssembly)(assemblyFeatures, field.solid, bounds, job, {
+      uprights: buildAssembly,
       trace: traceSheet,
       distance: (contours, reach) => {
         const index = indexProfile({ rings: contours.map((c) => c.points), fill: 'holes' }, 1, 0.02, Math.min(reach, Math.max(8, job.minFeature * 3, job.kerf * 2)));
