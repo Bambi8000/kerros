@@ -102,12 +102,21 @@ export function moveCurveNode(loop: CurveLoop, at: number, part: 'point' | 'inco
   return copy;
 }
 
-/** De Casteljau subdivision preserves the existing curve when a point is added. */
+/** Preserve curves exactly; straight edges gain handle-free corners for editing. */
 export function splitCurve(loop: CurveLoop, at: number, t = 0.5): CurveLoop {
   const copy = copyCurveLoops([loop])[0], next = (at + 1) % copy.length;
   if (!copy[at] || copy.length >= 256 || !(t > 0 && t < 1)) return copy;
   const a = copy[at].point, b = add(a, copy[at].outgoing), d = copy[next].point, c = add(d, copy[next].incoming);
   const ab = mix(a, b, t), bc = mix(b, c, t), cd = mix(c, d, t), abc = mix(ab, bc, t), bcd = mix(bc, cd, t), centre = mix(abc, bcd, t);
+  const chord = subtract(d, a), along = (p: CurvePoint) => (p[0] - a[0]) * chord[0] + (p[1] - a[1]) * chord[1];
+  // Includes straight segments subdivided by older versions. Never collapse
+  // collinear handles that leave the segment or reverse their control order.
+  if (segmentDistance(b, a, d) <= 1e-10 && segmentDistance(c, a, d) <= 1e-10 && along(b) <= along(c)) {
+    copy[at].outgoing = [0, 0]; copy[next].incoming = [0, 0];
+    copy[at].smooth = false; copy[next].smooth = false;
+    copy.splice(at + 1, 0, { point: centre, incoming: [0, 0], outgoing: [0, 0], smooth: false });
+    return copy;
+  }
   copy[at].outgoing = subtract(ab, a); copy[next].incoming = subtract(cd, d);
   copy.splice(at + 1, 0, { point: centre, incoming: subtract(abc, centre), outgoing: subtract(bcd, centre), smooth: true });
   return copy;

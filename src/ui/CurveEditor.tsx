@@ -166,6 +166,14 @@ export function CurveEditor({ feature, slices }: { feature: Feature; slices: Sli
     const next = copyCurveLoops(loops); next[selected.loop] = fn(next[selected.loop], selected.node);
     setDrawing(next); commit(next);
   };
+  const insertNode = () => {
+    if (!selected) return;
+    if (loops[selected.loop].length >= 256) { setMessage('A curve can have at most 256 points. Remove a point before inserting another.'); return; }
+    const next = copyCurveLoops(loops);
+    next[selected.loop] = splitCurve(next[selected.loop], selected.node);
+    setDrawing(next);
+    if (commit(next)) setSelected({ loop: selected.loop, node: selected.node + 1, part: 'point' });
+  };
   const removeNode = () => {
     if (!selected) return;
     if (loops[selected.loop].length <= 3) { setMessage('A closed path needs at least three points.'); return; }
@@ -247,7 +255,7 @@ export function CurveEditor({ feature, slices }: { feature: Feature; slices: Sli
     <div className="curve-toolbar curve-bottom">
       <div className="curve-tool-row">
         {pen ? <button className="btn" disabled={pen.length < 3} onClick={closePen}>Close path</button> : <>
-          <button className="btn" disabled={!selected} onClick={() => editNode((loop, at) => splitCurve(loop, at))}>Insert point after</button>
+          <button className="btn" disabled={!selected} title="Adds a corner on a straight edge; preserves the shape of a curved edge. Selects the new point." onClick={insertNode}>Insert point after</button>
           <button className="btn" disabled={!selected} onClick={() => editNode((loop, at) => curveNodeMode(loop, at, true))}>Smooth point</button>
           <button className="btn" disabled={!selected} onClick={() => editNode((loop, at) => curveNodeMode(loop, at, false))}>Corner point</button>
           <button className="btn" disabled={!selected} onClick={removeNode}>Remove point</button>

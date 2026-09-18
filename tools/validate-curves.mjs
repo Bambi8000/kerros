@@ -45,6 +45,27 @@ assert.deepEqual(flattenCurve(polygon),circle.flatMap(n=>n.point),'a fully strai
 for(const [from,to,want] of [[[3,7],[20,9],[20,7]],[[3,7],[-2,-30],[3,-30]],[[3,7],[3,7],[3,7]]])assert.deepEqual(alignCurvePoint(from,to),want);
 console.log('  ok    exact straight edges, curved neighbours, straight closure, handle isolation and horizontal/vertical constraints');
 
+for(const at of [0,polygon.length-1]){
+  const inserted=splitCurve(polygon,at),newIndex=at+1;
+  assert.equal(inserted.length,polygon.length+1);assert.equal(inserted[newIndex].smooth,false);
+  assert.deepEqual(inserted[newIndex].incoming,[0,0]);assert.deepEqual(inserted[newIndex].outgoing,[0,0]);
+  const p=inserted[newIndex].point,moved=moveCurveNode(inserted,newIndex,'point',[p[0]+7,p[1]-13]);
+  assert.deepEqual(flattenCurve(moved),moved.flatMap(n=>n.point),'dragging an inserted straight point leaves two exact straight edges');
+  const again=splitCurve(moved,newIndex);
+  assert.deepEqual(flattenCurve(again),again.flatMap(n=>n.point),'repeated insertion remains straight');
+}
+const splitMixed=splitCurve(lineAndArcs,0);
+assert.deepEqual(splitMixed[0].incoming,lineAndArcs[0].incoming);assert.deepEqual(splitMixed[2].outgoing,lineAndArcs[1].outgoing);
+assert.deepEqual(flattenCurve(splitMixed).slice(4),lineRing.slice(2),'inserting a straight point preserves the adjacent curves');
+assert.deepEqual(moveCurveNode(splitMixed,0,'incoming',[55,-15])[0].outgoing,[0,0],'adjacent curve handles cannot bend the split straight edge');
+const oldStraight=structuredClone(polygon),lineStart=oldStraight[0].point,lineEnd=oldStraight[1].point;
+oldStraight[0].outgoing=[(lineEnd[0]-lineStart[0])/3,(lineEnd[1]-lineStart[1])/3];oldStraight[1].incoming=[(lineStart[0]-lineEnd[0])/3,(lineStart[1]-lineEnd[1])/3];
+assert.equal(splitCurve(oldStraight,0)[1].smooth,false,'existing collinear handles also produce a straight-editable point');
+const splitOvershoot=flattenCurve(splitCurve(overshoot,0));
+for(let i=0,outline=flattenCurve(overshoot);i<outline.length;i+=2)assert.ok(distanceToRing(splitOvershoot,outline[i],outline[i+1])<.02,'overshooting collinear curves are not replaced by short lines');
+assert.ok(splitCurve(circle,0)[1].smooth,'real curved edges still get smooth subdivision');
+console.log('  ok    inserted straight points stay straight when moved, repeated/closing insertion, existing collinear handles and preserved neighbouring/overshooting curves');
+
 const sketch = {base:[ellipseCurve(0,0,40,40)],keys:[],nextKey:1};
 const feature = {id:'f1',kind:'profile',stage:'SHAPE',name:'Drawn profile',enabled:true,sketch,
   params:{height:84,round:0,curveMode:'repeat',easing:'smooth',op:'union',k:30,px:0,py:0,pz:0,rx:0,ry:0,rz:0}};

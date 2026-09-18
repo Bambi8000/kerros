@@ -2903,6 +2903,18 @@ and the help row reserves space, keeping the canvas stationary during drawing.
 Arrow/Delete keys cannot edit the previously selected applied point behind a
 draft. Existing Undo/Redo records the entire path as one edit on closure.
 
+Since 0.43.1, `Insert point after` recognises straight segments and adds a corner
+with zero handles, selecting the new point for immediate movement. Both new
+edges remain straight when that point moves. Previously subdivision introduced
+collinear Bézier handles and a smooth point, so moving it bowed the line.
+Straight segments saved with older collinear handles are recognised too, provided
+their controls stay ordered within the endpoint segment; overshoots and reversed
+controls retain De Casteljau subdivision. Adjacent curve handles are preserved
+and their anchors become corners to prevent mirroring onto the straight edges.
+Curved segments still preserve their shape exactly when subdivided. This applies
+to closing edges, repeated insertion and every native profile/key. At the
+256-point limit the editor explains why another point cannot be inserted.
+
 Pointer movement changes only the local preview. A completed gesture commits
 once, and a pen path commits only on closure. Undo/Redo retain up to 30 edits in
 the current editor/key session; Escape cancels an unfinished edit. Lost pointer
@@ -2929,6 +2941,9 @@ Straight-line checks cover exact flattened segments, unchanged adjacent arcs,
 closure, independent handles, axis constraints, real fields/cuts, mixed morph
 keys and persistence. Browser checks also exercise line/pen switching, a closed
 polygon, Shift, Escape and Undo/Redo.
+Insertion regressions move new points off the original edge and compare the
+flattened result with the polygon's actual anchors. They also cover closing and
+repeated insertion, old collinear controls, adjacent curves and overshoots.
 
 ### Radial side profiles — 0.40.0
 

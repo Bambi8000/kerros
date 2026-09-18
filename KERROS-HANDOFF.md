@@ -7,7 +7,7 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.43.0.** The MVP as originally scoped is
+**State at the time of writing: version 0.43.1.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
 
@@ -92,6 +92,10 @@ without discarding the unfinished path. Close on the first point, with Enter or
 `Close path`; only closed shapes are applied. A straight edge clears only its
 own two handles, preserving adjacent curves. This works in layer profiles,
 morph keys and radial side profiles, with the existing save/open and Undo/Redo.
+Since 0.43.1, `Insert point after` adds a handle-free corner on a straight edge
+and selects the new point. Moving it keeps both adjoining edges straight;
+curved edges still use shape-preserving subdivision. Older collinear handles
+are recognised, but overshooting/reversed controls are not collapsed to lines.
 
 **Branched vertical supports** now join one continuous lower cavity to upward
 branches through a shared horizontal sheet. `Fit: Automatic` exposes `Supports
