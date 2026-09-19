@@ -13,7 +13,8 @@ function subtitleFor(f: Feature, index: number, op: Op): string {
     ? `auto fit · ${f.params.branchCount ?? 1} per branch · ${f.params.count} without forks`
     : `${f.params.count} internal spines · horizontal stack`;
   if (f.kind === 'assembly:plate' || (f.kind.startsWith('assembly:') && f.params.freePlacement === true)) return `${f.id} · free plate · 3D placement`;
-  if (f.kind === 'assembly:rib') return `${f.id} · rib · ${ribAngleGroup(f) === 'odd' ? 'Odd' : 'Even'}`;
+  if (f.kind === 'assembly:rib') return `${f.id} · rib ${Number(f.params.ordinal) + 1} · ${f.params.profileId ? `profile ${f.params.profileId}` : ribAngleGroup(f) === 'odd' ? 'Odd' : 'Even'}`;
+  if (f.kind === 'assembly:profile') return `${f.id} · shared rib ${f.params.curveMode === 'morph' ? `morph · ${f.sketch?.keys.length ?? 0} keys` : 'profile'}`;
   if (f.kind === 'assembly:joint') return `${f.id} · ${f.params.operation === 'clearance' ? 'clearance cut' : 'cross joint'} · ${f.params.ribA} / ${f.params.ribB}`;
   if (f.kind.startsWith('assembly:')) return `${f.id} · ${f.kind.slice(9)}${f.kind === 'assembly:layout' ? ` · ${f.params.layout}` : ''}`;
   if (f.kind === 'holePunch') return `hole · Ø${f.params.diameter} mm · z ${Number(f.params.pz).toFixed(2)} mm`;

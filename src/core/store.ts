@@ -53,6 +53,8 @@ import { rodFromFeature, rodPose, fitRodToBounds } from './rig';
 import { ribAngleKey, snapshotPlate, isFreePlate } from './assembly';
 import type { RibAngleScope } from './assembly';
 import type { SliceSet } from './slice';
+import { simplifyRing } from './slice';
+import { profileRibs, sketchFromRib } from './ribProfiles';
 import { copyCurveSketch, curveSketchError, ellipseCurve } from './curves';
 import type { CurveSketch } from './curves';
 
@@ -203,6 +205,8 @@ interface KerrosState {
   fitGridToSource: (id: string) => void;
   addAssemblyMember: (id: string, kind: AssemblyMember) => void;
   snapshotAssemblyPlate: (id: string, result: SliceSet, sources: Feature[], duplicate: boolean) => boolean;
+  createRibProfile: (sourceId: string, members: string[], result: SliceSet, sources: Feature[]) => string | null;
+  assignRibProfile: (id: string, members: string[]) => boolean;
   setFreePlatePose: (id: string, patch: Partial<Record<'plateX' | 'plateY' | 'plateZ' | 'plateRx' | 'plateRy' | 'plateRz', number>>) => void;
   addRibOperation: (a: string, b: string, operation: RibOperation) => void;
   setAssemblyCount: (id: string, kind: 'rib' | 'support', count: number) => void;
@@ -505,6 +509,30 @@ export const useKerros = create<KerrosState>((set, get) => ({
     set({ features: duplicate ? [...features, feature] : features,
       nextFeatureNumber: s.nextFeatureNumber + (duplicate ? 1 : 0), selectedId: feature.id,
       assemblyAngleScope: 'selected', mode: 'stack', panel: 'inspector', gizmoMode: duplicate ? 'translate' : 'rotate' });
+    return true;
+  },
+  createRibProfile: (sourceId, members, result, sources) => {
+    const s = get(), source = s.features.find(f => f.id === sourceId);
+    const layout = s.features.find(f => f.enabled && f.id === source?.params.groupId && f.kind === 'assembly:layout');
+    const contours = result.slices.find(slice => slice.part?.id === sourceId)?.ribProfileContours;
+    if (s.features !== sources || !source || !layout || layout.params.layout === 'grid' || !contours || result.assembly?.id !== layout.id) return null;
+    const ribs = profileRibs(s.features, layout.id);
+    if (!members.length || !members.every(id => ribs.some(r => r.id === id)) || !ribs.some(r => r.id === sourceId)) return null;
+    const sketch = sketchFromRib(contours, simplifyRing), id = `f${s.nextFeatureNumber}`;
+    if (curveSketchError(sketch)) return null;
+    const profile: Feature = { id, kind: 'assembly:profile', stage: 'SLICE', name: members.length === 1 ? `${source.name} profile` : 'Rib profile group',
+      enabled: true, params: { groupId: layout.id, curveMode: 'repeat', easing: 'smooth' }, sketch };
+    set({ features: [...s.features.map(f => members.includes(f.id) ? { ...f, params: { ...f.params, profileId: id } } : f), profile],
+      nextFeatureNumber: s.nextFeatureNumber + 1, selectedId: id, curveEditorId: id, curveKeyId: null, mode: 'slice', panel: 'inspector' });
+    return id;
+  },
+  assignRibProfile: (id, members) => {
+    const s = get(), profile = s.features.find(f => f.id === id && f.kind === 'assembly:profile');
+    if (!profile) return false;
+    const ribs = profileRibs(s.features, String(profile.params.groupId));
+    if (!members.length || !members.every(id => ribs.some(r => r.id === id))) return false;
+    set({ features: s.features.map(f => members.includes(f.id) ? { ...f, params: { ...f.params, profileId: id } }
+      : f.params.profileId === id && !isFreePlate(f) ? { ...f, params: { ...f.params, profileId: '' } } : f) });
     return true;
   },
   setFreePlatePose: (id, patch) => set((s) => {
@@ -1096,7 +1124,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
   }),
 
   editCurveProfile: (id, keyId = null) => set(s => {
-    const feature = s.features.find(f => f.id === id && f.kind === 'profile' && f.sketch);
+    const feature = s.features.find(f => f.id === id && ['profile', 'assembly:profile'].includes(f.kind) && f.sketch);
     if (!feature) return s;
     const target = feature.params.profileMode === 'radial' ? null
       : keyId ?? (feature.params.curveMode === 'morph' ? feature.sketch!.keys[0]?.id ?? null : null);
@@ -1105,7 +1133,7 @@ export const useKerros = create<KerrosState>((set, get) => ({
   }),
   closeCurveEditor: () => set({ curveEditorId: null, curveKeyId: null }),
   setCurveSketch: (id, sketch, expected) => {
-    const s = get(), feature = s.features.find(f => f.id === id && f.kind === 'profile');
+    const s = get(), feature = s.features.find(f => f.id === id && ['profile', 'assembly:profile'].includes(f.kind));
     if (!feature || feature.sketch !== expected || curveSketchError(sketch)) return false;
     set({ features: s.features.map(f => f.id === id ? { ...f, sketch: copyCurveSketch(sketch) } : f) });
     return true;

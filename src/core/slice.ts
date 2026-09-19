@@ -67,6 +67,8 @@ export interface Slice {
   contours: Contour[];
   /** Finished assembly geometry before kerf, used for independent plate copies. */
   nominalContours?: Contour[];
+  /** Unjointed nominal rib outline. Explicit profile-group snapshots start here. */
+  ribProfileContours?: Contour[];
   /** Circular holes added by rig features. Empty until rods are applied. */
   circles: CircleHole[];
   /** Upright assemblies use local sheet coordinates and a rigid placement. */

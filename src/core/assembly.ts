@@ -11,6 +11,7 @@ export interface AssemblyKernel {
   trace: (sample: Distance, box: Box2, step: number, iso?: number, tolerance?: number) => Contour[];
   distance: (contours: Contour[], reach: number) => Distance;
   thin: (slice: Slice, threshold: number) => boolean;
+  ribProfile?: (profile: Feature, sequence: number) => Contour[];
 }
 export interface AssemblyOptions {
   thickness: number; kerf: number; materialName?: string;
@@ -20,6 +21,7 @@ interface WorkPart {
   meta: Part; box: Box2; source: Distance; field: Distance;
   zones: { field: Distance; box: Box2 }[];
   step: number;
+  ribProfileContours?: Contour[];
 }
 const TAU = Math.PI * 2;
 const RAD = Math.PI / 180;
@@ -28,6 +30,11 @@ export const assemblyNumber = (f: Feature, key: string, fallback = 0): number =>
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 };
 const num = assemblyNumber;
+/** A contact override inherits the support default when absent. */
+export function supportJointStyle(support: Feature, ribId: string): 'slots' | 'sockets' {
+  const value = support.params[`joint:${ribId}`] || support.params.jointStyle;
+  return value === 'sockets' ? 'sockets' : 'slots';
+}
 export type RibAngleScope = 'selected' | 'odd' | 'even' | 'all';
 /** Sequence numbers are independent of persistent feature IDs and tree order. */
 export const ribAngleGroup = (rib: Feature): 'odd' | 'even' => Math.max(0, Math.floor(num(rib, 'ordinal'))) % 2 === 0 ? 'odd' : 'even';
@@ -285,7 +292,7 @@ export function buildAssembly(
   const centre: Vec3 = bounds.min.map((v, i) => (v + bounds.max[i]) / 2) as Vec3;
   const radius = Math.max(bounds.max[0] - centre[0], bounds.max[1] - centre[1]);
   const height = bounds.max[2] - bounds.min[2];
-  const reach = Math.max(radius * 3, height * 2, 100);
+  let reach = Math.max(radius * 3, height * 2, 100);
   const parts: WorkPart[] = [];
   const stockT = Math.max(options.thickness, 0.2);
   const minBridge = Math.max(options.minFeature, 0.2, 2 * options.kerf, ...children.filter((f) => f.enabled && f.params.ownMaterial === true).map((f) => 2 * num(f, 'kerf', options.kerf)));
@@ -321,9 +328,21 @@ export function buildAssembly(
       const d = sample(...p);
       return radial ? Math.max(d, -d - Math.max(1, num(layout, 'ribDepth', 25)), num(layout, 'innerRadius', radius * 0.38) - x - pivot) : d;
     };
-    const sourceContours = kernel.trace(raw, box, Math.max(height, radius * 2) / Math.max(160, options.resolution), 0, options.tolerance);
-    if (!sourceContours.length) { say('error', [f.id], 'The source plane contains no rib. Move its source station or change the source form.'); continue; }
-    makePart(f, 'rib', origin, rotateZ(baseU, angle), [0, 0, 1], contourBox(sourceContours), kernel.distance(sourceContours, reach));
+    let sourceContours: Contour[];
+    if (f.params.profileId) {
+      const profile = children.find(p => p.id === f.params.profileId && p.kind === 'assembly:profile');
+      if (!profile?.enabled || !kernel.ribProfile) {
+        say('error', [f.id, String(f.params.profileId)], 'The rib profile group is missing or disabled. Restore the group or choose Follow source on this rib.'); continue;
+      }
+      try { sourceContours = kernel.ribProfile(profile, num(f, 'ordinal') + 1); }
+      catch (error) { say('error', [f.id, profile.id], `Rib profile: ${error instanceof Error ? error.message : String(error)}`); continue; }
+    } else sourceContours = kernel.trace(raw, box, Math.max(height, radius * 2) / Math.max(160, options.resolution), 0, options.tolerance);
+    if (!sourceContours.length) { say('error', [f.id], f.params.profileId
+      ? 'The shared drawing or morph produced no rib. Edit its closed loops or the neighbouring rib keys.'
+      : 'The source plane contains no rib. Move its source station or change the source form.'); continue; }
+    const sourceBox = contourBox(sourceContours);
+    reach = Math.max(reach, 2 * (sourceBox.maxX - sourceBox.minX), 2 * (sourceBox.maxY - sourceBox.minY));
+    makePart(f, 'rib', origin, rotateZ(baseU, angle), [0, 0, 1], sourceBox, kernel.distance(sourceContours, reach)).ribProfileContours = sourceContours;
   }
   for (const f of children.filter((f) => f.enabled && f.kind === 'assembly:support' && !isFreePlate(f))) {
     const outer = num(f, 'outerDiameter', radius * 1.8) / 2, inner = num(f, 'innerDiameter', radius * 1.2) / 2;
@@ -367,10 +386,12 @@ export function buildAssembly(
   const supports = parts.filter((p) => p.meta.kind === 'support');
   const backs = parts.filter((p) => p.meta.kind === 'backplate');
   const fit = Math.max(0, num(layout, 'jointClearance', 0.1));
-  const socketSupports = supports.filter(p => children.find(f => f.id === p.meta.id)?.params.jointStyle === 'sockets');
+  const expectedRibs = children.filter(f => f.enabled && f.kind === 'assembly:rib' && !isFreePlate(f));
+  const style = (support: WorkPart, ribId: string) => supportJointStyle(children.find(f => f.id === support.meta.id)!, ribId);
+  const socketSupports = supports.filter(p => expectedRibs.length ? expectedRibs.some(r => style(p, r.id) === 'sockets')
+    : children.find(f => f.id === p.meta.id)?.params.jointStyle === 'sockets');
   const openSupports = supports.filter(p => !socketSupports.includes(p));
   const socketSign = (part: WorkPart) => children.find(f => f.id === part.meta.id)?.params.socketSide === 'bottom' ? -1 : 1;
-  const expectedRibs = children.filter(f => f.enabled && f.kind === 'assembly:rib' && !isFreePlate(f));
   // Socket supports are end caps. Leave them off while assembling the ribs,
   // then slide each cap onto flush-ended tabs along Z. Trim before cross slots
   // so a later ring cannot claim contact with material the cap removed.
@@ -382,14 +403,16 @@ export function buildAssembly(
   for (const support of socketSupports) {
     if (repeatedCaps.includes(support)) continue;
     const f = children.find(f => f.id === support.meta.id)!, sign = socketSign(support);
+    const expected = expectedRibs.filter(r => style(support, r.id) === 'sockets');
+    const socketRibs = ribs.filter(r => style(support, r.meta.id) === 'sockets');
     const stockSize = f.params.socketSizing === 'stock', relief = num(f, 'socketRelief', 0.5);
     const requested = String(f.params.socketCount ?? '1'), automatic = requested === 'auto';
     const requestedCount = automatic ? 1 : Number(requested);
     if (!Number.isInteger(requestedCount) || requestedCount < 1 || requestedCount > 4) {
       say('error', [f.id], 'Tabs per rib must be Automatic or a whole count from 1 to 4.'); continue;
     }
-    const widths = ribs.map(r => stockSize ? r.meta.thickness : num(f, 'socketWidth', 8));
-    if (!(widths.every(width => width >= minBridge) && relief >= 0 && relief <= Math.min(...widths, ...ribs.map(r => r.meta.thickness)) / 2)) {
+    const widths = socketRibs.map(r => stockSize ? r.meta.thickness : num(f, 'socketWidth', 8));
+    if (!(widths.every(width => width >= minBridge) && relief >= 0 && relief <= Math.min(...widths, ...socketRibs.map(r => r.meta.thickness)) / 2)) {
       say('error', [f.id], 'Tab width must be at least the minimum bridge. Socket corner relief must be nonnegative and no larger than half the tab width or rib thickness.'); continue;
     }
     // A coarse marching cell can chamfer away a small square socket's corner
@@ -397,7 +420,7 @@ export function buildAssembly(
     if (fit + relief > 0) support.step = Math.min(support.step, Math.max(0.05, 2 * (fit + relief)));
     const trial = { ...support };
     const plans: { rib: WorkPart; width: number; shoulder: number; end: number; tabs: { tab: Distance; tabBox: Box2; cut: Distance; cutBox: Box2 }[] }[] = [];
-    for (const rib of ribs) {
+    for (const rib of socketRibs) {
       const width = stockSize ? rib.meta.thickness : num(f, 'socketWidth', 8);
       const shoulder = support.meta.origin[2] - sign * support.meta.thickness / 2 - rib.meta.origin[2];
       const end = shoulder + sign * support.meta.thickness;
@@ -450,8 +473,8 @@ export function buildAssembly(
       plans.push({ rib, width, shoulder, end, tabs });
     }
     // Do not make a plausible cap with one or more unattached ribs.
-    if (!expectedRibs.length || plans.length !== expectedRibs.length) {
-      say('error', [f.id, ...expectedRibs.filter(r => !plans.some(p => p.rib.meta.id === r.id)).map(r => r.id)], `Closed sockets: ${plans.length} of ${expectedRibs.length} enabled ribs could be fitted. No joints from this end plate were applied; resolve the named contacts.`); continue;
+    if (!expected.length || plans.length !== expected.length) {
+      say('error', [f.id, ...expected.filter(r => !plans.some(p => p.rib.meta.id === r.id)).map(r => r.id)], `Closed sockets: ${plans.length} of ${expected.length} enabled ribs could be fitted. No closed joints from this end plate were applied; resolve the named contacts.`); continue;
     }
     support.field = trial.field;
     for (const { rib, width, shoulder, end, tabs } of plans) {
@@ -464,13 +487,14 @@ export function buildAssembly(
       if (sign > 0) rib.box.maxY = end; else rib.box.minY = end;
       joints.push({ id: `${rib.meta.id}:${support.meta.id}`, parts: [rib.meta.id, support.meta.id], instruction: `After fitting the ribs into any open-slot supports, fit ${support.meta.label} from ${sign > 0 ? 'above along -Z' : 'below along +Z'} onto ${tabs.length === 1 ? 'the' : tabs.length} ${width} mm ${stockSize ? 'square ' : ''}tab${tabs.length === 1 ? '' : 's'} of ${rib.meta.label}. ${tabs.length === 1 ? 'The tab finishes' : 'The tabs finish'} flush with the outer face. Dry-fit, then glue with an adhesive suitable for the stock.` });
     }
-    say('info', [f.id], `Closed sockets: all ${plans.length} enabled ribs have flush tab joints (${plans.reduce((sum, plan) => sum + plan.tabs.length, 0)} tabs total). Ribs are trimmed ${sign > 0 ? 'above the lower' : 'below the upper'} face of ${support.meta.label}. Keep this end plate off until the ribs are assembled.`);
+    say('info', [f.id], `Closed sockets: all ${plans.length} enabled ribs assigned to sockets have flush tab joints (${plans.reduce((sum, plan) => sum + plan.tabs.length, 0)} tabs total). Those ribs are trimmed ${sign > 0 ? 'above the lower' : 'below the upper'} face of ${support.meta.label}. Keep this end plate off until the ribs are assembled.`);
   }
   if (socketSupports.length) for (const rib of ribs) rib.source = rib.field;
+  const socketZones = new Map(socketSupports.map(p => [p, p.zones.slice()]));
   // A rib enters every ring along -U. The rib's notch opens toward -U;
   // the ring's complementary notch opens toward +U. All rings stay fixed.
   for (const rib of ribs) {
-    for (const support of openSupports) {
+    for (const support of supports.filter(p => style(p, rib.meta.id) === 'slots')) {
       const z = support.meta.origin[2] - rib.meta.origin[2];
       const along = (u: number) => sheetLocal(support.meta, sheetWorld(rib.meta, u, z));
       const x0 = rib.box.minX, x1 = rib.box.maxX;
@@ -491,15 +515,19 @@ export function buildAssembly(
       if (socketSupports.length && rib.zones.some(zone => samples(zone.box, Math.max(rib.step, 0.35), (x, y) => zone.field(x, y) < minBridge && ribCut(x, y) < minBridge))) {
         say('error', [rib.meta.id, support.meta.id], 'This cross slot would damage an existing tab or support joint. Separate the supports or move the end plate.'); continue;
       }
-      subtract(rib, ribCut);
       const ringCut: Distance = (x, y) => {
         const p = sheetLocal(rib.meta, sheetWorld(support.meta, x, y));
         return Math.max(mid - fit - p[0], Math.abs(p[2]) - rib.meta.thickness / 2 - fit);
       };
-      subtract(support, ringCut);
+      if ((socketZones.get(support) ?? []).some(zone => samples(zone.box, Math.max(support.step, 0.35), (x, y) => zone.field(x, y) < minBridge && ringCut(x, y) < minBridge))) {
+        say('error', [rib.meta.id, support.meta.id], 'This open slot would cut into a closed socket. Move the contact or change its joint type.'); continue;
+      }
+      subtract(rib, ribCut); subtract(support, ringCut);
       rib.zones.push({ field: rect(lo, z - slotH, hi, z + slotH), box: { minX: lo, maxX: hi, minY: z - slotH, maxY: z + slotH } });
       support.zones.push({ field: (x, y) => { const p = sheetLocal(rib.meta, sheetWorld(support.meta, x, y)); return rectDistance(p[0], p[2], mid, 0, hi - lo, rib.meta.thickness + fit * 2); }, box: support.box });
-      joints.push({ id: `${rib.meta.id}:${support.meta.id}`, parts: [rib.meta.id, support.meta.id], instruction: `Hold ${support.meta.label} in place; slide ${rib.meta.label} along its negative U direction into the complementary half slots. ${socketSupports.length ? 'Install open-slot supports before the ribs; leave closed-socket end plates off until afterwards.' : 'Install all supports before the ribs.'}` });
+      joints.push({ id: `${rib.meta.id}:${support.meta.id}`, parts: [rib.meta.id, support.meta.id], instruction: socketSupports.includes(support)
+        ? `This contact uses complementary cross slots. Keep mixed-joint support ${support.meta.label} off during rib assembly, then fit it vertically in the checked end-plate order. A blocked sweep must be resolved before cutting.`
+        : `Hold ${support.meta.label} in place; slide ${rib.meta.label} along its negative U direction into the complementary half slots. ${socketSupports.length ? 'Install open-slot supports before the ribs; leave closed-socket end plates off until afterwards.' : 'Install all supports before the ribs.'}` });
     }
   }
 
@@ -965,7 +993,8 @@ export function buildAssembly(
     const exact = kernel.distance(nominal, Math.max(part.meta.kerf * 2, part.step * 4));
     const contours = part.meta.kerf > 0 ? kernel.trace(exact, part.box, part.step, part.meta.kerf / 2, Math.min(options.tolerance, part.step / 12)) : nominal;
     const meta: Part = { ...part.meta, origin: world(part.meta.origin), u: rotateZ(part.meta.u, globalAngle), v: rotateZ(part.meta.v, globalAngle), n: rotateZ(part.meta.n, globalAngle) };
-    const slice: Slice = { index: slices.length + 1, z: meta.origin[2], zBottom: meta.origin[2] - meta.thickness / 2, contours, nominalContours: nominal, circles: [], part: meta };
+    const slice: Slice = { index: slices.length + 1, z: meta.origin[2], zBottom: meta.origin[2] - meta.thickness / 2, contours, nominalContours: nominal, circles: [], part: meta,
+      ...(part.ribProfileContours ? { ribProfileContours: part.ribProfileContours } : {}) };
     if (kernel.thin({ ...slice, contours: nominal }, minBridge)) say('warning', [meta.id], `A remaining bridge is below ${minBridge} mm. Inspect this part before cutting.`);
     slices.push(slice);
   }

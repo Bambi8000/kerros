@@ -163,7 +163,7 @@ try{
   const saved=parseProject(serializeProject(data,'test','2026-09-17'));assert.equal(saved.ok,true);assert.deepEqual(saved.warnings,[]);
   state().applyProject(saved.data,saved.nextFeatureNumber);assert.deepEqual(state().features,capped);assert.deepEqual(run(state().features),set);
   const inspector=renderToStaticMarkup(createElement(AssemblyInspector,{feature:feature(capped,topId),set,pending:false}));
-  for(const text of ['Joint type','Cross slots','Closed sockets','Install from','Tab width','Socket corner relief','trims ribs above'])assert.ok(inspector.includes(text),text);
+  for(const text of ['Joint type','Cross slots','Closed sockets','Install from','Tab width','Socket corner relief','trims socket-linked ribs above'])assert.ok(inspector.includes(text),text);
   const savedSquare=parseProject(serializeProject({...data,features:square},'test','2026-09-17'));assert.equal(savedSquare.ok,true);assert.deepEqual(savedSquare.data.features,square);
   state().applyProject(savedSquare.data,savedSquare.nextFeatureNumber);
   const squareInspector=renderToStaticMarkup(createElement(AssemblyInspector,{feature:feature(square,topId),set:squareSet,pending:false}));

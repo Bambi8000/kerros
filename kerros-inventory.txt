@@ -1,20 +1,20 @@
-KERROS INVENTORY  2026-09-18  version 0.43.1
+KERROS INVENTORY  2026-09-19  version 0.44.0
 
 --- source, lines each
-   40632 total
+   41028 total
     2972 src/ui/Inspector.tsx
-    2343 src/core/store.ts
-    1762 src/core/pipeline.ts
+    2371 src/core/store.ts
+    1794 src/core/pipeline.ts
     1704 src/core/sdf.ts
     1484 tools/validate-nest.mjs
     1470 src/ui/Viewport.tsx
     1271 src/core/nest.ts
     1241 src/ui/SliceInspector.tsx
     1221 tools/validate-pipeline.mjs
-    1104 src/core/slice.ts
+    1106 src/core/slice.ts
     1087 src/ui/ProfilePanel.tsx
     1067 src/core/profile2d.ts
-     981 src/core/assembly.ts
+    1010 src/core/assembly.ts
      846 src/index.css
      805 tools/validate-sdf.mjs
      772 tools/validate-window.mjs
@@ -34,7 +34,7 @@ KERROS INVENTORY  2026-09-18  version 0.43.1
      383 tools/validate-sculpt.mjs
      379 tools/validate-legs.mjs
      346 src/ui/Layout.tsx
-     340 src/ui/FeatureTree.tsx
+     341 src/ui/FeatureTree.tsx
      334 src/core/fixture.ts
      330 src/core/legs.ts
      319 src/ui/AssemblyViewport.tsx
@@ -42,13 +42,13 @@ KERROS INVENTORY  2026-09-18  version 0.43.1
      283 src/ui/download.ts
      283 src/core/meshImport.ts
      275 tools/validate-boss.mjs
-     274 src/ui/CurveEditor.tsx
+     275 src/ui/CurveEditor.tsx
      261 src/core/grid.ts
+     259 src/ui/AssemblyInspector.tsx
      255 src/core/font.ts
      252 tools/validate-grid.mjs
      252 src/core/supportBranches.ts
      251 tools/validate-fixture.mjs
-     247 src/ui/AssemblyInspector.tsx
      242 src/ui/useSheets.ts
      239 src/core/layers.ts
      231 src/core/dxf.ts
@@ -60,7 +60,7 @@ KERROS INVENTORY  2026-09-18  version 0.43.1
      199 src/core/boss.ts
      192 src/ui/workerBridge.ts
      189 tools/validate-support-sockets.mjs
-     178 src/core/curves.ts
+     179 src/core/curves.ts
      175 tools/validate-curves.mjs
      173 tools/validate-wall-frame.mjs
      162 tools/validate-free-plates.mjs
@@ -69,6 +69,7 @@ KERROS INVENTORY  2026-09-18  version 0.43.1
      153 src/core/pdf.ts
      151 tools/validate-assembly.mjs
      138 tools/validate-rod-rotation.mjs
+     138 tools/validate-rib-profiles.mjs
      138 tools/validate-paint.mjs
      138 src/core/twist.ts
      137 tools/validate-pdf.mjs
@@ -76,6 +77,7 @@ KERROS INVENTORY  2026-09-18  version 0.43.1
      131 src/ui/PartInspector.tsx
      113 tools/validate-twist.mjs
      112 tools/validate-support-branches.mjs
+     111 src/ui/RibProfiles.tsx
      108 tools/validate-state.mjs
      107 tools/validate-rib-joints.mjs
      107 tools/validate-radial-profile.mjs
@@ -95,8 +97,9 @@ KERROS INVENTORY  2026-09-18  version 0.43.1
       49 src-tauri/tauri.conf.json
       45 src/ui/ErrorBoundary.tsx
       43 src/ui/latestJob.ts
+      40 src/core/ribProfiles.ts
       38 src/core/profiles.ts
-      26 src/ui/curveSession.ts
+      27 src/ui/curveSession.ts
       26 src-tauri/Cargo.toml
       18 src/ui/AssemblyPartView.tsx
       18 src/core/mesh.ts
@@ -115,11 +118,12 @@ dev: vite
 build: tsc -b && vite build
 lint: oxlint
 preview: vite preview
-check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs && node tools/validate-free-plates.mjs && node tools/validate-vertical-supports.mjs && node tools/validate-curves.mjs && node tools/validate-support-branches.mjs && node tools/validate-grid.mjs && node tools/validate-radial-profile.mjs && node tools/validate-support-sockets.mjs
+check: node tools/check-version.mjs && node tools/check-docs.mjs && node tools/validate-sdf.mjs && node tools/validate-surfacenets.mjs && node tools/validate-slice.mjs && node tools/validate-rig-export.mjs && node tools/validate-nest.mjs && node tools/validate-project.mjs && node tools/validate-state.mjs && node tools/validate-pattern.mjs && node tools/validate-window.mjs && node tools/validate-fixture.mjs && node tools/validate-sculpt.mjs && node tools/validate-import.mjs && node tools/validate-layers.mjs && node tools/validate-legs.mjs && node tools/validate-boss.mjs && node tools/validate-pdf.mjs && node tools/validate-profile.mjs && node tools/validate-twist.mjs && node tools/validate-paint.mjs && node tools/validate-hole-punch.mjs && node tools/validate-pipeline.mjs && node tools/validate-assembly.mjs && node tools/validate-wall-frame.mjs && node tools/validate-rib-joints.mjs && node tools/validate-rib-angles.mjs && node tools/validate-assembly-preview.mjs && node tools/validate-assembly-state.mjs && node tools/validate-rod-rotation.mjs && node tools/validate-free-plates.mjs && node tools/validate-vertical-supports.mjs && node tools/validate-curves.mjs && node tools/validate-support-branches.mjs && node tools/validate-grid.mjs && node tools/validate-radial-profile.mjs && node tools/validate-support-sockets.mjs && node tools/validate-rib-profiles.mjs
 tauri: tauri
 verify: npm run check && npm run build
 
 --- recent history
+01ebbd6 Keep inserted points on straight profile edges editable as corners
 6dda80e Fit stock-sized and multiple tabs to support end plates
 8eea6fc Add straight line drawing to curve profiles
 16664bc Add closed socket joints for support end plates
@@ -159,4 +163,3 @@ ce14d7e Measure thin bridges between complete cut edges and circles
 ccc83f2 Docs and inventory at 0.27.0: morphing between key profiles
 0b68bba Morph keys in the panel: a key list, easing, and what the slicer does while a key waits for its SVG
 a743617 Morph keys on a profile: distances mixed by height, sliced over the keys' own span
-d86a951 Inventory after the audit batch

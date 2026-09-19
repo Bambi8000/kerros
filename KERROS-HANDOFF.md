@@ -7,9 +7,32 @@ overturned and why, what is left, and how these sessions run.
 kept current in the same batch as the code it describes. When the two disagree,
 FEATURES is right and this file is stale.
 
-**State at the time of writing: version 0.43.1.** The MVP as originally scoped is
+**State at the time of writing: version 0.44.0.** The MVP as originally scoped is
 complete, plus five feature families that were not in the plan at all. Kerros has
 cut real lamps.
+
+**Rib profile groups** add shared drawings and sequence-based morphs to Radial
+and Linear ribs. In Assembly settings or a linked rib, `Rib profiles` accepts
+sequences such as `1-6, 9` (also All/Odd/Even). Choose a source rib and create a
+group. This explicitly copies its unjointed nominal outline once, simplified
+within 0.05 mm; it does not copy slots or keep tracking source vertices. Members
+reference the saved group by ID. Edit its drawing in Slice or its height with
+the bottom held fixed. `Morph across ribs` uses keys at rib sequences such as
+1/3/6, holding end keys outside their span; only group members change. Sequence
+positions survive hiding, tree reordering and deletion. `Edit this rib
+independently` copies its current unjointed shape into a one-member group;
+`Follow source` restores the source link. Groups and keys survive save/open and
+the real worker; all joints, collision checks and exports use the resulting
+profiles. Disabled/missing groups refuse instead of silently restoring a source.
+This is separate from angle scopes, free-plate snapshots and Grid.
+
+Horizontal supports also expose `Individual rib joints`: Support default,
+Cross slots or Closed sockets per persistent rib ID. There is no omitted-contact
+option. Any socket contact makes the plate an end cap for assembly order; only
+socket-linked ribs are trimmed and tabbed. Open cuts protect existing sockets.
+A mixed plate must pass the finished-part vertical insertion sweep: a tall
+cross-slot rib can block it even when its final pose fits. Clear and blocked
+mixed fixtures are validated; physical fit and assembly remain untested.
 
 **Closed support sockets** are selected per horizontal support under `Joint type`.
 `Cross slots` remains the default. `Closed sockets` makes a top or bottom end
@@ -23,8 +46,8 @@ tab (8 mm by default). The inspector reports the fitted total and assembly
 instructions give each rib's count and width. Shallow tip overlap can be unsuitable
 for Cross slots; its refusal now points to Closed sockets for end plates. Tabs
 still require a full shoulder below/above the cap, never an unattached extension.
-Every enabled linked rib must fit; partial caps refuse
-without applying their joints. Keep intermediate rings open-slotted, assemble
+Every enabled linked rib assigned to sockets must fit; partial socket plans
+refuse without applying those joints. Keep intermediate rings open-slotted, assemble
 the ribs, then fit and glue the end plates. One cap from each side is supported;
 final collisions, protected joints and sampled insertion paths (including free
 plates) still block export. Switching back restores the source-derived geometry.

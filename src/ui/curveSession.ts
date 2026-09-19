@@ -18,6 +18,7 @@ export function curveLayerTarget(feature: Feature, features: Feature[], set: Sli
 }
 
 export function curveKeyLabel(feature: Feature, features: Feature[], set: SliceSet | null, z: number): string {
+  if (feature.kind === 'assembly:profile') return `rib sequence ${z}`;
   const frame = worldRigidOf(features, feature);
   if (!set || set.assembly || !set.slices.length || Math.abs(frame.r[8]) < 1 - 1e-8) return `z ${Number(z.toFixed(2))} mm`;
   const height = frame.t[2] + z * frame.r[8];

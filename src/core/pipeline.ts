@@ -47,7 +47,7 @@ import { generatePattern } from './pattern.ts';
 import { resolveLayerSet, resolveLayers, selectorFromParams } from './layers.ts';
 import { legSections, sectionsDistance } from './legs.ts';
 import { bossField } from './boss.ts';
-import { extrudeMorph, extrudeProfile, indexProfile, indexedDistance, profileBounds } from './profile2d.ts';
+import { extrudeMorph, extrudeProfile, indexProfile, indexedDistance, profileBounds, morphPlaneDistance } from './profile2d.ts';
 import { activeAssembly, buildAssembly, channelAngles, prismOpening } from './assembly.ts';
 import { buildGrid } from './grid.ts';
 import type { MorphEasing, MorphEntry } from './profile2d.ts';
@@ -292,7 +292,19 @@ export function runSliceJob(job: SliceJob, volumes: Map<string, MeshVolume>): Sl
         ...channelAngles(pose.u, pose.v, angle), length: pose.length, diameter: rodDiameter(rod), clearance: 0,
         through: false, ribTarget: true, supportTarget: true, backplateTarget: true, plateTarget: true } };
     });
+    const profileCache = new Map<string, ReturnType<typeof ribProfileDrawing>>();
+    const contourCache = new Map<string, ReturnType<typeof traceSheet>>();
     const set = (layout.params.layout === 'grid' ? buildGrid : buildAssembly)(assemblyFeatures, field.solid, bounds, job, {
+      ribProfile: (profile: Feature, sequence: number) => {
+        let drawing = profileCache.get(profile.id);
+        if (!drawing) { drawing = ribProfileDrawing(profile); profileCache.set(profile.id, drawing); }
+        const key = `${profile.id}:${profile.params.curveMode === 'morph' ? sequence : 0}`;
+        const step = Math.max(drawing.span / 1400, Math.min(drawing.span / Math.max(160, job.resolution),
+          Math.max(0.2, job.thickness) / 4, Math.max(0.2, job.minFeature) / 2));
+        if (!contourCache.has(key)) contourCache.set(key, traceSheet((x, y) => drawing.sample(x, y, sequence), drawing.box,
+          step, 0, Math.min(job.tolerance, step / 12)));
+        return contourCache.get(key)!;
+      },
       uprights: buildAssembly,
       trace: traceSheet,
       distance: (contours, reach) => {
@@ -922,6 +934,26 @@ export function rehydrateNest(output: NestOutput, parts: PartGeometry[]): Rehydr
  */
 export function isFieldFeature(feature: Feature): boolean {
   return feature.stage === 'SHAPE' || feature.stage === 'CARVE';
+}
+
+/** A rib sequence is a morph coordinate, not a physical layer height. */
+export function ribProfileDrawing(feature: Feature) {
+  if (!feature.sketch) throw new Error('The group has no saved drawing.');
+  const error = curveSketchError(feature.sketch);
+  if (error) throw new Error(error);
+  const drawings = feature.params.curveMode === 'morph' && feature.sketch.keys.length
+    ? feature.sketch.keys.slice().sort((a, b) => a.z - b.z) : [{ z: 1, loops: feature.sketch.base }];
+  if (drawings.some(k => !Number.isSafeInteger(k.z) || k.z < 1)) throw new Error('Rib keys need positive whole sequence numbers.');
+  const profiles = drawings.map(k => ({ rings: k.loops.map(loop => flattenCurve(loop)), fill: 'holes' as const }));
+  const boxes = profiles.map(profileBounds);
+  const box = { minX: Math.min(...boxes.map(b => b.minX)), minY: Math.min(...boxes.map(b => b.minY)),
+    maxX: Math.max(...boxes.map(b => b.maxX)), maxY: Math.max(...boxes.map(b => b.maxY)) };
+  const span = Math.max(box.maxX - box.minX, box.maxY - box.minY, 1);
+  // Full drawing reach prevents a clamped interior from creating false morph
+  // plateaus. The resulting nominal contour is redistanced before joint/kerf use.
+  const entries = profiles.map((profile, i) => ({ z: drawings[i].z, index: indexProfile(profile, 1, 0.06, span * 2) }));
+  return { box, span, sample: (x: number, y: number, sequence: number) =>
+    morphPlaneDistance(entries, feature.params.easing === 'linear' ? 'linear' : 'smooth', x, y, sequence) };
 }
 
 /** Full-stock projection of finite inclined rods, in each sheet's cut frame. */

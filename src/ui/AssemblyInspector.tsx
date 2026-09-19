@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import type { Feature } from '../core/types';
 import type { SliceSet } from '../core/slice';
-import { assemblyNumber as num, sheetWorld, ribAngleGroup, ribAngleTargets, ribAngleValue, ribPlacementAngles, isFreePlate } from '../core/assembly';
+import { assemblyNumber as num, sheetWorld, ribAngleGroup, ribAngleTargets, ribAngleValue, ribPlacementAngles, isFreePlate, supportJointStyle } from '../core/assembly';
 import { useKerros } from '../core/store';
 import { NumberField } from './NumberField';
 import { GridInspector } from './GridInspector';
+import { RibProfileTools, RibProfileInspector } from './RibProfiles';
 
 function RibCollisionActions({ pair }: { pair: [string, string] }) {
   const state = useKerros();
@@ -44,6 +45,9 @@ export function AssemblyInspector({ feature, set, pending, sourceFeatures }: { f
   const free = isFreePlate(feature);
   const kind = free ? 'plate' : feature.kind.slice('assembly:'.length);
   const members = state.features.filter((f) => f.params.groupId === layout?.id);
+  const linkedRibs = members.filter(f => f.kind === 'assembly:rib' && !isFreePlate(f));
+  const activeRibs = linkedRibs.filter(r => r.enabled);
+  const hasSockets = kind === 'support' && (activeRibs.length ? activeRibs.some(r => supportJointStyle(feature, r.id) === 'sockets') : feature.params.jointStyle === 'sockets');
   const p = feature.params;
   const filled = p.outline === 'solid';
   const follows = p.outline === 'frame' || filled;
@@ -77,6 +81,8 @@ export function AssemblyInspector({ feature, set, pending, sourceFeatures }: { f
       {layout && kind !== 'layout' && <button className="btn" onClick={() => state.selectFeature(layout.id)}>Assembly settings</button>}
       {!feature.enabled && <p className="warn">This feature is disabled. Enable it in the feature tree to include it.</p>}
     </div>
+    {kind === 'profile' && <RibProfileInspector key={feature.id} feature={feature} />}
+    {layout && ['rib', 'layout'].includes(kind) && <RibProfileTools key={feature.id} feature={feature} layout={layout} set={set} pending={pending} sources={sourceFeatures} />}
     {['rib', 'support', 'backplate', 'plate'].includes(kind) && <div className="group"><div className="group-head">Plate actions</div>
       <button className="btn" disabled={pending || !part || !feature.enabled || !sourceFeatures} onClick={() => snapshot(true)}>Clone plate</button>
       {!free && <button className="btn" disabled={pending || !part || !feature.enabled || !sourceFeatures} onClick={() => snapshot(false)}>Free placement</button>}
@@ -110,7 +116,7 @@ export function AssemblyInspector({ feature, set, pending, sourceFeatures }: { f
           });
           setNotice('Source stations redistributed evenly. IDs, manual offsets and individual angles are preserved.');
         }}>Distribute source stations evenly</button>
-        <p className="hint">Redistribution regenerates source profiles. Moving an individual rib preserves its source profile.</p>
+        <p className="hint">Redistribution regenerates ribs that follow the source. Shared profile drawings stay unchanged. Moving an individual rib preserves its profile.</p>
       </div>
       {fanControl}
       <div className="group"><div className="group-head">Whole assembly</div>
@@ -141,7 +147,7 @@ export function AssemblyInspector({ feature, set, pending, sourceFeatures }: { f
       {fanControl}
       <details className="group"><summary>Source plane</summary>
         {layout?.params.layout === 'linear' ? <>{number('sourceX', 'Source X')}{number('station', 'Layout station', 0, '', 0.5)}</> : number('sourceAngle', 'Source angle', 0, '°')}
-        <p className="hint">These controls regenerate the unjointed outline from the source model. Placement controls above do not.</p>
+        <p className="hint">{p.profileId ? 'This rib uses a shared drawing. Source settings are retained for Follow source and do not change that drawing.' : 'These controls regenerate the unjointed outline from the source model. Placement controls above do not.'}</p>
       </details>
     </>}
     {kind === 'joint' && <div className="group"><div className="group-head">Rib intersection</div>
@@ -162,17 +168,23 @@ export function AssemblyInspector({ feature, set, pending, sourceFeatures }: { f
     {kind === 'support' && <div className="group"><div className="group-head">Horizontal support</div>
       {number('outerDiameter', 'Outer diameter')}{number('innerDiameter', 'Inner diameter')}{number('pz', 'Height from centre')}{number('px', 'Centre X')}{number('py', 'Centre Y')}
       {choose('jointStyle', 'Joint type', [['slots', 'Cross slots'], ['sockets', 'Closed sockets']], 'slots')}
-      {p.jointStyle === 'sockets' ? <>
+      <details><summary>Individual rib joints</summary>
+        {linkedRibs.map(r => <label className="field" key={r.id}><span className="field-label">Rib {num(r, 'ordinal') + 1} · R{r.id.slice(1)}{r.enabled ? '' : ' (disabled)'}</span><select aria-label={`Joint for rib ${num(r, 'ordinal') + 1}`} value={String(p[`joint:${r.id}`] || '')} onChange={e => patch(`joint:${r.id}`, e.target.value)}>
+          <option value="">Support default</option><option value="slots">Cross slots</option><option value="sockets">Closed sockets</option>
+        </select></label>)}
+        <p className="hint">Each override stays with its rib ID. Support default follows Joint type above. A support with any closed sockets is installed vertically after the ribs; mixed contacts must pass the same insertion check.</p>
+      </details>
+      {hasSockets ? <>
         {choose('socketSide', 'Install from', [['top', 'Above'], ['bottom', 'Below']], 'top')}
         {choose('socketSizing', 'Tab size', [['custom', 'Custom width'], ['stock', 'Match rib thickness']], 'custom')}
         {p.socketSizing === 'stock' ? <p className="hint">Square tabs in plan: width equals each rib’s actual stock thickness. Tab height follows this support’s thickness, finishing flush with its outer face.</p> : number('socketWidth', 'Tab width', 8)}
         {choose('socketCount', 'Tabs per rib', [['1', '1'], ['auto', 'Automatic (1–4)'], ['2', '2'], ['3', '3'], ['4', '4']], '1')}
-        <p className="hint">Tabs spread across the widest continuous shoulder. Automatic fits more on wider ribs and reports the total below. A fixed count must fit every rib. Socket spacing preserves material between openings.</p>
+        <p className="hint">Tabs spread across the widest continuous shoulder. Automatic fits more on wider ribs and reports the total below. A fixed count must fit every socket-linked rib. Socket spacing preserves material between openings.</p>
         {number('socketRelief', 'Socket corner relief', 0.5, 'mm', 0.1)}
-        <p className="hint">{p.socketSide === 'bottom' ? 'Bottom end plate: trims ribs below its upper face.' : 'Top end plate: trims ribs above its lower face.'} Flush tabs enter enclosed through-holes; the outer rim stays intact. Install this plate after the ribs, then glue. These are through-cuts, not blind pockets.</p>
+        <p className="hint">{p.socketSide === 'bottom' ? 'Bottom end plate: trims socket-linked ribs below its upper face.' : 'Top end plate: trims socket-linked ribs above its lower face.'} Flush tabs enter enclosed through-holes. Only contacts set to Cross slots open the rim. Install this plate after the ribs, then glue. These are through-cuts, not blind pockets.</p>
         <p className="hint">Use at most one end plate from each side. Intermediate supports keep Cross slots. Move the end plate into enough rib material for the tab shoulders. Clearance comes from Assembly settings; kerf follows the stock.</p>
       </> : <p className="hint">Complementary slots open along each rib’s insertion direction. Hold open-slot supports in place before fitting the ribs. Closed-socket end plates go on afterwards.</p>}
-      <p className="hint">Inner diameter 0 makes a disc. Joint type affects only this support; switching back restores its previous geometry.</p>
+      <p className="hint">Inner diameter 0 makes a disc. Joint type sets this support’s default; individual overrides stay selected. Choose Support default on a contact to restore inheritance.</p>
     </div>}
     {kind === 'backplate' && <>
       <div className="group"><div className="group-head">Backplate</div>

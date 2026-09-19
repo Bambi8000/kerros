@@ -8,6 +8,7 @@ export interface CurveNode {
   smooth: boolean;
 }
 export type CurveLoop = CurveNode[];
+/** z is local height for volumes, or the stable one-based rib sequence in assembly profiles. */
 export interface CurveKey { id: string; z: number; loops: CurveLoop[] }
 export interface CurveSketch {
   base: CurveLoop[];

@@ -3744,6 +3744,55 @@ work. Switching the angle scope does not change any feature parameters;
 group rotation applies an equal delta about each affected rib's own pivot.
 Whole-layout rotation uses the common assembly pivot instead.
 
+### Shared rib drawings and sequence morphs — **shipped** (0.44.0)
+
+Radial and Linear ribs now have an explicit authored-profile path, separate from
+source-plane sampling and independent free plates. In Assembly settings or a
+linked rib, `Rib profiles` selects rib sequences (`1-6, 9`, All, Odd or Even),
+chooses a source rib and creates a shared group. `assembly:profile` is a SLICE
+feature with native `sketch` data; each member's `profileId` points to it. Member
+selection is committed as IDs, never reparsed after renaming or tree reordering.
+Other ribs retain their existing source/group, position, rotation and stock.
+`Apply membership` replaces a group's member set; removed members follow the
+source, while selected members move from their previous group to this one.
+
+Creation explicitly copies `Slice.ribProfileContours`, captured before any
+generated slots, tabs, wall trimming or component openings. The saved drawing
+uses corner controls after a 0.05 mm closed-ring simplification; a loop exceeding
+256 points or a shape exceeding 32 loops refuses with a message. It is an
+authored snapshot, not a claim that sampled vertices track the source. The
+current feature revision must own the result. The Slice editor reuses line,
+Bézier, ellipse, handle, hole, Undo/Redo and guarded commit behaviour. Inspector
+height edits reshape the controls with the bottom fixed; the editor's ordinary
+Drawing width/height controls retain their centre-based behaviour.
+
+`Repeat shared profile` gives every member the base drawing. `Morph across ribs`
+uses up to 32 native keys with `CurveKey.z` interpreted as a one-based rib
+sequence, not millimetres. `Copy drawing to rib key` copies the currently edited
+drawing; an existing key opens without overwriting. Keys can sit at 1/3/6 or any
+member positions. The actual stable rib ordinal chooses the interpolated shape,
+so hiding or reordering a rib does not move other keys. Deleting a rib retains
+its key at the saved sequence. End drawings hold outside the keyed span; one key
+repeats and no keys use the base. Repeat preserves inactive keys. Key selection
+alone does not regenerate geometry. Linear/Smooth transitions mix actual 2D
+distances with full drawing reach. Nominal interpolated contours are redistanced
+before joints and again before kerf, so a blended gradient is not used as the
+final kerf allowance. Self-intersections, disconnected pieces, missing joints
+and insertion conflicts retain the existing refusal checks.
+
+`Edit this rib independently` creates a one-member group from that rib's current
+unjointed result, including its interpolated shape. `Follow source` restores
+source-plane regeneration. Group drawings do not follow later source edits;
+their placement remains relative to the source-centred assembly as before.
+Deleting/disabling a group referenced by a linked rib reports a missing/disabled
+group and blocks export. Free placement preserves the reference for restoration
+but uses its frozen plate snapshot while free. Grid does not use profile groups.
+The real worker, Part/Assembly/Sheet, material nesting and cutting exports all
+consume the same generated contours. Validators cover unchanged nonmembers,
+shared dimensions, morph keys/intermediates, stable identity, detached copies,
+malformed groups, persistence, worker parity and exported paths. Physical cuts
+of group-derived ribs remain untested.
+
 ### Free placement and Clone plate — **shipped** (0.34.0)
 
 Select one rib, horizontal support, backplate or free plate in Assembly. Its
@@ -3896,7 +3945,7 @@ The tab centre is fitted to the longest feasible shoulder band along the rib.
 Its full shoulder must be in material and the socket, including relief, must
 clear the plate edge, centre opening and previously planned sockets by the
 minimum bridge. Requested tab width, stock and clearance are never reduced.
-All enabled linked rib IDs must acquire a joint, including ribs whose source
+All enabled linked rib IDs assigned to sockets must acquire a joint, including ribs whose source
 plane returned no profile; if any fails, no joints from that end plate are
 applied. Diagnostics name the failed contacts and give the fitted/expected count.
 Source edits, moved or rotated upright ribs, plate size/height and material edits
@@ -3915,7 +3964,7 @@ Minimum centre spacing includes the complete socket width, clearance, corner
 relief, minimum bridge and two samples of slack. Automatic also spaces centres
 at least three tab widths apart, selecting up to four according to available
 span. Narrow shoulders can use one while wider ribs use more. Exact counts
-refuse if any rib cannot fit them; no partial cap joints are applied.
+refuse if any socket-linked rib cannot fit them; no partial cap joints are applied.
 
 Each rib is trimmed once and all its tabs are then added and individually
 protected. Existing cap insertion, collision, kerf and export paths consume the
@@ -3930,6 +3979,21 @@ Socket supports refine their tracing step to resolve small corner clearances
 (at most twice clearance plus relief, with a 0.05 mm sampling floor). The new
 mixed-stock regression measures tab corners against the actual socket contours;
 the previous coarse cells could consume clearance when relief was zero.
+
+Since 0.44.0, `Individual rib joints` selects Support default, Cross slots or
+Closed sockets for each rib, saved on the support as `joint:<ribId>` overrides.
+Blank inherits `jointStyle`; there is no contact-omission option. Disabled ribs
+retain their choices for re-enabling, and removed IDs are never reused. At least
+one enabled socket contact makes the plate an end cap; only socket contacts are
+trimmed and tabbed, while open contacts receive ordinary complementary slots.
+The complete socket plan must fit before any of its joints are applied. An open
+slot cannot damage an existing closed socket. Mixed plates stay off during rib
+insertion and then move vertically from their selected side. Their actual final
+geometry must pass the same removal/insertion sweep: an upright extending above
+an open contact can block the cap despite a collision-free final pose. An outward
+neck can leave a clear path, as the positive mixed-joint regression demonstrates.
+Instructions and counts distinguish these contacts instead of claiming that all
+ribs are trimmed or that every support is held in place during rib insertion.
 
 Use at most one closed end plate from above and one from below. Intermediate
 supports keep Cross slots. Closed caps are left off during rib insertion, then

@@ -188,7 +188,8 @@ export function CurveEditor({ feature, slices }: { feature: Feature; slices: Sli
   const zoom = (factor: number) => setBox(b => ({ x: b.x + b.w * (1 - factor) / 2, y: b.y + b.h * (1 - factor) / 2, w: b.w * factor, h: b.h * factor }));
   let bounds: ReturnType<typeof curveBounds> | null = null;
   try { bounds = curveBounds(source); } catch { /* An invalid loaded drawing can be replaced with Ellipse or Pen. */ }
-  const title = radial ? 'Radial side profile · radius → · height ↑' : key ? `Editing ${curveKeyLabel(feature, features, slices, key.z)}` : 'Editing base profile · repeats through the full height';
+  const title = radial ? 'Radial side profile · radius → · height ↑' : key ? `Editing ${curveKeyLabel(feature, features, slices, key.z)}`
+    : feature.kind === 'assembly:profile' ? 'Shared rib profile · width → · height ↑' : 'Editing base profile · repeats through the full height';
   const ghost = radial ? [] : sketch.keys.filter(k => k.id !== keyId).flatMap(k => k.loops);
   return <div className="curve-editor" onKeyDown={event => {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
